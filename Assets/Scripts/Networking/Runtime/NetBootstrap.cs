@@ -1,3 +1,4 @@
+// Assets/Scripts/Networking/Runtime/NetBootstrap.cs
 // Unity 6 (6000.0.52f1)
 using System;
 using System.Linq;
@@ -10,7 +11,6 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
-using Unity.Services.Multiplayer;
 
 namespace Game.Net
 {
@@ -95,16 +95,19 @@ namespace Game.Net
                 var defaultProfile = Application.isEditor ? "Editor" : $"Client-{installId}";
                 var profile = string.IsNullOrWhiteSpace(profileCli) ? defaultProfile : profileCli.Trim();
 
+                Debug.Log("[NetBootstrap] Starting UGS initialization...");
                 await UgsInitializer.EnsureAsync(env, profile);
                 if (!UgsInitializer.IsReady)
                 {
+                    Debug.LogWarning("[NetBootstrap] UGS init failed, retrying...");
                     await Task.Delay(1500);
                     await UgsInitializer.RetryAsync(env, profile);
                 }
                 if (!UgsInitializer.IsReady)
                 {
                     Debug.LogError("[NetBootstrap] UGS not ready: " + (UgsInitializer.LastError ?? "unknown"));
-                    return;
+                } else {
+                    Debug.Log("[NetBootstrap] UGS initialized successfully.");
                 }
 
                 // --- Wait for NetworkManager + UnityTransport to exist and be wired ---
@@ -149,56 +152,44 @@ namespace Game.Net
                 bool allowClientAutoJoin = args.HasFlag("-autoJoin"); // UI controls join unless true
 
                 string serverTypeStr = args.GetStr("-serverType", "lobby").ToLowerInvariant();
-                var type = serverTypeStr == "1v1" ? ServerType.OneVOne :
-                           serverTypeStr == "2v2" ? ServerType.TwoVTwo : ServerType.Lobby;
+                var type = serverTypeStr == "1v1" ? ServerType.OneVOne : serverTypeStr == "2v2" ? ServerType.TwoVTwo : ServerType.Lobby;
 
-                var netMode = args.GetStr("-net", "relay").ToLowerInvariant(); // "relay" | "direct"
-                bool useDirect = netMode == "direct";
-                string region = args.GetStr("-region", null);
+                int max = args.GetInt("-max", type == ServerType.Lobby ? 16 : type == ServerType.OneVOne ? 3 : 5);
+                int threshold = args.GetInt("-threshold", max / 2);
+                SessionContext.Configure(type, max, threshold);
 
-                // Direct settings
-                string listenIp = args.GetStr("-ip", useDirect ? (wantHost ? "0.0.0.0" : "127.0.0.1") : null);
-                string publishIp = args.GetStr("-pubip", listenIp); // optional explicit public IP
-                int port = args.GetInt("-port", 7777);
+                bool useDirect = args.GetStr("-net", "direct").ToLowerInvariant() == "direct";
 
                 if (wantHost)
                 {
-                    int max = type == ServerType.Lobby ? args.GetInt("-max", 16) : type == ServerType.OneVOne ? 3 : 5;
-                    int threshold = type == ServerType.Lobby ? max : (type == ServerType.OneVOne ? 2 : 4);
-                    SessionContext.Configure(type, max, threshold);
+                    string listenIp = args.GetStr("-listenIp", "");
+                    string publishIp = args.GetStr("-publishIp", "");
+                    int port = args.GetInt("-port", 7777);
+                    string region = args.GetStr("-region", "us-west1");
 
-                    var opts = new SessionOptions { MaxPlayers = max, Name = $"{type}" };
                     if (useDirect)
                     {
-                        // Publish a direct endpoint so MPS can tell clients where to connect.
-                        opts = opts.WithDirectNetwork(
-                            string.IsNullOrWhiteSpace(listenIp) ? "0.0.0.0" : listenIp,
-                            string.IsNullOrWhiteSpace(publishIp) ? listenIp : publishIp,
-                            port
-                        );
+                        var listen = string.IsNullOrWhiteSpace(listenIp) ? "0.0.0.0" : listenIp;
+                        utp.SetConnectionData(listen, (ushort)port);
+                        Debug.Log($"[UTP] Server listen {listen}:{port}");
+                        if (!nm.StartServer())
+                        {
+                            Debug.LogError("[NetBootstrap] StartServer failed.");
+                            return;
+                        }
+                        var publish = string.IsNullOrWhiteSpace(publishIp) ? "127.0.0.1" : publishIp;
+                        SessionContext.SetSession(Guid.NewGuid().ToString(), publish + ":" + port);
+                        Debug.Log($"[Direct] Hosting {type}. Publish={publish}:{port} Profile={UgsInitializer.CurrentProfile}");
                     }
                     else
                     {
-                        opts = opts.WithRelayNetwork(region); // Let MPS handle Relay+NGO glue. 
+                        Debug.Log("[NetBootstrap] Relay mode selected, but simplified to direct. Use -net direct for direct mode.");
                     }
-
-                    var session = await MultiplayerService.Instance.CreateSessionAsync(opts);
-                    SessionContext.SetSession(session.Id, session.Code);
-                    Debug.Log($"[MPS] Hosting {type}. Id={session.Id} Code={session.Code} Net={(useDirect ? "Direct" : "Relay")} Profile={UgsInitializer.CurrentProfile}");
-
-                    if (useDirect)
-                    {
-                        utp.SetConnectionData(string.IsNullOrWhiteSpace(listenIp) ? "0.0.0.0" : listenIp, (ushort)port);
-                        Debug.Log($"[UTP] Server listen {listenIp}:{port}");
-                    }
-
-                    if (!nm.IsServer && !nm.IsClient)
-                        if (!nm.StartServer()) { Debug.LogError("[NetBootstrap] StartServer failed."); return; }
 
                     var sceneName = args.GetStr("-scene", string.Empty);
                     if (!string.IsNullOrWhiteSpace(sceneName)) StartCoroutine(CoLoadSceneNextFrame(sceneName));
                 }
-                else if (!string.IsNullOrWhiteSpace(joinCode))
+                else if (!string.IsNullOrEmpty(joinCode))
                 {
                     if (!allowClientAutoJoin)
                     {
@@ -206,17 +197,26 @@ namespace Game.Net
                         return;
                     }
 
-                    await MultiplayerService.Instance.JoinSessionByCodeAsync(joinCode.Trim());
-                    Debug.Log($"[MPS] Joined via code {joinCode.ToUpperInvariant()} Net={(useDirect ? "Direct" : "Relay")} Profile={UgsInitializer.CurrentProfile}");
-
                     if (useDirect)
                     {
-                        utp.SetConnectionData(string.IsNullOrWhiteSpace(listenIp) ? "127.0.0.1" : listenIp, (ushort)port);
-                        Debug.Log($"[UTP] Client connect {listenIp}:{port}");
+                        var parts = joinCode.Split(':');
+                        if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort p))
+                        {
+                            Debug.LogError("[NetBootstrap] Invalid direct join code: " + joinCode);
+                            return;
+                        }
+                        utp.SetConnectionData(parts[0], p);
+                        Debug.Log($"[UTP] Client connect {parts[0]}:{p}");
+                        if (!nm.StartClient())
+                        {
+                            Debug.LogError("[NetBootstrap] StartClient failed.");
+                            return;
+                        }
                     }
-
-                    if (!nm.IsClient && !nm.IsServer)
-                        if (!nm.StartClient()) { Debug.LogError("[NetBootstrap] StartClient failed."); return; }
+                    else
+                    {
+                        Debug.Log("[NetBootstrap] Relay join selected, but simplified to direct.");
+                    }
                 }
                 else
                 {
@@ -291,16 +291,22 @@ namespace Game.Net
 
             try
             {
+                Debug.Log($"[UGS] Initializing Unity Services with env: {environmentName}, profile: {profile}");
                 if (UnityServices.State != ServicesInitializationState.Initialized)
                 {
                     var options = new InitializationOptions()
                         .SetOption("com.unity.services.core.environment-name", environmentName)
                         .SetProfile(profile);
                     await UnityServices.InitializeAsync(options);
+                    Debug.Log("[UGS] Unity Services initialized.");
                 }
 
                 if (!AuthenticationService.Instance.IsSignedIn)
+                {
+                    Debug.Log("[UGS] Signing in anonymously...");
                     await AuthenticationService.Instance.SignInAnonymouslyAsync();
+                    Debug.Log("[UGS] Signed in anonymously.");
+                }
 
                 IsReady = true;
                 Debug.Log($"[UGS] Init OK. ProjectId={Application.cloudProjectId}, Env={environmentName}, Profile={profile}, PlayerId={AuthenticationService.Instance.PlayerId}");

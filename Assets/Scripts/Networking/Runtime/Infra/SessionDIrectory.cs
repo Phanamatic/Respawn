@@ -1,3 +1,4 @@
+// Assets/Scripts/Networking/Runtime/SessionDirectory.cs
 // Simple cross-process directory using a JSON file.
 // All servers write heartbeats; clients read to find an open server.
 

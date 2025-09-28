@@ -1,3 +1,4 @@
+// Assets/Scripts/Networking/Runtime/ServerControlListener.cs
 // Graceful shutdown for headless servers via file signal: <SessionDirectory.ControlDirectory>/<SessionId>.shutdown
 // Add this component to Lobby, Match_1v1, Match_2v2 server scenes.
 

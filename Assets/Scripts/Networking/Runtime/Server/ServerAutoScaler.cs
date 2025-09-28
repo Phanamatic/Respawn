@@ -1,3 +1,4 @@
+// Assets/Scripts/Networking/Runtime/ServerAutoScaler.cs
 // Spawns a new server process when threshold is reached.
 
 using Unity.Netcode;
@@ -45,7 +46,7 @@ namespace Game.Net
             var type = SessionContext.Type == ServerType.Lobby ? "lobby" :
                        SessionContext.Type == ServerType.OneVOne ? "1v1" : "2v2";
 
-            var args = $"-batchmode -nographics -mpsHost -net relay -scene \"{scene}\" -serverType {type} -max {SessionContext.MaxPlayers}";
+            var args = $"-batchmode -nographics -mpsHost -net direct -serverType {type} -max {SessionContext.MaxPlayers} -scene \"{scene}\"";
             var psi = new SProcessStartInfo(exe, args)
             {
                 UseShellExecute = false,

@@ -1,3 +1,4 @@
+// Assets/Scripts/Networking/Runtime/SessionContext.cs
 // Holds current session info for the running process.
 
 using UnityEngine;
@@ -10,7 +11,7 @@ namespace Game.Net
     {
         public static ServerType Type { get; private set; } = ServerType.None;
         public static string JoinCode { get; private set; } = "";
-        public static string SessionId { get; private set; } = "";
+               public static string SessionId { get; private set; } = "";
         public static int MaxPlayers { get; private set; } = 0;
         public static int Threshold { get; private set; } = 0; // spawn-new threshold
 
