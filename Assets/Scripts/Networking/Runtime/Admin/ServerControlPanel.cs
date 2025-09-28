@@ -83,7 +83,7 @@ namespace Game.Net
         }
 
         private static string BuildShutdownPath(string id) =>
-            Path.Combine(Application.persistentDataPath, "mps_control", id + ".shutdown");
+            Path.Combine(SessionDirectory.ControlDirectory, id + ".shutdown");
 
         private void SetStatus(string s) { if (statusText) statusText.text = s; }
     }

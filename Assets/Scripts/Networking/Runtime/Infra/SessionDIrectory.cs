@@ -1,4 +1,4 @@
-// Simple cross-process directory using a JSON file in persistentDataPath.
+// Simple cross-process directory using a JSON file.
 // All servers write heartbeats; clients read to find an open server.
 
 using System;
@@ -29,8 +29,18 @@ namespace Game.Net
             public long  updatedUnix;  // seconds
         }
 
-        private static readonly string FilePath = Path.Combine(Application.persistentDataPath, "mps_directory.json");
+        private static readonly string FilePath;
+        internal static readonly string BaseDirectory;
         private static readonly Mutex FileMutex = new Mutex(false, "Global\\MpsDirectoryMutex");
+
+        static SessionDirectory()
+        {
+            FilePath = ResolveFilePath(out var baseDir);
+            BaseDirectory = baseDir;
+#if UNITY_EDITOR
+            Debug.Log($"[SessionDirectory] Using directory: {FilePath}");
+#endif
+        }
 
         public static void Upsert(Entry e)
         {
@@ -95,5 +105,76 @@ namespace Game.Net
 
         private static void TryLock(int ms) { try { FileMutex.WaitOne(ms); } catch { } }
         private static void Unlock() { try { FileMutex.ReleaseMutex(); } catch { } }
+
+        private static string ResolveFilePath(out string baseDir)
+        {
+            // Allow explicit overrides first.
+            var overridePath = Environment.GetEnvironmentVariable("MPS_DIRECTORY_PATH");
+            if (!string.IsNullOrWhiteSpace(overridePath))
+            {
+                try
+                {
+                    var full = Path.GetFullPath(overridePath);
+                    baseDir = Path.GetDirectoryName(full) ?? Application.persistentDataPath;
+                    return full;
+                }
+                catch { }
+            }
+
+            var overrideRoot = Environment.GetEnvironmentVariable("MPS_DIRECTORY_ROOT");
+            if (!string.IsNullOrWhiteSpace(overrideRoot))
+            {
+                try
+                {
+                    var fullRoot = Path.GetFullPath(overrideRoot);
+                    Directory.CreateDirectory(fullRoot);
+                    baseDir = fullRoot;
+                    return Path.Combine(fullRoot, "mps_directory.json");
+                }
+                catch { }
+            }
+
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            var shared = TryBuildSharedDirectory(Environment.SpecialFolder.CommonApplicationData);
+            if (!string.IsNullOrEmpty(shared))
+            {
+                baseDir = shared;
+                return Path.Combine(shared, "mps_directory.json");
+            }
+#endif
+
+            baseDir = Application.persistentDataPath;
+            return Path.Combine(baseDir, "mps_directory.json");
+        }
+
+        private static string TryBuildSharedDirectory(Environment.SpecialFolder folder)
+        {
+            try
+            {
+                var root = Environment.GetFolderPath(folder);
+                if (string.IsNullOrEmpty(root)) return null;
+
+                var company = Sanitize(Application.companyName, "Company");
+                var product = Sanitize(Application.productName, "Game");
+                var dir = Path.Combine(root, company, product, "Mps");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+            catch { return null; }
+        }
+
+        private static string Sanitize(string input, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(input)) input = fallback;
+            var invalid = Path.GetInvalidFileNameChars();
+            var sb = new StringBuilder(input.Length);
+            foreach (var ch in input)
+            {
+                sb.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
+            }
+            return sb.ToString();
+        }
+
+        internal static string ControlDirectory => Path.Combine(BaseDirectory, "mps_control");
     }
 }

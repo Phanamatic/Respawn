@@ -1,4 +1,4 @@
-// Graceful shutdown for headless servers via file signal: <persistentDataPath>/mps_control/<SessionId>.shutdown
+// Graceful shutdown for headless servers via file signal: <SessionDirectory.ControlDirectory>/<SessionId>.shutdown
 // Add this component to Lobby, Match_1v1, Match_2v2 server scenes.
 
 using System.Collections;
@@ -22,7 +22,7 @@ namespace Game.Net
             while (!nm.IsServer) yield return null;
             while (string.IsNullOrEmpty(SessionContext.SessionId)) yield return null;
 
-            var dir = Path.Combine(Application.persistentDataPath, "mps_control");
+            var dir = SessionDirectory.ControlDirectory;
             Directory.CreateDirectory(dir);
             _signalPath = Path.Combine(dir, SessionContext.SessionId + ".shutdown");
 
