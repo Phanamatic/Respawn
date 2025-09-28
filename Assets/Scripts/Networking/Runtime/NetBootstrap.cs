@@ -1,5 +1,6 @@
 // Assets/Scripts/Networking/Runtime/NetBootstrap.cs
-// Unity 6 (6000.0.52f1)
+// Set sensible 1v1/2v2 defaults so "waiting" means not full.
+
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -11,16 +12,16 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
+using System.Net;
+using System.Net.Sockets;
 
 namespace Game.Net
 {
     public static class NetBootstrap
     {
-        // Run after the first scene loads so scene objects (NetworkManager, UnityTransport) exist.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Init()
         {
-            // Cap non-server builds to 60 FPS (servers use Null device).
             if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null)
             {
                 QualitySettings.vSyncCount = 0;
@@ -29,7 +30,6 @@ namespace Game.Net
 
             var args = new Args(Environment.GetCommandLineArgs());
 
-            // Always create the runner. It will wait for NM/UTP safely.
             var go = new GameObject("MpsBootstrapRunner");
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<MpsBootstrapRunner>().Run(args);
@@ -79,7 +79,6 @@ namespace Game.Net
 
             private async Task RunAsync(Args args)
             {
-                // --- UGS init with persistent, unique profile ---
                 var env = args.GetStr("-env", "production");
 
                 const string kPrefsKey = "ugs_profile_install";
@@ -154,8 +153,8 @@ namespace Game.Net
                 string serverTypeStr = args.GetStr("-serverType", "lobby").ToLowerInvariant();
                 var type = serverTypeStr == "1v1" ? ServerType.OneVOne : serverTypeStr == "2v2" ? ServerType.TwoVTwo : ServerType.Lobby;
 
-                int max = args.GetInt("-max", type == ServerType.Lobby ? 16 : type == ServerType.OneVOne ? 3 : 5);
-                int threshold = args.GetInt("-threshold", max / 2);
+                int max = args.GetInt("-max", type == ServerType.Lobby ? 16 : type == ServerType.OneVOne ? 2 : 4);
+                int threshold = args.GetInt("-threshold", type == ServerType.Lobby ? max / 2 : max);
                 SessionContext.Configure(type, max, threshold);
 
                 bool useDirect = args.GetStr("-net", "direct").ToLowerInvariant() == "direct";
@@ -164,11 +163,22 @@ namespace Game.Net
                 {
                     string listenIp = args.GetStr("-listenIp", "");
                     string publishIp = args.GetStr("-publishIp", "");
-                    int port = args.GetInt("-port", 7777);
+                    int port = args.GetInt("-port", 0);
+
                     string region = args.GetStr("-region", "us-west1");
 
                     if (useDirect)
                     {
+                        if (port == 0)
+                        {
+                            port = FindFreePort(50000, 60000);
+                            if (port < 0)
+                            {
+                                Debug.LogError("[NetBootstrap] Could not find free port.");
+                                return;
+                            }
+                        }
+
                         var listen = string.IsNullOrWhiteSpace(listenIp) ? "0.0.0.0" : listenIp;
                         utp.SetConnectionData(listen, (ushort)port);
                         Debug.Log($"[UTP] Server listen {listen}:{port}");
@@ -224,6 +234,30 @@ namespace Game.Net
                     Debug.Log("[NetBootstrap] No -mpsHost or -mpsJoin. Idle; UI will decide.");
 #endif
                 }
+            }
+
+            private int FindFreePort(int minPort, int maxPort)
+            {
+                for (int port = minPort; port <= maxPort; port++)
+                {
+                    TcpListener listener = null;
+                    try
+                    {
+                        listener = new TcpListener(IPAddress.Any, port);
+                        listener.Start();
+                        return port;
+                    }
+                    catch
+                    {
+                        // Port is busy
+                    }
+                    finally
+                    {
+                        listener?.Stop();
+                    }
+                }
+                Debug.LogError("[NetBootstrap] No free port found in range " + minPort + "-" + maxPort);
+                return -1;
             }
 
             private static void SanitizeNetworkPrefabs(NetworkManager nm)

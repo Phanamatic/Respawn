@@ -19,6 +19,10 @@ public sealed class ProximityBillboardText : MonoBehaviour
     [SerializeField] bool faceCamera = true;
     [SerializeField] bool yOnly = true;
 
+    [Header("Orientation Fix")]
+    [Tooltip("Flip 180° so text is not mirrored/backwards when facing camera.")]
+    [SerializeField] bool flipFacing180 = true;
+
     [Header("Target (optional)")]
     [SerializeField] Transform target;
 
@@ -28,6 +32,8 @@ public sealed class ProximityBillboardText : MonoBehaviour
     float _spin;              // degrees while opening
     Camera _cam;
     float _baseFontSize;      // original TMP size = 100%
+
+    static readonly Quaternion kFlipY180 = Quaternion.Euler(0f, 180f, 0f);
 
     void Awake()
     {
@@ -69,7 +75,7 @@ public sealed class ProximityBillboardText : MonoBehaviour
             Quaternion look;
             if (yOnly)
             {
-                var toCam = _cam.transform.position - transform.position;
+                var toCam = _cam.transform.position - transform.position; // vector from text to camera
                 toCam.y = 0f;
                 if (toCam.sqrMagnitude < 1e-6f) toCam = transform.forward;
                 look = Quaternion.LookRotation(toCam.normalized, Vector3.up);
@@ -79,6 +85,9 @@ public sealed class ProximityBillboardText : MonoBehaviour
                 var dirToCam = (_cam.transform.position - transform.position).normalized;
                 look = Quaternion.LookRotation(dirToCam, Vector3.up);
             }
+
+            // Ensure the visible text front faces the camera
+            if (flipFacing180) look *= kFlipY180;
 
             if (isOpeningNow)
                 transform.rotation = look * Quaternion.AngleAxis(_spin, Vector3.up);
@@ -102,6 +111,13 @@ public sealed class ProximityBillboardText : MonoBehaviour
     }
 
 #if UNITY_EDITOR
+    void OnValidate()
+    {
+        triggerRadius = Mathf.Max(0.1f, triggerRadius);
+        openDuration = Mathf.Max(0.01f, openDuration);
+        closeDuration = Mathf.Max(0.01f, closeDuration);
+    }
+
     void OnDrawGizmosSelected()
     {
         Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.5f);

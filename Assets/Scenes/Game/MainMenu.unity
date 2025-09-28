@@ -678,9 +678,7 @@ MonoBehaviour:
   directoryRefreshSeconds: 1
   joinBaseDelaySeconds: 1
   joinMaxRetries: 3
-  environmentName: production
-  ugsProfile: 
-  appendProcessIdToProfile: 1
+  singleJoinPerRun: 1
 --- !u!1 &1208022691
 GameObject:
   m_ObjectHideFlags: 0

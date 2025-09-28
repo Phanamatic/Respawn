@@ -1,6 +1,7 @@
 // Assets/Scripts/Networking/Runtime/UI/MainMenuClientUI.cs
-// Join-on-click UI with robust session handling.
+// Join-on-click UI with retry + exponential backoff.
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using TMPro;
@@ -22,8 +23,8 @@ namespace Game.Net
         [SerializeField, Min(0.25f)] private float directoryRefreshSeconds = 1.0f;
 
         [Header("Join Backoff")]
-        [SerializeField, Min(0.25f)] private float joinBaseDelaySeconds = 1.0f;
-        [SerializeField, Min(1)] private int joinMaxRetries = 3;
+        [SerializeField, Min(0.25f)] private float joinBaseDelaySeconds = 1.0f; // used
+        [SerializeField, Min(1)] private int joinMaxRetries = 3;                 // used
 
         [Header("Guards")]
         [SerializeField] private bool singleJoinPerRun = true;
@@ -33,12 +34,16 @@ namespace Game.Net
         private string _ellipsisBase;
         private bool _joining;
 
+        // constants for stable behavior
+        private const float ConnectTimeoutSeconds = 8f;     // time to wait per attempt
+        private const float MaxBackoffSeconds = 30f;        // cap
+
         private void OnEnable()
         {
             if (playButton) playButton.onClick.AddListener(OnPlayClicked);
             SetStatus("Idle");
             StartCoroutine(UpdateLobbyDirectoryLoop());
-            // Force 60 FPS as requested
+
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 60;
         }
@@ -97,36 +102,73 @@ namespace Game.Net
                 yield break;
             }
 
-            SetStatusAnimated($"Joining {friendlyName}");
-            Debug.Log($"[MainMenu] Attempting to join {code}");
-
-            var utp = nm.GetComponent<UnityTransport>();
-
-            // Parse code as ip:port
+            // Parse ip:port from directory code
+            var nmLocal = NetworkManager.Singleton;
+            var utp = nmLocal.GetComponent<UnityTransport>();
             var parts = code.Split(':');
-            if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort p))
+            if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort port))
             {
                 StopStatusAnimation();
                 SetStatus("Invalid join code format.");
                 Done(false);
                 yield break;
             }
+            utp.SetConnectionData(parts[0], port);
 
-            utp.SetConnectionData(parts[0], p);
+            float backoff = Mathf.Clamp(joinBaseDelaySeconds, 0.25f, MaxBackoffSeconds);
+            int attempts = Mathf.Max(1, joinMaxRetries);
 
-            if (nm.StartClient())
+            for (int attempt = 1; attempt <= attempts; attempt++)
             {
-                StopStatusAnimation();
-                SetStatus($"Joined {friendlyName}");
-                Done(true);
-                s_DidJoinThisRun = true;
+                SetStatusAnimated($"Joining {friendlyName} (try {attempt}/{attempts})");
+                Debug.Log($"[MainMenu] Attempting to join {code} attempt {attempt}/{attempts}");
+
+                bool started = nmLocal.StartClient();
+                if (!started)
+                {
+                    StopStatusAnimation();
+                    SetStatus("Failed to start client.");
+                }
+                else
+                {
+                    // Wait for connected or timeout while client is active
+                    float t = 0f;
+                    while (t < ConnectTimeoutSeconds && nmLocal.IsClient && !nmLocal.IsConnectedClient)
+                    {
+                        t += Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+
+                    if (nmLocal.IsConnectedClient)
+                    {
+                        StopStatusAnimation();
+                        SetStatus($"Joined {friendlyName}");
+                        Done(true);
+                        s_DidJoinThisRun = true;
+                        yield break;
+                    }
+                }
+
+                // Clean up failed attempt
+                if (nmLocal.IsClient || nmLocal.ShutdownInProgress)
+                {
+                    nmLocal.Shutdown();
+                    // give NGO a frame to teardown sockets
+                    yield return null;
+                }
+
+                if (attempt < attempts)
+                {
+                    StopStatusAnimation();
+                    SetStatus($"Retrying in {backoff:0.0}s");
+                    yield return new WaitForSecondsRealtime(backoff);
+                    backoff = Mathf.Min(backoff * 2f, MaxBackoffSeconds);
+                }
             }
-            else
-            {
-                StopStatusAnimation();
-                SetStatus("Connection failed.");
-                Done(false);
-            }
+
+            StopStatusAnimation();
+            SetStatus("Connection failed.");
+            Done(false);
         }
 
         private static SessionDirectory.Entry PickLeastLoadedWithIndex(List<SessionDirectory.Entry> list, out int index)

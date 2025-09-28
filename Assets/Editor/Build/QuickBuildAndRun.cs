@@ -105,11 +105,11 @@ public static class QuickBuildAndRun
 
     [MenuItem("Build/Quick/Run Seeds/Run 1v1")]
     public static void Run1v1Seed() =>
-        RunServer(ArgsForServer("1v1", 3, Scene1v1, DefaultEnv, "1v1_seed.log", 7778));
+        RunServer(ArgsForServer("1v1", 2, Scene1v1, DefaultEnv, "1v1_seed.log", 7778));
 
     [MenuItem("Build/Quick/Run Seeds/Run 2v2")]
     public static void Run2v2Seed() =>
-        RunServer(ArgsForServer("2v2", 5, Scene2v2, DefaultEnv, "2v2_seed.log", 7779));
+        RunServer(ArgsForServer("2v2", 4, Scene2v2, DefaultEnv, "2v2_seed.log", 7779));
 
     [MenuItem("Build/Quick/Run Seeds/Run All")]
     public static void RunAllSeeds() { RunLobbySeed(); Run1v1Seed(); Run2v2Seed(); }
@@ -245,6 +245,6 @@ public static class QuickBuildAndRun
         catch (Exception e) { Debug.LogError($"Failed to start: {exe}\n{e.Message}"); }
     }
 
-    private static void Reveal(string path) => EditorUtility.RevealInFinder(path);
+    private static void Reveal(string path) => UnityEditor.EditorUtility.RevealInFinder(path);
 }
 #endif

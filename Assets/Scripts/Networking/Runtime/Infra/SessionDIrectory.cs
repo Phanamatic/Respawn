@@ -1,6 +1,5 @@
 // Assets/Scripts/Networking/Runtime/SessionDirectory.cs
-// Simple cross-process directory using a JSON file.
-// All servers write heartbeats; clients read to find an open server.
+// Adds 'name' for friendly display. Keeps 'code' as ip:port for direct connect.
 
 using System;
 using System.Collections.Generic;
@@ -20,14 +19,15 @@ namespace Game.Net
         public sealed class Entry
         {
             public string id;
-            public string code;
-            public string type;        // "lobby" | "1v1" | "2v2"
+            public string code;     // ip:port
+            public string name;     // friendly, e.g., 1v1_Match_1
+            public string type;     // "lobby" | "1v1" | "2v2"
             public int   max;
             public int   threshold;
-            public int   current;      // connections (clients)
+            public int   current;
             public string scene;
             public string exe;
-            public long  updatedUnix;  // seconds
+            public long  updatedUnix;
         }
 
         private static readonly string FilePath;
@@ -64,7 +64,6 @@ namespace Game.Net
             {
                 var data = Load();
                 var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                // purge stale (> 45s)
                 data.entries.RemoveAll(e => now - e.updatedUnix > 45);
                 Save(data);
                 if (filter == null) return new List<Entry>(data.entries);
@@ -109,7 +108,6 @@ namespace Game.Net
 
         private static string ResolveFilePath(out string baseDir)
         {
-            // Allow explicit overrides first.
             var overridePath = Environment.GetEnvironmentVariable("MPS_DIRECTORY_PATH");
             if (!string.IsNullOrWhiteSpace(overridePath))
             {
@@ -170,9 +168,7 @@ namespace Game.Net
             var invalid = Path.GetInvalidFileNameChars();
             var sb = new StringBuilder(input.Length);
             foreach (var ch in input)
-            {
                 sb.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
-            }
             return sb.ToString();
         }
 
