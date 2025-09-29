@@ -1,5 +1,6 @@
 // Assets/Scripts/Networking/Runtime/Gameplay/PlayerNetwork.cs
-// Optimized for fast-paced shooter with interpolation and high tick rate
+// Server-auth movement with stamina + dash, interpolation for remotes,
+// plus freeze/visibility controls used by Match1v1Controller.
 
 using UnityEngine;
 using Unity.Netcode;
@@ -36,7 +37,7 @@ namespace Game.Net
         [Header("Network Interpolation")]
         [SerializeField, Range(0.05f, 0.5f)] float interpolationDelay = 0.1f;
         [SerializeField, Range(5f, 30f)] float extrapolationLimit = 15f;
-        
+
         [Header("Ground/Aim")]
         [SerializeField] LayerMask groundMask = ~0;
         [SerializeField] float groundSnapUp = 2.0f;
@@ -52,10 +53,17 @@ namespace Game.Net
         [SerializeField] Image dashFill;
         [SerializeField] TMP_Text dashLabel;
 
+        [Header("Visual Root (optional)")]
+        [SerializeField] Transform modelRoot;
+
         Rigidbody _rb;
         CapsuleCollider _capsule;
 
-        // Network state
+        // freeze/visibility caches
+        Renderer[] _renderers;
+        Collider[] _colliders;
+
+        // Network state buffer
         private struct NetworkState
         {
             public Vector3 position;
@@ -64,17 +72,16 @@ namespace Game.Net
             public float timestamp;
             public bool isDashing;
         }
-        
-        private NetworkState[] _stateBuffer = new NetworkState[30];
-        private int _stateCount = 0;
-        private float _lastReceivedTimestamp = -1f;
-        
-        // Network variables for state sync
-        private NetworkVariable<Vector3> _netPosition = new NetworkVariable<Vector3>();
-        private NetworkVariable<float> _netYaw = new NetworkVariable<float>();
-        private NetworkVariable<Vector3> _netVelocity = new NetworkVariable<Vector3>();
-        private NetworkVariable<bool> _netIsDashing = new NetworkVariable<bool>();
-        
+        NetworkState[] _stateBuffer = new NetworkState[30];
+        int _stateCount;
+        float _lastReceivedTimestamp = -1f;
+
+        // Sync vars (server writes, clients read)
+        NetworkVariable<Vector3> _netPosition = new NetworkVariable<Vector3>();
+        NetworkVariable<float> _netYaw = new NetworkVariable<float>();
+        NetworkVariable<Vector3> _netVelocity = new NetworkVariable<Vector3>();
+        NetworkVariable<bool> _netIsDashing = new NetworkVariable<bool>();
+
         // input (owner only)
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
@@ -96,8 +103,9 @@ namespace Game.Net
         IsometricCamera _isoCam;
         int _camBindTries;
 
-        // pause
+        // control flags
         bool _inputPaused;
+        bool _frozen;
 
         void Awake()
         {
@@ -105,22 +113,32 @@ namespace Game.Net
             _capsule = GetComponent<CapsuleCollider>();
 
             _rb.useGravity = true;
-            _rb.interpolation = RigidbodyInterpolation.None; // We'll handle interpolation
+            _rb.interpolation = RigidbodyInterpolation.None; // custom interp for remotes
             _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+
+            // collect visuals/colliders; prefer modelRoot if assigned
+            var root = modelRoot ? modelRoot : transform;
+            _renderers = root.GetComponentsInChildren<Renderer>(true);
+            _colliders = GetComponentsInChildren<Collider>(true);
 
             _stamina = sprintStaminaMax;
         }
 
         public override void OnNetworkSpawn()
         {
-            if (IsServer) SetPhase(initialPhase);
+            if (IsServer)
+            {
+                SetPhase(initialPhase);
+                SetFrozenServer(true); // start hidden/frozen until unfreezed by match flow
+            }
+
             if (IsOwner)
             {
                 SetupInputAndCamera();
                 TrySnapToGroundImmediate();
-                
-                // Add NetworkTransform if not present for backup sync
+
+                // backup sync for safety
                 if (!GetComponent<NetworkTransform>())
                 {
                     var nt = gameObject.AddComponent<NetworkTransform>();
@@ -128,7 +146,7 @@ namespace Game.Net
                     nt.SyncRotAngleY = true;
                     nt.SyncRotAngleX = nt.SyncRotAngleZ = false;
                     nt.SyncScaleX = nt.SyncScaleY = nt.SyncScaleZ = false;
-                    nt.UseHalfFloatPrecision = false; // Full precision for shooter
+                    nt.UseHalfFloatPrecision = false;
                     nt.UseQuaternionSynchronization = false;
                     nt.UseQuaternionCompression = false;
                 }
@@ -138,11 +156,10 @@ namespace Game.Net
             }
             else
             {
-                _rb.isKinematic = true;
+                _rb.isKinematic = true;   // client-side proxy
                 _rb.useGravity = false;
             }
-            
-            // Subscribe to network variable changes
+
             _netPosition.OnValueChanged += OnPositionChanged;
             _netYaw.OnValueChanged += OnYawChanged;
             _netVelocity.OnValueChanged += OnVelocityChanged;
@@ -154,8 +171,7 @@ namespace Game.Net
             if (_map != null) _map.Disable();
             if (_aDash != null) _aDash.performed -= OnDashPerformed;
             _map = null; _aMove = _aMouse = _aSprint = _aDash = null;
-            
-            // Unsubscribe
+
             _netPosition.OnValueChanged -= OnPositionChanged;
             _netYaw.OnValueChanged -= OnYawChanged;
             _netVelocity.OnValueChanged -= OnVelocityChanged;
@@ -197,7 +213,6 @@ namespace Game.Net
             _inMove = Vector2.zero;
 
             var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
-
             if (paused) _map?.Disable(); else _map?.Enable();
         }
 
@@ -212,7 +227,7 @@ namespace Game.Net
             if (_cam != null)
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
-                _isoCam.follow = transform; // fix: IsometricCamera has 'follow' field, not SetTarget()
+                _isoCam.follow = transform;
             }
         }
 
@@ -220,7 +235,6 @@ namespace Game.Net
         {
             if (!IsOwner) return;
             if (_inputPaused) { UpdateUI(); return; }
-
             if (_isoCam == null && _camBindTries < 60) { _camBindTries++; TryBindCamera(); }
         }
 
@@ -228,11 +242,10 @@ namespace Game.Net
         {
             if (!IsOwner)
             {
-                // Interpolate remote players
                 InterpolateRemotePlayer();
                 return;
             }
-            
+
             if (_inputPaused) { UpdateUI(); return; }
 
             _inMove   = _aMove?.ReadValue<Vector2>() ?? Vector2.zero;
@@ -244,11 +257,7 @@ namespace Game.Net
 
         void FixedUpdate()
         {
-            if (!IsOwner)
-            {
-                // Remote players are interpolated in Update
-                return;
-            }
+            if (!IsOwner) return;
 
             if (_inputPaused)
             {
@@ -259,7 +268,7 @@ namespace Game.Net
             float dt = Time.fixedDeltaTime;
             float now = Time.time;
 
-            // Camera-relative basis
+            // camera-relative basis
             Vector3 fwd = Vector3.forward, right = Vector3.right;
             if (_cam)
             {
@@ -267,7 +276,7 @@ namespace Game.Net
                 right = _cam.transform.right; right.y = 0f; right = right.sqrMagnitude > 1e-4f ? right.normalized : Vector3.right;
             }
 
-            // Aim yaw from mouse
+            // aim yaw from mouse
             float yaw = transform.eulerAngles.y;
             if (_cam)
             {
@@ -280,7 +289,7 @@ namespace Game.Net
                 }
             }
 
-            // Start dash if buffered + ready
+            // start dash if buffered + ready
             if (!_isDashing && now <= _dashQueuedUntil && now >= _dashReadyAt)
             {
                 _dashQueuedUntil = 0f;
@@ -291,11 +300,9 @@ namespace Game.Net
                 _dashReadyAt = _dashEndTime + dashCooldown;
 
                 _dashYaw = yaw;
-                var fwdXZ = Quaternion.Euler(0f, _dashYaw, 0f) * Vector3.forward;
-                fwdXZ.y = 0f;
+                var fwdXZ = Quaternion.Euler(0f, _dashYaw, 0f) * Vector3.forward; fwdXZ.y = 0f;
                 _dashDirXZ = fwdXZ.sqrMagnitude > 1e-4f ? fwdXZ.normalized : Vector3.forward;
-                
-                // Send dash state immediately
+
                 SendStateUpdateServerRpc(transform.position, _dashYaw, _rb.linearVelocity, _isDashing);
             }
 
@@ -320,67 +327,65 @@ namespace Game.Net
                 return;
             }
 
-            // Stamina drain/regen
+            // stamina drain/regen
             bool canSprint = _stamina > 0.05f;
             bool wantSprint = _inSprint && canSprint && _inMove.sqrMagnitude > 0.01f;
 
             if (wantSprint) { _stamina = Mathf.Max(0f, _stamina - sprintDrainPerSec * dt); _sprintRegenResumeAt = now + sprintRegenDelay; }
             else if (now >= _sprintRegenResumeAt) { _stamina = Mathf.Min(sprintStaminaMax, _stamina + sprintRegenPerSec * dt); }
 
-            // Movement (camera-relative)
+            // movement (camera-relative)
             Vector3 wish = right * _inMove.x + fwd * _inMove.y;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
-            transform.rotation = Quaternion.RotateTowards(
-                transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
 
             float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
             var vel = _rb.linearVelocity;
             vel.x = wish.x * speedMove;
             vel.z = wish.z * speedMove;
             _rb.linearVelocity = vel;
-            
-            // Send state update to server (throttled)
-            if (Time.frameCount % 2 == 0) // Send every 2nd frame for 30 Hz at 60 FPS
+
+            // send state to server (throttled)
+            if (Time.frameCount % 2 == 0)
             {
                 SendStateUpdateServerRpc(transform.position, yaw, vel, _isDashing);
             }
         }
-        
+
         [ServerRpc(RequireOwnership = false)]
         void SendStateUpdateServerRpc(Vector3 position, float yaw, Vector3 velocity, bool isDashing)
         {
-            // Server validates and broadcasts to all clients
             _netPosition.Value = position;
             _netYaw.Value = yaw;
             _netVelocity.Value = velocity;
             _netIsDashing.Value = isDashing;
         }
-        
-        void OnPositionChanged(Vector3 oldVal, Vector3 newVal)
+
+        void OnPositionChanged(Vector3 _, Vector3 newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(newVal, _netYaw.Value, _netVelocity.Value, _netIsDashing.Value);
         }
-        
-        void OnYawChanged(float oldVal, float newVal)
+
+        void OnYawChanged(float _, float newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(_netPosition.Value, newVal, _netVelocity.Value, _netIsDashing.Value);
         }
-        
-        void OnVelocityChanged(Vector3 oldVal, Vector3 newVal)
+
+        void OnVelocityChanged(Vector3 _, Vector3 newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(_netPosition.Value, _netYaw.Value, newVal, _netIsDashing.Value);
         }
-        
-        void OnDashingChanged(bool oldVal, bool newVal)
+
+        void OnDashingChanged(bool _, bool newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(_netPosition.Value, _netYaw.Value, _netVelocity.Value, newVal);
         }
-        
+
         void AddStateToBuffer(Vector3 pos, float yaw, Vector3 vel, bool dash)
         {
             var state = new NetworkState
@@ -388,11 +393,10 @@ namespace Game.Net
                 position = pos,
                 yaw = yaw,
                 velocity = vel,
-                timestamp = NetworkManager.Singleton.ServerTime.TimeAsFloat,
+                timestamp = NetworkManager.Singleton ? NetworkManager.Singleton.ServerTime.TimeAsFloat : Time.time,
                 isDashing = dash
             };
-            
-            // Shift buffer
+
             if (_stateCount >= _stateBuffer.Length)
             {
                 for (int i = 1; i < _stateBuffer.Length; i++)
@@ -401,23 +405,21 @@ namespace Game.Net
             }
             else
             {
-                _stateBuffer[_stateCount] = state;
-                _stateCount++;
+                _stateBuffer[_stateCount++] = state;
             }
-            
+
             _lastReceivedTimestamp = state.timestamp;
         }
-        
+
         void InterpolateRemotePlayer()
         {
             if (_stateCount < 2) return;
-            
-            float currentTime = NetworkManager.Singleton.ServerTime.TimeAsFloat - interpolationDelay;
-            
-            // Find the two states to interpolate between
+
+            float currentTime = (NetworkManager.Singleton ? NetworkManager.Singleton.ServerTime.TimeAsFloat : Time.time) - interpolationDelay;
+
             NetworkState from = default, to = default;
             bool found = false;
-            
+
             for (int i = 0; i < _stateCount - 1; i++)
             {
                 if (_stateBuffer[i].timestamp <= currentTime && _stateBuffer[i + 1].timestamp > currentTime)
@@ -428,30 +430,24 @@ namespace Game.Net
                     break;
                 }
             }
-            
+
             if (!found)
             {
-                // Extrapolate if needed
-                if (_stateCount > 0)
+                var latest = _stateBuffer[_stateCount - 1];
+                float deltaTime = currentTime - latest.timestamp;
+                if (deltaTime < extrapolationLimit)
                 {
-                    var latest = _stateBuffer[_stateCount - 1];
-                    float deltaTime = currentTime - latest.timestamp;
-                    
-                    if (deltaTime < extrapolationLimit)
-                    {
-                        transform.position = latest.position + latest.velocity * deltaTime;
-                        transform.rotation = Quaternion.Euler(0f, latest.yaw, 0f);
-                    }
+                    transform.position = latest.position + latest.velocity * deltaTime;
+                    transform.rotation = Quaternion.Euler(0f, latest.yaw, 0f);
                 }
                 return;
             }
-            
-            // Interpolate
+
             float t = Mathf.InverseLerp(from.timestamp, to.timestamp, currentTime);
             transform.position = Vector3.Lerp(from.position, to.position, t);
             transform.rotation = Quaternion.Slerp(
-                Quaternion.Euler(0f, from.yaw, 0f), 
-                Quaternion.Euler(0f, to.yaw, 0f), 
+                Quaternion.Euler(0f, from.yaw, 0f),
+                Quaternion.Euler(0f, to.yaw, 0f),
                 t
             );
         }
@@ -498,6 +494,61 @@ namespace Game.Net
 
         [ServerRpc(RequireOwnership = false)]
         public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
-        void SetPhase(PlayerPhase phase) { /* gate abilities later */ }
+        void SetPhase(PlayerPhase phase) { /* ability gating hook */ }
+
+        // ------- Freeze / Visibility API used by match flow -------
+
+        // Server-only. Freezes physics and disables colliders. Mirrors to clients.
+        public void SetFrozenServer(bool frozen)
+        {
+            if (!IsServer) return;
+
+            _frozen = frozen;
+
+            // stop motion
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+
+            // on server, flip kinematic to truly freeze sim
+            _rb.isKinematic = frozen;
+            SetCollidersEnabled(!frozen);
+
+            SetFrozenClientRpc(frozen);
+        }
+
+        [ClientRpc]
+        void SetFrozenClientRpc(bool frozen)
+        {
+            _frozen = frozen;
+
+            // proxies keep kinematic true, but still zero out
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+
+            // keep client colliders aligned with server intent
+            SetCollidersEnabled(!frozen);
+        }
+
+        public void SetVisible(bool visible)
+        {
+            // lazy refresh if needed
+            if (_renderers == null || _renderers.Length == 0)
+            {
+                var root = modelRoot ? modelRoot : transform;
+                _renderers = root.GetComponentsInChildren<Renderer>(true);
+            }
+
+            for (int i = 0; i < _renderers.Length; i++)
+                if (_renderers[i]) _renderers[i].enabled = visible;
+        }
+
+        void SetCollidersEnabled(bool enabled)
+        {
+            if (_colliders == null || _colliders.Length == 0)
+                _colliders = GetComponentsInChildren<Collider>(true);
+
+            for (int i = 0; i < _colliders.Length; i++)
+                if (_colliders[i]) _colliders[i].enabled = enabled;
+        }
     }
 }

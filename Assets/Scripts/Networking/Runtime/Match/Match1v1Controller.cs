@@ -424,7 +424,7 @@ namespace Game.Net
         }
 
         void PauseInputFor(ulong clientId, bool paused) =>
-            SetPlayerInputPausedClientRpc(paused, new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } });
+            SetPlayerInputPausedClientRpc(paused, ToClient(clientId));
 
         void BroadcastPauseAll(bool paused)
         {
@@ -458,6 +458,10 @@ namespace Game.Net
 
         Bounds TeamBoundsA() => areas.GetTeamCollider(TeamId.A).bounds;
         Bounds TeamBoundsB() => areas.GetTeamCollider(TeamId.B).bounds;
+
+        // helper to target a single client in ClientRpc
+        static ClientRpcParams ToClient(ulong clientId) =>
+            new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } };
 
         void RefreshUI()
         {
