@@ -19,7 +19,7 @@ namespace Game.Net
 
         void OnTriggerEnter(Collider other)
         {
-            if (!other.CompareTag("Player")) return;
+            if (!IsLocalOwner(other)) return;
             if (!lobbyUI) lobbyUI = FindFirstObjectByType<LobbyUI>(FindObjectsInactive.Include);
             if (!lobbyUI) return;
 
@@ -28,11 +28,18 @@ namespace Game.Net
 
         void OnTriggerExit(Collider other)
         {
-            if (!other.CompareTag("Player")) return;
+            if (!IsLocalOwner(other)) return;
             if (!lobbyUI) lobbyUI = FindFirstObjectByType<LobbyUI>(FindObjectsInactive.Include);
             if (!lobbyUI) return;
 
             lobbyUI.NotifyPlatformExited(panel);
+        }
+
+        static bool IsLocalOwner(Collider other)
+        {
+            if (!other || !other.CompareTag("Player")) return false;
+            var pn = other.GetComponentInParent<PlayerNetwork>();
+            return pn && pn.IsOwner; // only the client owning this player opens UI locally
         }
     }
 }

@@ -132,6 +132,14 @@ namespace Game.Net
                     nt.UseQuaternionSynchronization = false;
                     nt.UseQuaternionCompression = false;
                 }
+
+                _rb.isKinematic = false;
+                _rb.useGravity = true;
+            }
+            else
+            {
+                _rb.isKinematic = true;
+                _rb.useGravity = false;
             }
             
             // Subscribe to network variable changes
@@ -204,7 +212,7 @@ namespace Game.Net
             if (_cam != null)
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
-                _isoCam.SetTarget(transform);
+                _isoCam.follow = transform; // fix: IsometricCamera has 'follow' field, not SetTarget()
             }
         }
 
@@ -446,9 +454,6 @@ namespace Game.Net
                 Quaternion.Euler(0f, to.yaw, 0f), 
                 t
             );
-            
-            // Apply velocity for smooth prediction
-            _rb.linearVelocity = Vector3.Lerp(from.velocity, to.velocity, t);
         }
 
         void UpdateUI()
