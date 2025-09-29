@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Read(//mnt/c/Users/ljmoo/OneDrive/Desktop/Long Project 2025/Respawn/Respawn/Packages/**)",
-      "Read(//mnt/c/Users/ljmoo/OneDrive/Desktop/Long Project 2025/Respawn/Respawn/ProjectSettings/**)"
+      "Read(//mnt/c/Users/ljmoo/OneDrive/Desktop/Long Project 2025/Respawn/Respawn/ProjectSettings/**)",
+      "Read(//mnt/c/Users/ljmoo/OneDrive/Desktop/**)"
     ],
     "deny": [],
     "ask": []
