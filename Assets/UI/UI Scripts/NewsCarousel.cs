@@ -18,6 +18,7 @@ namespace UI.Scripts
 
         [Header("Navigation Dots")]
         [SerializeField] private List<Image> navigationDots = new List<Image>();
+        [SerializeField] private GameObject navigationDotsContainer;
         [SerializeField] private Color activeDotColor = Color.white;
         [SerializeField] private Color inactiveDotColor = new Color(1f, 1f, 1f, 0.3f);
 
@@ -426,6 +427,22 @@ namespace UI.Scripts
         public int GetImageCount()
         {
             return newsImages.Count;
+        }
+
+        public void ShowNavigationDots()
+        {
+            if (navigationDotsContainer != null)
+            {
+                navigationDotsContainer.SetActive(true);
+            }
+        }
+
+        public void HideNavigationDots()
+        {
+            if (navigationDotsContainer != null)
+            {
+                navigationDotsContainer.SetActive(false);
+            }
         }
     }
 }

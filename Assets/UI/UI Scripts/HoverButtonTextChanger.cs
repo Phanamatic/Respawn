@@ -42,11 +42,25 @@ namespace UI.Scripts
         {
             button = GetComponent<Button>();
 
+            // Auto-find TextMeshPro component in children if not assigned
             if (targetText == null)
                 targetText = GetComponentInChildren<TextMeshProUGUI>();
 
             if (targetText != null)
+            {
                 originalPosition = targetText.transform.localPosition;
+
+                // Store original text and color from the component if not set in inspector
+                if (string.IsNullOrEmpty(originalText))
+                    originalText = targetText.text;
+
+                if (originalColor == Color.white) // Default color check
+                    originalColor = targetText.color;
+            }
+            else
+            {
+                Debug.LogWarning($"HoverButtonTextChanger on {gameObject.name}: No TextMeshProUGUI found in children!");
+            }
         }
 
         private void Start()
