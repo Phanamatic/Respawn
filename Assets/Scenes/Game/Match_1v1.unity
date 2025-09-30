@@ -1897,8 +1897,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 23c1ce4fb46143f46bc5cb5224c934f6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  clearColorMode: 0
-  backgroundColorHDR: {r: 0.025, g: 0.07, b: 0.19, a: 0}
+  clearColorMode: 1
+  backgroundColorHDR: {r: 0, g: 0.7567787, b: 1, a: 1}
   clearDepth: 1
   volumeLayerMask:
     serializedVersion: 2
@@ -3427,6 +3427,8 @@ MonoBehaviour:
   winsNeeded: 5
   winLeadNeeded: 2
   suddenDeathAt: 7
+  playerPrefab: {fileID: 0}
+  roundStartGraceSeconds: 1.5
 --- !u!1 &1912432504
 GameObject:
   m_ObjectHideFlags: 0
