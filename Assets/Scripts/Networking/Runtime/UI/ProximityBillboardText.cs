@@ -5,7 +5,7 @@ using TMPro;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(TextMeshPro))]
-public sealed class ProximityBillboardText : MonoBehaviour
+public sealed class ProximityBillboardText : NetworkBehaviour
 {
     [Header("Proximity")]
     [SerializeField, Min(0.1f)] float triggerRadius = 6f;
@@ -26,26 +26,57 @@ public sealed class ProximityBillboardText : MonoBehaviour
     [Header("Target (optional)")]
     [SerializeField] Transform target;
 
+    [Header("Visibility")]
+    [Tooltip("If true and this object is under a player NetworkObject, only that local owner sees the billboard.")]
+    [SerializeField] bool showOnlyForOwner = true;
+
     TextMeshPro _tmp;
     float _t;                 // 0..1 open state
     bool _open;               // desired state
     float _spin;              // degrees while opening
     Camera _cam;
     float _baseFontSize;      // original TMP size = 100%
+    NetworkObject _ownerNO;   // parent/root NO used to decide owner-visibility
 
     static readonly Quaternion kFlipY180 = Quaternion.Euler(0f, 180f, 0f);
 
     void Awake()
     {
+        // Cache components early. Do not decide visibility yet because NGO ownership isn't ready.
         _tmp = GetComponent<TextMeshPro>();
         _cam = Camera.main;
         _baseFontSize = Mathf.Max(1f, _tmp.fontSize);
         _t = 0f;
-        _tmp.fontSize = 0f; // start at 0%
+        _tmp.fontSize = 0f; // start closed
+        _ownerNO = GetComponentInParent<NetworkObject>();
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        // Run only on clients. Dedicated server and server-logic never show or tick this.
+        if (!IsClient)
+        {
+            if (_tmp) _tmp.enabled = false;
+            enabled = false;
+            return;
+        }
+
+        // Owner-gated visibility (common for player-attached billboards like "Press E").
+        if (showOnlyForOwner && _ownerNO != null && !_ownerNO.IsOwner)
+        {
+            if (_tmp) _tmp.enabled = false;
+            enabled = false; // fully disable updates so no transform churn on remotes
+            return;
+        }
+
+        // Ensure visible component is enabled for the local viewer.
+        if (_tmp) _tmp.enabled = true;
     }
 
     void LateUpdate()
     {
+        if (!IsClient) return; // extra safety on host-mode state changes
+
         if (!target) target = ResolveLocalPlayerTransform();
         if (!_cam) _cam = Camera.main;
 
@@ -58,24 +89,24 @@ public sealed class ProximityBillboardText : MonoBehaviour
         float tPrev = _t;
         _t = Mathf.Clamp01(_t + dir * (dt / dur));
 
-        // Smoothstep
+        // Smoothstep easing
         float ease = _t * _t * (3f - 2f * _t);
 
-        // Scale font from 0% to 100% of original size
+        // Scale font from 0% to 100% locally only
         _tmp.fontSize = Mathf.LerpUnclamped(0f, _baseFontSize, ease);
 
-        // Spin only while opening (transitioning toward open)
+        // Spin only while opening
         bool isOpeningNow = dir > 0f && _t > 0f && _t < 1f && _t >= tPrev;
         if (isOpeningNow) _spin += spinSpeedOpen * dt;
         else _spin = 0f;
 
-        // Face camera; apply spin only during opening
+        // Face local camera; no networked state is changed
         if (faceCamera && _cam)
         {
             Quaternion look;
             if (yOnly)
             {
-                var toCam = _cam.transform.position - transform.position; // vector from text to camera
+                var toCam = _cam.transform.position - transform.position;
                 toCam.y = 0f;
                 if (toCam.sqrMagnitude < 1e-6f) toCam = transform.forward;
                 look = Quaternion.LookRotation(toCam.normalized, Vector3.up);
@@ -86,22 +117,22 @@ public sealed class ProximityBillboardText : MonoBehaviour
                 look = Quaternion.LookRotation(dirToCam, Vector3.up);
             }
 
-            // Ensure the visible text front faces the camera
             if (flipFacing180) look *= kFlipY180;
 
-            if (isOpeningNow)
-                transform.rotation = look * Quaternion.AngleAxis(_spin, Vector3.up);
-            else
-                transform.rotation = look; // still while open or closed
+            transform.rotation = isOpeningNow
+                ? look * Quaternion.AngleAxis(_spin, Vector3.up)
+                : look;
         }
     }
 
     Transform ResolveLocalPlayerTransform()
     {
+        // Prefer local owner PlayerNetwork if present.
         var players = FindObjectsByType<Game.Net.PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
         for (int i = 0; i < players.Length; i++)
             if (players[i] && players[i].IsOwner) return players[i].transform;
 
+        // Fallbacks for non-player-attached billboards.
         var nm = NetworkManager.Singleton;
         var po = nm ? nm.LocalClient?.PlayerObject : null;
         if (po) return po.transform;

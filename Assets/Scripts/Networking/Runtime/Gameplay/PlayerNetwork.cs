@@ -1,4 +1,6 @@
-// Server-auth movement with stamina + dash, interpolation for remotes.
+// Assets/Scripts/Networking/Runtime/Gameplay/PlayerNetwork.cs
+// Server-auth movement with stamina + dash, interpolation for remotes,
+// plus freeze/visibility controls used by Match1v1Controller.
 
 using System;
 using UnityEngine;
@@ -85,6 +87,8 @@ namespace Game.Net
 
         private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
 
+        private readonly NetworkVariable<float> _health = new(100f);
+
         public override void OnNetworkSpawn()
         {
             if (!_rb)
@@ -100,7 +104,15 @@ namespace Game.Net
                 ResolveInitialPenetration();
 
                 SetPhase(initialPhase);
-                if (initialPhase == PlayerPhase.Lobby) SetFrozenServer(false);
+                if (initialPhase == PlayerPhase.Match)
+                {
+                    SetVisible(false);
+                    SetFrozenServer(true);
+                }
+                else if (initialPhase == PlayerPhase.Lobby)
+                {
+                    SetFrozenServer(false);
+                }
             }
 
             if (IsOwner)
@@ -607,5 +619,11 @@ namespace Game.Net
 
         public TeamId GetTeam() => _team.Value;
         public void SetTeam(TeamId team) { if (IsServer) _team.Value = team; }
+
+        public float GetHealth() => _health.Value;
+        public void SetHealth(float health)
+        {
+            if (IsServer) _health.Value = health;
+        }
     }
 }
