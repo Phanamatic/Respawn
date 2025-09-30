@@ -70,7 +70,6 @@ namespace Game.Net
             pos.y += yLift;
 
             var inst = Instantiate(playerPrefab, pos, rot);
-            try { NM.AddNetworkPrefab(inst.gameObject); } catch { }
             inst.SpawnAsPlayerObject(clientId);
 
 #if UNITY_EDITOR

@@ -63,6 +63,21 @@ namespace Game.Net
         Renderer[] _renderers;
         Collider[] _colliders;
 
+        // Server-authoritative input replication
+        private struct InputCmd : INetworkSerializeByMemcpy { public float mx, my, yaw; public byte flags; public ushort seq; }
+        private const byte FLAG_SPRINT = 1 << 0;
+        private const byte FLAG_DASH   = 1 << 1;
+
+        // Server-received inputs
+        private Vector2 _svMove;
+        private bool _svSprint;
+        private float _svYaw;
+        private ushort _svLastSeq;
+
+        // Client send pacing
+        private float _nextInputSendAt;
+        private ushort _seq;
+
         struct NetworkState { public Vector3 position; public float yaw; public Vector3 velocity; public float timestamp; public bool isDashing; }
         NetworkState[] _stateBuffer = new NetworkState[30];
         int _stateCount;
@@ -78,7 +93,7 @@ namespace Game.Net
 
         float _stamina; float _sprintRegenResumeAt;
 
-        bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ; float _dashQueuedUntil;
+        bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ, _dashStartPos; float _dashQueuedUntil;
 
         Camera _cam; IsometricCamera _isoCam; int _camBindTries;
 
@@ -115,32 +130,23 @@ namespace Game.Net
                 }
             }
 
-            if (IsOwner)
+            if (IsServer)
             {
-                SetupInputAndCamera();
-                TrySnapToGroundImmediate(); // client visual safety
-
-                if (!GetComponent<NetworkTransform>())
-                {
-                    var nt = gameObject.AddComponent<NetworkTransform>();
-                    nt.SyncPositionX = nt.SyncPositionY = nt.SyncPositionZ = true;
-                    nt.SyncRotAngleY = true;
-                    nt.SyncRotAngleX = nt.SyncRotAngleZ = false;
-                    nt.SyncScaleX = nt.SyncScaleY = nt.SyncScaleZ = false;
-                    nt.UseHalfFloatPrecision = false;
-                    nt.UseQuaternionSynchronization = false;
-                    nt.UseQuaternionCompression = false;
-                }
-
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
-                SetInputPaused(false);
             }
             else
             {
                 _rb.isKinematic = true;
                 _rb.useGravity = false;
             }
+
+            if (IsOwner)
+            {
+                SetupInputAndCamera();
+                TrySnapToGroundImmediate(); // client visual safety
+            }
+            SetInputPaused(false);
 
             _netPosition.OnValueChanged += OnPositionChanged;
             _netYaw.OnValueChanged += OnYawChanged;
@@ -278,48 +284,75 @@ namespace Game.Net
             _inSprint = _aSprint != null && _aSprint.IsPressed();
 
             UpdateUI();
+
+            // Client: send input to server at 30 Hz
+            if (IsOwner && !IsServer)
+            {
+                float now = Time.time;
+                if (now >= _nextInputSendAt)
+                {
+                    _nextInputSendAt = now + (1f / 30f);
+                    byte flags = 0;
+                    if (_inSprint) flags |= FLAG_SPRINT;
+                    if (now <= _dashQueuedUntil) flags |= FLAG_DASH;
+
+                    Vector3 wishDir = (_cam ? _cam.transform.right : Vector3.right) * _inMove.x
+                                    + (_cam ? _cam.transform.forward : Vector3.forward) * _inMove.y;
+                    wishDir.y = 0f;
+                    float yaw = (_inMove.sqrMagnitude > 0.0001f && wishDir.sqrMagnitude > 0.0001f)
+                        ? Quaternion.LookRotation(wishDir.normalized, Vector3.up).eulerAngles.y
+                        : transform.eulerAngles.y;
+
+                    var cmd = new InputCmd { mx = _inMove.x, my = _inMove.y, yaw = yaw, flags = flags, seq = ++_seq };
+                    SendInputServerRpc(cmd);
+                }
+            }
+        }
+
+        [ServerRpc]
+        private void SendInputServerRpc(InputCmd cmd, ServerRpcParams rpcParams = default)
+        {
+            if (!IsServer) return;
+            if (cmd.seq == _svLastSeq) return; // ignore duplicates
+            _svLastSeq = cmd.seq;
+
+            _svMove = new Vector2(cmd.mx, cmd.my);
+            _svSprint = (cmd.flags & FLAG_SPRINT) != 0;
+            _svYaw = cmd.yaw;
+
+            if ((cmd.flags & FLAG_DASH) != 0)
+            {
+                float now = (float)NetworkManager.ServerTime.Time;
+                _dashQueuedUntil = now + dashInputBuffer;
+            }
         }
 
         void FixedUpdate()
         {
-            if (!IsOwner) return;
+            if (!IsServer) return;
             if (_rb == null) return;
-
-            // Do not write velocity to kinematic bodies.
             if (_rb.isKinematic) return;
 
-            if (_inputPaused)
+            if (_frozen)
             {
                 var v0 = _rb.linearVelocity; v0.x = 0f; v0.z = 0f; _rb.linearVelocity = v0;
                 return;
             }
 
             float dt = Time.fixedDeltaTime;
-            float now = Time.time;
+            float now = (float)NetworkManager.ServerTime.Time;
 
-            Vector3 fwd = Vector3.forward, right = Vector3.right;
-            if (_cam)
-            {
-                fwd = _cam.transform.forward; fwd.y = 0f; fwd = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
-                right = _cam.transform.right; right.y = 0f; right = right.sqrMagnitude > 1e-4f ? right.normalized : Vector3.right;
-            }
+            bool canSprint = _stamina > 0.001f;
+            bool wantSprint = _svSprint && canSprint && _svMove.sqrMagnitude > 0.01f;
 
-            float yaw = transform.eulerAngles.y;
-            if (_cam)
-            {
-                var ray = _cam.ScreenPointToRay(_inMouse);
-                if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
-                {
-                    var dir = hit.point - transform.position; dir.y = 0f;
-                    if (dir.sqrMagnitude > 0.0001f)
-                        yaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
-                }
-            }
+            if (wantSprint) { _stamina = Mathf.Max(0f, _stamina - sprintDrainPerSec * dt); _sprintRegenResumeAt = now + sprintRegenDelay; }
+            else if (now >= _sprintRegenResumeAt) { _stamina = Mathf.Min(sprintStaminaMax, _stamina + sprintRegenPerSec * dt); }
+
+            float yaw = _svYaw;
 
             if (!_isDashing && now <= _dashQueuedUntil && now >= _dashReadyAt)
             {
                 _dashQueuedUntil = 0f;
-
                 _isDashing = true;
                 _dashStartTime = now;
                 _dashEndTime = now + dashDuration;
@@ -328,8 +361,7 @@ namespace Game.Net
                 _dashYaw = yaw;
                 var fwdXZ = Quaternion.Euler(0f, _dashYaw, 0f) * Vector3.forward; fwdXZ.y = 0f;
                 _dashDirXZ = fwdXZ.sqrMagnitude > 1e-4f ? fwdXZ.normalized : Vector3.forward;
-
-                SendStateUpdateServerRpc(transform.position, _dashYaw, _rb.linearVelocity, _isDashing);
+                _dashStartPos = transform.position;
             }
 
             if (_isDashing)
@@ -338,53 +370,36 @@ namespace Game.Net
 
                 float tNorm = Mathf.Clamp01((now - _dashStartTime) / dashDuration);
                 float sPrime = 0.5f * Mathf.PI * Mathf.Sin(Mathf.PI * tNorm);
-                float speed = (dashDistance / dashDuration) * sPrime;
+                float dist = dashDistance * sPrime;
 
-                var v = _rb.linearVelocity;
-                v.x = _dashDirXZ.x * speed;
-                v.z = _dashDirXZ.z * speed;
-                _rb.linearVelocity = v;
+                Vector3 target = _dashStartPos + _dashDirXZ * dist;
+                Vector3 pos = transform.position;
+                Vector3 delta = target - pos; delta.y = 0f;
+                pos.x += delta.x; pos.z += delta.z;
+                transform.position = pos;
 
-                if (now >= _dashEndTime)
-                {
-                    _isDashing = false;
-                    SendStateUpdateServerRpc(transform.position, yaw, _rb.linearVelocity, _isDashing);
-                }
-                return;
+                if (now >= _dashEndTime) _isDashing = false;
             }
-
-            bool canSprint = _stamina > 0.05f;
-            bool wantSprint = _inSprint && canSprint && _inMove.sqrMagnitude > 0.01f;
-
-            if (wantSprint) { _stamina = Mathf.Max(0f, _stamina - sprintDrainPerSec * dt); _sprintRegenResumeAt = now + sprintRegenDelay; }
-            else if (now >= _sprintRegenResumeAt) { _stamina = Mathf.Min(sprintStaminaMax, _stamina + sprintRegenPerSec * dt); }
-
-            Vector3 wish = (_cam ? _cam.transform.right : Vector3.right) * _inMove.x
-                         + (_cam ? _cam.transform.forward : Vector3.forward) * _inMove.y;
-            wish.y = 0f;
-            if (wish.sqrMagnitude > 1f) wish.Normalize();
-
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
-
-            float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
-            var vel = _rb.linearVelocity;
-            vel.x = wish.x * speedMove;
-            vel.z = wish.z * speedMove;
-            _rb.linearVelocity = vel;
-
-            if (Time.frameCount % 2 == 0)
+            else
             {
-                SendStateUpdateServerRpc(transform.position, yaw, vel, _isDashing);
-            }
-        }
+                Quaternion yRot = Quaternion.Euler(0f, _svYaw, 0f);
+                Vector3 wish = (yRot * Vector3.right) * _svMove.x + (yRot * Vector3.forward) * _svMove.y;
+                wish.y = 0f;
+                if (wish.sqrMagnitude > 1f) wish.Normalize();
 
-        [ServerRpc(RequireOwnership = false)]
-        void SendStateUpdateServerRpc(Vector3 position, float yaw, Vector3 velocity, bool isDashing)
-        {
-            _netPosition.Value = position;
+                transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
+
+                float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
+                var vel = _rb.linearVelocity;
+                vel.x = wish.x * speedMove;
+                vel.z = wish.z * speedMove;
+                _rb.linearVelocity = vel;
+            }
+
+            _netPosition.Value = transform.position;
             _netYaw.Value = yaw;
-            _netVelocity.Value = velocity;
-            _netIsDashing.Value = isDashing;
+            _netVelocity.Value = _rb.linearVelocity;
+            _netIsDashing.Value = _isDashing;
         }
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)

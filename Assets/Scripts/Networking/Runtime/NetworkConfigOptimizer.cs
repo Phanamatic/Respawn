@@ -16,6 +16,9 @@ namespace Game.Net
         [Tooltip("Choose preset based on game type")]
         [SerializeField] private PerformanceProfile profile = PerformanceProfile.FastPacedShooter; // 60 Hz by default
 
+        [Header("Transport Tweaks")]
+        [SerializeField] private bool forceReliableSequenced = false;
+
         [Header("Custom Settings (if Custom profile)")]
         [SerializeField, Range(30, 256)] private int tickRate = 60;
 
@@ -151,7 +154,7 @@ namespace Game.Net
             }
         }
 
-        private static void ConfigureUnityTransport(NetworkManager nm, int targetTick)
+        private void ConfigureUnityTransport(NetworkManager nm, int targetTick)
         {
             var utp = nm.GetComponent<UnityTransport>();
             if (!utp)
@@ -172,7 +175,7 @@ namespace Game.Net
             SetUTPProperty(utp, "MaxReceiveQueueSize",Mathf.Clamp(targetTick * 4, 256, 4096));
             SetUTPProperty(utp, "MaxPacketSize", 1400);
 
-            SetUTPReliabilityMode(utp);
+            if (forceReliableSequenced) SetUTPReliabilityMode(utp);
         }
 
         private static void SetUTPProperty(UnityTransport utp, string name, object value)

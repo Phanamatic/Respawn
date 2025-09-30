@@ -19,7 +19,8 @@ namespace Game.Net
         public sealed class Entry
         {
             public string id;
-            public string code;     // ip:port
+            public string net;      // "relay" | "direct"
+            public string code;     // relay join code OR ip:port
             public string name;     // friendly, e.g., 1v1_Match_1
             public string type;     // "lobby" | "1v1" | "2v2"
             public int   max;

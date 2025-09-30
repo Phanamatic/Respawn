@@ -33,7 +33,8 @@ namespace Game.Net
             _entry = new SessionDirectory.Entry
             {
                 id = SessionContext.SessionId,
-                code = SessionContext.JoinCode,               // ip:port for direct connect
+                net = "relay",                                // "relay" | "direct"
+                code = SessionContext.JoinCode,               // relay join code OR ip:port
                 name = BuildFriendlyName(typeKey),            // human-readable name
                 type = typeKey,
                 max = SessionContext.MaxPlayers,

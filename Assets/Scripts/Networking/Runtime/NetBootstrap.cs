@@ -12,6 +12,9 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Networking.Transport.Relay;
 using System.Net;
 using System.Net.Sockets;
 
@@ -188,12 +191,39 @@ namespace Game.Net
                             return;
                         }
                         var publish = string.IsNullOrWhiteSpace(publishIp) ? "127.0.0.1" : publishIp;
+                        if (publish == "127.0.0.1")
+                            Debug.LogWarning("[NetBootstrap] Direct mode will be LAN-only unless -publishIp is provided.");
                         SessionContext.SetSession(Guid.NewGuid().ToString(), publish + ":" + port);
                         Debug.Log($"[Direct] Hosting {type}. Publish={publish}:{port} Profile={UgsInitializer.CurrentProfile}");
                     }
                     else
                     {
-                        Debug.Log("[NetBootstrap] Relay mode selected, but simplified to direct. Use -net direct for direct mode.");
+                        // Relay host
+                        try
+                        {
+                            var alloc = await RelayService.Instance.CreateAllocationAsync(max, region);
+                            utp.SetRelayServerData(
+                                alloc.RelayServer.IpV4,
+                                (ushort)alloc.RelayServer.Port,
+                                alloc.AllocationIdBytes,
+                                alloc.Key,
+                                alloc.ConnectionData,
+                                null,
+                                true);
+                            if (!nm.StartServer())
+                            {
+                                Debug.LogError("[NetBootstrap] StartServer failed (relay).");
+                                return;
+                            }
+                            var join = await RelayService.Instance.GetJoinCodeAsync(alloc.AllocationId);
+                            SessionContext.SetSession(Guid.NewGuid().ToString(), join);
+                            Debug.Log($"[Relay] Hosting {type}. JoinCode={join} Region={region} Profile={UgsInitializer.CurrentProfile}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError("[NetBootstrap] Relay allocate failed: " + ex);
+                            return;
+                        }
                     }
 
                     var sceneName = args.GetStr("-scene", string.Empty);
@@ -225,7 +255,29 @@ namespace Game.Net
                     }
                     else
                     {
-                        Debug.Log("[NetBootstrap] Relay join selected, but simplified to direct.");
+                        // Relay client
+                        try
+                        {
+                            var joinAlloc = await RelayService.Instance.JoinAllocationAsync(joinCode);
+                            utp.SetRelayServerData(
+                                joinAlloc.RelayServer.IpV4,
+                                (ushort)joinAlloc.RelayServer.Port,
+                                joinAlloc.AllocationIdBytes,
+                                joinAlloc.Key,
+                                joinAlloc.ConnectionData,
+                                joinAlloc.HostConnectionData,
+                                true);
+                            Debug.Log($"[UTP] Client join via Relay. Code={joinCode}");
+                            if (!nm.StartClient())
+                            {
+                                Debug.LogError("[NetBootstrap] StartClient failed (relay).");
+                                return;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError("[NetBootstrap] Relay join failed: " + ex);
+                        }
                     }
                 }
                 else

@@ -46,7 +46,7 @@ namespace Game.Net
             var type = SessionContext.Type == ServerType.Lobby ? "lobby" :
                        SessionContext.Type == ServerType.OneVOne ? "1v1" : "2v2";
 
-            var args = $"-batchmode -nographics -mpsHost -net direct -serverType {type} -max {SessionContext.MaxPlayers} -scene \"{scene}\"";
+            var args = $"-batchmode -nographics -mpsHost -net relay -serverType {type} -max {SessionContext.MaxPlayers} -scene \"{scene}\" -region us-west1";
             var psi = new SProcessStartInfo(exe, args)
             {
                 UseShellExecute = false,

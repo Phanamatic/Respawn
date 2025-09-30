@@ -90,6 +90,9 @@ namespace Game.Net
         private float _spawnDeadlineServer;
         private bool _firstRound = true;
         private float _roundStartTimeServer;
+        private readonly Dictionary<ulong, float> _lastSpawnPickAt = new();
+        private readonly HashSet<ulong> _spawnLocked = new();
+        [SerializeField, Min(0.05f)] float spawnPickMinInterval = 0.25f; // seconds
 
         // Client state
         private bool _selecting;
@@ -247,6 +250,8 @@ namespace Game.Net
             _state.Value = MatchState.SpawnSelect;
             _spawnDeadlineServer = Time.unscaledTime + spawnSelectSeconds;
             _chosenSpawns.Clear();
+            _spawnLocked.Clear();
+            _lastSpawnPickAt.Clear();
 
             foreach (var kv in _teams)
             {
@@ -444,7 +449,9 @@ namespace Game.Net
 
             if (IsClient && _state.Value == MatchState.Playing && roundTimerText)
             {
-                float timeLeft = Mathf.Max(0, _roundEndTime.Value - Time.time);
+                var st = NetworkManager ? NetworkManager.ServerTime : default;
+                float now = (float)st.Time;
+                float timeLeft = Mathf.Max(0, _roundEndTime.Value - now);
                 int minutes = (int)(timeLeft / 60);
                 int seconds = (int)(timeLeft % 60);
                 roundTimerText.text = $"{minutes:0}:{seconds:00}";
@@ -462,8 +469,15 @@ namespace Game.Net
             var b = areas.GetTeamCollider(team).bounds;
             if (!ContainsXZ(b, point)) return;
 
+            // Rate limit and ignore after first valid pick per client.
+            if (_spawnLocked.Contains(cid)) return;
+            float now = (float)NetworkManager.ServerTime.Time;
+            if (_lastSpawnPickAt.TryGetValue(cid, out var last) && now - last < spawnPickMinInterval) return;
+            _lastSpawnPickAt[cid] = now;
+
             // Store the exact XZ and let server snap Y to Ground on spawn.
             _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
+            _spawnLocked.Add(cid);
 
             if (_chosenSpawns.Count >= _playerCount.Value)
                 SpawnAllAndStartRound();
@@ -499,8 +513,8 @@ namespace Game.Net
             }
 
             _state.Value = MatchState.Playing;
-            _roundStartTimeServer = Time.time;
-            _roundEndTime.Value = Time.time + roundDurationSeconds;
+            _roundStartTimeServer = (float)NetworkManager.ServerTime.Time;
+            _roundEndTime.Value = _roundStartTimeServer + roundDurationSeconds;
 
             SetAllPlayersVisibleClientRpc(true);
             FreezeAllPlayers(false);
@@ -529,8 +543,6 @@ namespace Game.Net
             var capsule = inst.GetComponent<CapsuleCollider>();
             GroundClampServer.SnapToGround(t, EffectiveGroundMask(), 0.02f, capsule, 10f, 50f);
 
-            // Ensure prefab is registered then spawn.
-            try { NetworkManager.AddNetworkPrefab(inst.gameObject); } catch { }
             inst.SpawnAsPlayerObject(clientId);
 
             // Initialize team and health post-spawn.
@@ -574,7 +586,7 @@ namespace Game.Net
                 }
 
                 // Grace: wait until both teams actually have a spawned player, and initial settle time.
-                if (Time.time < _roundStartTimeServer + roundStartGraceSeconds || count_A == 0 || count_B == 0)
+                if ((float)NetworkManager.ServerTime.Time < _roundStartTimeServer + roundStartGraceSeconds || count_A == 0 || count_B == 0)
                 {
                     yield return new WaitForSeconds(0.25f);
                     continue;
@@ -591,7 +603,8 @@ namespace Game.Net
                     else roundWinner = -1; // draw
                 }
 
-                if (roundWinner != -1 || Time.time >= _roundEndTime.Value)
+                float _now = (float)NetworkManager.ServerTime.Time;
+                if (roundWinner != -1 || _now >= _roundEndTime.Value)
                 {
                     EndRound(roundWinner);
                     yield break;
@@ -748,14 +761,14 @@ namespace Game.Net
         [ClientRpc]
         void SetPlayerInputPausedClientRpc(bool paused, ClientRpcParams p = default)
         {
-            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            foreach (var pl in players)
-                if (pl && pl.IsOwner) pl.SetInputPaused(paused);
+            var po = NetworkManager?.SpawnManager?.GetLocalPlayerObject();
+            var localPlayer = po ? po.GetComponent<PlayerNetwork>() : null;
+            if (localPlayer && localPlayer.IsOwner) localPlayer.SetInputPaused(paused);
 
             if (paused && statusText && statusCanvas)
             {
                 statusText.text = _state.Value == MatchState.Waiting
-                    ? $"Waiting for {_playerCount.Value}/2 players"
+                    ? $"Waiting for {_playerCount.Value} players..."
                     : "Please wait";
                 ShowCanvas(statusCanvas, true);
             }
