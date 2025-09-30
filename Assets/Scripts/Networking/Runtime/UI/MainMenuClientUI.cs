@@ -1,16 +1,22 @@
 // Assets/Scripts/Networking/Runtime/UI/MainMenuClientUI.cs
-// Join-on-click UI with robust session handling.
+// Purpose: Low-rate Lobby polling, Quick Join, shared throttle, and cache to avoid rate limits
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
-using System.Text;
+using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
-using Unity.Services.Multiplayer;
+using Unity.Services.Core;
+using Unity.Services.Authentication;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Networking.Transport.Relay;
 
 namespace Game.Net
 {
@@ -22,26 +28,40 @@ namespace Game.Net
         [SerializeField] private TMP_Text openLobbiesText;
 
         [Header("Refresh")]
-        [SerializeField, Min(0.25f)] private float directoryRefreshSeconds = 1.0f;
-
-        [Header("Join Backoff")]
-        [SerializeField, Min(0.25f)] private float joinBaseDelaySeconds = 1.0f;
-        [SerializeField, Min(1)] private int joinMaxRetries = 3;
+        [SerializeField, Min(1f)] private float lobbyRefreshSeconds = 10f; // safer default
 
         [Header("Guards")]
         [SerializeField] private bool singleJoinPerRun = true;
         private static bool s_DidJoinThisRun;
 
+        // --- Shared throttle and cache across all instances ---
+        private static double s_NextAllowedQueryTime;            // token-bucket style min interval
+        private const double MinQueryIntervalSeconds = 1.75;     // ~34 QPS per minute max, under typical limits
+        private static List<Lobby> s_LobbyCache;
+        private static double s_LobbyCacheAt;
+        private const double CacheTtlSeconds = 5.0;
+        private static bool s_QueryInFlight;
+
         private Coroutine _ellipsisCo;
         private string _ellipsisBase;
         private bool _joining;
+        private bool _servicesInitialized;
+        private Lobby _tempJoinedLobby;
+
+        // jitter
+        private static readonly System.Random s_Rng = new System.Random();
+        private static float Jitter(float baseSeconds, float pct = 0.25f)
+        {
+            var f = 1f + (float)(s_Rng.NextDouble() * pct);
+            return baseSeconds * f;
+        }
 
         private void OnEnable()
         {
             if (playButton) playButton.onClick.AddListener(OnPlayClicked);
-            SetStatus("Idle");
-            StartCoroutine(UpdateLobbyDirectoryLoop());
-            // Force 60 FPS as requested
+            SetStatus("Initializing...");
+            StartCoroutine(InitializeAndRefreshLoop());
+
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 60;
         }
@@ -55,14 +75,56 @@ namespace Game.Net
             _joining = false;
         }
 
+        private IEnumerator InitializeAndRefreshLoop()
+        {
+            SetStatusAnimated("Initializing services");
+            while (!UgsInitializer.IsReady)
+            {
+                if (!string.IsNullOrEmpty(UgsInitializer.LastError))
+                {
+                    Debug.LogError($"[MainMenu] UGS init failed: {UgsInitializer.LastError}");
+                    StopStatusAnimation();
+                    SetStatus("Service init failed");
+                    yield break;
+                }
+                yield return null;
+            }
+
+            StopStatusAnimation();
+            _servicesInitialized = true;
+
+            // Start a single refresh loop. Do not restart it on Play.
+            StartCoroutine(UpdateLobbyListLoop());
+            SetStatus("Ready");
+        }
+
         public void OnPlayClicked()
         {
             if (_joining) return;
             if (singleJoinPerRun && s_DidJoinThisRun) { SetStatus("Already joined this run."); return; }
+            if (!_servicesInitialized) { SetStatus("Services not ready."); return; }
 
-            StopAllCoroutines();
+            // Do not StopAllCoroutines(); keep the one refresh loop. It auto-pauses when _joining is true.
             StartCoroutine(JoinLobbyFlow());
-            StartCoroutine(UpdateLobbyDirectoryLoop());
+        }
+
+        private IEnumerator ThrottleLobbyRead()
+        {
+            // serialize reads and enforce min interval
+            while (s_QueryInFlight) yield return null;
+            s_QueryInFlight = true;
+
+            var now = Time.unscaledTimeAsDouble;
+            var wait = s_NextAllowedQueryTime - now;
+            if (wait > 0) yield return new WaitForSecondsRealtime((float)wait);
+
+            // reserve next slot
+            s_NextAllowedQueryTime = Math.Max(now, s_NextAllowedQueryTime) + MinQueryIntervalSeconds;
+        }
+
+        private void ReleaseLobbyReadSlot()
+        {
+            s_QueryInFlight = false;
         }
 
         private IEnumerator JoinLobbyFlow()
@@ -76,156 +138,286 @@ namespace Game.Net
 
             _joining = true;
             SetBusy(true);
-            SetStatusAnimated("Looking for lobby");
+            SetStatusAnimated("Finding server");
 
-            var lobbies = SessionDirectory.GetSnapshot(e => e.type == "lobby");
-            if (lobbies == null || lobbies.Count == 0)
+            // First try Quick Join to cut a round trip
+            Lobby joinedLobby = null;
+            int quickRetries = 3;
+            for (int i = 0; i < quickRetries; i++)
             {
-                StopStatusAnimation();
-                SetStatus("No lobby servers available.");
-                Done(false);
-                yield break;
-            }
-
-            int friendlyIndex;
-            var best = PickLeastLoadedWithIndex(lobbies, out friendlyIndex);
-            string friendlyName = $"Lobby_{friendlyIndex}";
-            string code = best.code.Trim();
-
-            if (!ValidateNetworkManager())
-            {
-                StopStatusAnimation();
-                SetStatus("NetworkManager/Transport missing.");
-                Done(false);
-                yield break;
-            }
-
-            SetStatusAnimated("Leaving old sessions");
-            yield return new WaitForSecondsRealtime(1.5f);
-
-            var joined = false;
-            float delay = Mathf.Max(0.25f, joinBaseDelaySeconds);
-            int attempts429 = 0;
-
-            while (!joined)
-            {
-                SetStatusAnimated($"Joining {friendlyName}");
-                Debug.Log($"[MainMenu] Attempting to join {code}");
-
-                // Parse code as ip:port
-                var parts = code.Split(':');
-                if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort port))
+                yield return ThrottleLobbyRead();
+                var quickTask = LobbyService.Instance.QuickJoinLobbyAsync(new QuickJoinLobbyOptions
                 {
-                    StopStatusAnimation();
-                    SetStatus("Invalid join code format.");
-                    Done(false);
-                    yield break;
+                    Filter = new List<QueryFilter>
+                    {
+                        new QueryFilter(QueryFilter.FieldOptions.S1, "Lobby", QueryFilter.OpOptions.EQ),
+                        new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "0", QueryFilter.OpOptions.GT)
+                    }
+                });
+                yield return new WaitUntil(() => quickTask.IsCompleted);
+                ReleaseLobbyReadSlot();
+
+                if (quickTask.Exception == null)
+                {
+                    joinedLobby = quickTask.Result;
+                    break;
                 }
 
-                var utp = nm.GetComponent<UnityTransport>();
-                if (utp == null)
+                var ex = quickTask.Exception.InnerException ?? quickTask.Exception;
+                if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
                 {
-                    StopStatusAnimation();
-                    SetStatus("UnityTransport missing.");
-                    Done(false);
-                    yield break;
-                }
-
-                utp.SetConnectionData(parts[0], port);
-
-                bool ok = false;
-                yield return StartNgoClientAndWait(v => ok = v);
-                if (ok) 
-                { 
-                    StopStatusAnimation();
-                    SetStatus($"Joined {friendlyName}");
-                    Done(true); 
-                    yield break; 
-                }
-
-                if (attempts429 < joinMaxRetries)
-                {
-                    StopStatusAnimation();
-                    SetStatus($"Connection failed. Retrying in {delay:0.0}s");
-                    yield return new WaitForSecondsRealtime(delay);
-                    attempts429++; delay *= 2f;
+                    var backoff = Jitter(1f * (1 << i));
+                    Debug.LogWarning($"[MainMenu] Rate limited on QuickJoin. Retry in {backoff:0.0}s");
+                    yield return new WaitForSecondsRealtime(backoff);
                     continue;
                 }
-
-                StopStatusAnimation();
-                SetStatus("Join failed.");
-                Done(false);
-                yield break;
+                Debug.LogWarning($"[MainMenu] QuickJoin failed: {ex.Message}");
+                break;
             }
-        }
 
-        private IEnumerator StartNgoClientAndWait(System.Action<bool> onDone)
-        {
-            var nm = NetworkManager.Singleton;
-            if (nm == null) { onDone?.Invoke(false); yield break; }
-
-            if (!nm.IsClient && !nm.IsServer)
+            // If Quick Join failed, fall back to cached list or a single query
+            if (joinedLobby == null)
             {
-                if (!nm.StartClient())
+                yield return StartCoroutine(GetLobbyListCachedOrQuery());
+                var list = s_LobbyCache;
+                if (list is List<Lobby> l && l.Count > 0)
                 {
-                    SetStatus("StartClient failed.");
-                    onDone?.Invoke(false);
-                    yield break;
+                    yield return StartCoroutine(JoinLobbyById(l[0].Id));
+                    joinedLobby = _tempJoinedLobby;
                 }
             }
 
-            float t = 0f, timeout = 15f;
-            while (!nm.IsConnectedClient && t < timeout)
+            if (joinedLobby == null)
             {
-                t += Time.unscaledDeltaTime;
+                StopStatusAnimation();
+                SetStatus("No server available");
+                Done(false);
+                yield break;
+            }
+
+            // Relay join
+            if (!joinedLobby.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
+            {
+                Debug.LogError("[MainMenu] No relay code in lobby");
+                SetStatus("Invalid lobby");
+                Done(false);
+                yield break;
+            }
+
+            var joinAllocTask = RelayService.Instance.JoinAllocationAsync(relayCodeData.Value);
+            yield return new WaitUntil(() => joinAllocTask.IsCompleted);
+            if (joinAllocTask.Exception != null)
+            {
+                Debug.LogError($"[MainMenu] Relay join failed: {joinAllocTask.Exception}");
+                SetStatus("Join failed");
+                Done(false);
+                yield break;
+            }
+
+            var utp = nm.GetComponent<UnityTransport>();
+            var alloc = joinAllocTask.Result;
+
+            // prefer DTLS; fall back if needed
+            var ep = alloc.ServerEndpoints.FirstOrDefault(e => e.ConnectionType.Equals("dtls", StringComparison.OrdinalIgnoreCase))
+                     ?? alloc.ServerEndpoints.FirstOrDefault();
+            if (ep == null)
+            {
+                Debug.LogError("[MainMenu] No Relay endpoint");
+                SetStatus("Join failed");
+                Done(false);
+                yield break;
+            }
+
+            var rsd = new RelayServerData(
+                ep.Host,
+                (ushort)ep.Port,
+                alloc.AllocationIdBytes,
+                alloc.ConnectionData,
+                alloc.HostConnectionData,
+                alloc.Key,
+                ep.Secure || ep.ConnectionType.Equals("dtls", StringComparison.OrdinalIgnoreCase));
+
+            utp.SetRelayServerData(rsd);
+
+            if (!nm.StartClient())
+            {
+                Debug.LogError("[MainMenu] StartClient failed");
+                SetStatus("Client start failed");
+                Done(false);
+                yield break;
+            }
+
+            float timeout = 10f;
+            while (!nm.IsConnectedClient && timeout > 0f)
+            {
+                timeout -= Time.deltaTime;
                 yield return null;
             }
-            onDone?.Invoke(nm.IsConnectedClient);
+
+            if (nm.IsConnectedClient)
+            {
+                StopStatusAnimation();
+                SetStatus($"Joined {joinedLobby.Name}");
+                SessionContext.SetLobby(joinedLobby);
+                Done(true);
+            }
+            else
+            {
+                SetStatus("Connection timeout");
+                nm.Shutdown();
+                Done(false);
+            }
         }
 
-        // -------- Directory UI --------
-        private IEnumerator UpdateLobbyDirectoryLoop()
+        private IEnumerator GetLobbyListCachedOrQuery()
+        {
+            // serve cache if fresh
+            if (Time.unscaledTimeAsDouble - s_LobbyCacheAt <= CacheTtlSeconds && s_LobbyCache != null)
+            {
+                yield return s_LobbyCache;
+                yield break;
+            }
+
+            // throttle and query once
+            yield return ThrottleLobbyRead();
+            var queryOptions = new QueryLobbiesOptions
+            {
+                Count = 10,
+                Filters = new List<QueryFilter>
+                {
+                    new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "0", QueryFilter.OpOptions.GT),
+                    new QueryFilter(QueryFilter.FieldOptions.S1, "Lobby", QueryFilter.OpOptions.EQ)
+                },
+                Order = new List<QueryOrder> { new QueryOrder(false, QueryOrder.FieldOptions.AvailableSlots) }
+            };
+            var task = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            yield return new WaitUntil(() => task.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (task.Exception != null)
+            {
+                var ex = task.Exception.InnerException ?? task.Exception;
+                if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
+                {
+                    var backoff = Jitter(2f);
+                    Debug.LogWarning($"[MainMenu] Rate limit on list. Backoff {backoff:0.0}s");
+                    yield return new WaitForSecondsRealtime(backoff);
+                    yield return new List<Lobby>(); // empty on limit
+                    yield break;
+                }
+
+                Debug.LogWarning($"[MainMenu] Query failed: {ex.Message}");
+                yield return new List<Lobby>();
+                yield break;
+            }
+
+            s_LobbyCache = task.Result.Results ?? new List<Lobby>();
+            s_LobbyCacheAt = Time.unscaledTimeAsDouble;
+            yield return s_LobbyCache;
+        }
+
+        private IEnumerator JoinLobbyById(string lobbyId)
+        {
+            yield return ThrottleLobbyRead();
+            var joinTask = LobbyService.Instance.JoinLobbyByIdAsync(lobbyId);
+            yield return new WaitUntil(() => joinTask.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (joinTask.Exception != null)
+            {
+                var ex = joinTask.Exception.InnerException ?? joinTask.Exception;
+                if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
+                {
+                    var backoff = Jitter(1.5f);
+                    Debug.LogWarning($"[MainMenu] Rate limit on JoinLobby. Backoff {backoff:0.0}s");
+                    yield return new WaitForSecondsRealtime(backoff);
+                    yield return null;
+                    yield break;
+                }
+
+                Debug.LogWarning($"[MainMenu] JoinLobby failed: {ex.Message}");
+                yield return null;
+                yield break;
+            }
+
+            _tempJoinedLobby = joinTask.Result;
+            yield return _tempJoinedLobby;
+        }
+
+        private IEnumerator UpdateLobbyListLoop()
         {
             while (isActiveAndEnabled)
             {
-                var lobbies = SessionDirectory.GetSnapshot(e => e.type == "lobby");
-                if (openLobbiesText)
+                if (_servicesInitialized && !_joining)
                 {
-                    if (lobbies == null || lobbies.Count == 0)
-                    {
-                        openLobbiesText.text = "Open Lobbies (0)";
-                    }
-                    else
-                    {
-                        openLobbiesText.text = $"Open Lobbies ({lobbies.Count})";
-                    }
+                    yield return UpdateLobbyCountOnce();
                 }
-                yield return new WaitForSecondsRealtime(directoryRefreshSeconds);
+                yield return new WaitForSecondsRealtime(lobbyRefreshSeconds);
             }
         }
 
-        private static SessionDirectory.Entry PickLeastLoadedWithIndex(List<SessionDirectory.Entry> list, out int friendlyIndex)
+        private IEnumerator UpdateLobbyCountOnce()
         {
-            friendlyIndex = 0;
-            if (list == null || list.Count == 0) return null;
+            if (!AuthenticationService.Instance.IsSignedIn) yield break;
 
-            list.Sort((a, b) => a.current.CompareTo(b.current));
-            var best = list[0];
-
-            if (!string.IsNullOrEmpty(best.name) && best.name.StartsWith("Lobby_"))
+            // use cache if fresh
+            if (Time.unscaledTimeAsDouble - s_LobbyCacheAt <= CacheTtlSeconds && s_LobbyCache != null)
             {
-                var tail = best.name.Substring("Lobby_".Length);
-                if (int.TryParse(tail, out int idx)) friendlyIndex = idx;
+                SetOpenCountText(s_LobbyCache);
+                yield break;
             }
-            if (friendlyIndex == 0) friendlyIndex = 1;
-            return best;
+
+            yield return ThrottleLobbyRead();
+            var queryOptions = new QueryLobbiesOptions
+            {
+                Count = 10,
+                Filters = new List<QueryFilter> { new QueryFilter(QueryFilter.FieldOptions.S1, "Lobby", QueryFilter.OpOptions.EQ) }
+            };
+
+            var task = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            yield return new WaitUntil(() => task.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (task.Exception != null)
+            {
+                var ex = task.Exception.InnerException ?? task.Exception;
+                if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
+                {
+                    Debug.LogWarning("[MainMenu] Rate limit hit on query lobbies count.");
+                    // leave text as-is
+                    yield break;
+                }
+
+                Debug.LogWarning($"[MainMenu] Failed to query lobbies: {ex.Message}");
+                yield break;
+            }
+
+            s_LobbyCache = task.Result.Results ?? new List<Lobby>();
+            s_LobbyCacheAt = Time.unscaledTimeAsDouble;
+            SetOpenCountText(s_LobbyCache);
         }
 
-        // -------- UI helpers --------
+        private void SetOpenCountText(List<Lobby> lobbies)
+        {
+            int openCount = lobbies.Count(l => l.AvailableSlots > 0);
+            if (openLobbiesText) openLobbiesText.text = $"Open Lobbies ({openCount})";
+        }
+
         private void SetBusy(bool busy) { if (playButton) playButton.interactable = !busy; }
         private void SetStatus(string s) { if (statusText) statusText.text = s; }
-        private void SetStatusAnimated(string baseText) { StopStatusAnimation(); _ellipsisBase = baseText; _ellipsisCo = StartCoroutine(Ellipsis()); }
-        private void StopStatusAnimation() { if (_ellipsisCo != null) StopCoroutine(_ellipsisCo); _ellipsisCo = null; _ellipsisBase = null; }
+        private void SetStatusAnimated(string baseText)
+        {
+            StopStatusAnimation();
+            _ellipsisBase = baseText;
+            _ellipsisCo = StartCoroutine(Ellipsis());
+        }
+        private void StopStatusAnimation()
+        {
+            if (_ellipsisCo != null) StopCoroutine(_ellipsisCo);
+            _ellipsisCo = null;
+            _ellipsisBase = null;
+        }
+
         private IEnumerator Ellipsis()
         {
             int dots = 0;
@@ -244,7 +436,6 @@ namespace Game.Net
             SetBusy(false);
         }
 
-        // -------- Misc --------
         private static bool ValidateNetworkManager()
         {
             var nm = NetworkManager.Singleton;

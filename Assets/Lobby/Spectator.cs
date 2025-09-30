@@ -13,7 +13,7 @@ public class Spectator : MonoBehaviour
     
     private void Start()
     {
-        crowd = FindObjectOfType<Crowd>();
+        crowd = FindFirstObjectByType<Crowd>();
         
         startingYPosition = transform.position.y;
         randomSpeed = Random.Range(crowd.defaultSpeed - crowd.randomnessFactor,

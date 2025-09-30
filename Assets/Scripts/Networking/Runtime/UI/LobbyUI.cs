@@ -1,14 +1,22 @@
 // Assets/Scripts/Networking/Runtime/UI/LobbyUI.cs
-// Direct-connect to 1v1/2v2 servers. Prefer waiting servers, else empty.
-// Shows friendly names like 1v1_Match_1, connects via ip:port.
+// Attaches to: Lobby UI canvas GameObject (as NetworkBehaviour)
+// Updated to use Unity Lobby/Relay for global 1v1/2v2 matchmaking
 
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using Unity.Services.Authentication;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Networking.Transport.Relay;
 
 namespace Game.Net
 {
@@ -200,40 +208,69 @@ namespace Game.Net
             _armouryLastCloseAt = Time.unscaledTime; _armouryLeftSinceClose = false;
         }
 
-        // ---------- Play actions (client-side direct connect) ----------
-        private void QueueFor1v1() => StartCoroutine(JoinMatch("1v1"));
-        private void QueueFor2v2() => StartCoroutine(JoinMatch("2v2"));
+        // ---------- Play actions (Unity Relay/Lobby matchmaking) ----------
+        private void QueueFor1v1() => StartCoroutine(JoinMatch("OneVOne"));
+        private void QueueFor2v2() => StartCoroutine(JoinMatch("TwoVTwo"));
 
-        private IEnumerator JoinMatch(string typeKey)
+        private IEnumerator JoinMatch(string serverType)
         {
             if (_busy) yield break;
             _busy = true;
             SetAllButtonsInteractable(false);
 
-            var matches = SessionDirectory.GetSnapshot(e => e.type == typeKey);
-            if (matches == null || matches.Count == 0)
+            // Ensure authenticated
+            if (!AuthenticationService.Instance.IsSignedIn)
             {
-                SetPlayStatus("No " + typeKey + " matches available.");
+                SetPlayStatus("Not signed in. Please restart.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            // Prefer waiting (has players but not full)
-            SessionDirectory.Entry best = matches.FirstOrDefault(e => e.current > 0 && e.current < e.max);
+            SetPlayStatus($"Finding {(serverType == "OneVOne" ? "1v1" : "2v2")} match...");
 
-            // Else empty
-            if (best == null) best = matches.FirstOrDefault(e => e.current == 0);
+            // Query Unity Lobby service for matches
+            List<Lobby> availableMatches = null;
 
-            if (best == null)
+            var queryOptions = new QueryLobbiesOptions
             {
-                SetPlayStatus("All " + typeKey + " matches full.");
+                Count = 25,
+                Filters = new List<QueryFilter>
+                {
+                    new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "0", QueryFilter.OpOptions.GT),
+                    new QueryFilter(QueryFilter.FieldOptions.S1, serverType, QueryFilter.OpOptions.EQ)
+                },
+                Order = new List<QueryOrder>
+                {
+                    new QueryOrder(false, QueryOrder.FieldOptions.AvailableSlots) // Most available slots first
+                }
+            };
+
+            var queryTask = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            yield return new WaitUntil(() => queryTask.IsCompleted);
+
+            if (queryTask.Exception != null)
+            {
+                Debug.LogError($"[LobbyUI] Failed to query matches: {queryTask.Exception}");
+                SetPlayStatus("Failed to find matches.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            SetPlayStatus("Joining " + best.name + "...");
+            availableMatches = queryTask.Result.Results;
+
+            if (availableMatches == null || availableMatches.Count == 0)
+            {
+                SetPlayStatus($"No {(serverType == "OneVOne" ? "1v1" : "2v2")} matches available.");
+                _busy = false;
+                SetAllButtonsInteractable(true);
+                yield break;
+            }
+
+            // Pick best match (most slots = waiting for players)
+            var bestMatch = availableMatches[0];
+            SetPlayStatus($"Joining {bestMatch.Name}...");
 
             var nm = NetworkManager.Singleton;
             var utp = nm.GetComponent<UnityTransport>();
@@ -245,43 +282,81 @@ namespace Game.Net
                 while (nm.IsConnectedClient) yield return null;
             }
 
-            // Parse ip:port
-            var parts = best.code.Split(':');
-            if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort p))
+            // Join the Unity Lobby
+            var joinLobbyTask = LobbyService.Instance.JoinLobbyByIdAsync(bestMatch.Id);
+            yield return new WaitUntil(() => joinLobbyTask.IsCompleted);
+
+            if (joinLobbyTask.Exception != null)
             {
-                SetPlayStatus("Invalid server address.");
+                Debug.LogError($"[LobbyUI] Failed to join lobby: {joinLobbyTask.Exception}");
+                SetPlayStatus("Failed to join match.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            utp.SetConnectionData(parts[0], p);
-            if (!nm.StartClient())
+            var joinedLobby = joinLobbyTask.Result;
+
+            // Get the Relay join code from lobby data
+            if (!joinedLobby.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
             {
-                SetPlayStatus("Failed to connect to " + best.name + ".");
+                Debug.LogError("[LobbyUI] No relay code in match lobby");
+                SetPlayStatus("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
+                yield break;
+            }
+
+            string relayJoinCode = relayCodeData.Value;
+
+            // Join the Relay allocation
+            var joinAllocTask = RelayService.Instance.JoinAllocationAsync(relayJoinCode);
+            yield return new WaitUntil(() => joinAllocTask.IsCompleted);
+
+            if (joinAllocTask.Exception != null)
+            {
+                Debug.LogError($"[LobbyUI] Failed to join allocation: {joinAllocTask.Exception}");
+                SetPlayStatus("Failed to join match.");
+                _busy = false;
+                SetAllButtonsInteractable(true);
+                yield break;
+            }
+
+            var joinAllocation = joinAllocTask.Result;
+
+            // Configure transport for Relay
+            utp.SetRelayServerData(AllocationUtils.ToRelayServerData(joinAllocation, "dtls"));
+
+            // Start client
+            if (!nm.StartClient())
+            {
+                SetPlayStatus($"Failed to connect to {bestMatch.Name}.");
+                _busy = false;
+                SetAllButtonsInteractable(true);
+                yield break;
+            }
+
+            // Wait for connection or timeout
+            float timeout = 10f;
+            while (!nm.IsConnectedClient && timeout > 0f)
+            {
+                timeout -= Time.deltaTime;
+                yield return null;
+            }
+
+            if (nm.IsConnectedClient)
+            {
+                SetPlayStatus($"Joined {bestMatch.Name}.");
+                SessionContext.SetLobby(joinedLobby);
             }
             else
             {
-                // Wait for connection or timeout
-                float timeout = 10f;
-                while (!nm.IsConnectedClient && timeout > 0f)
-                {
-                    timeout -= Time.deltaTime;
-                    yield return null;
-                }
-                if (nm.IsConnectedClient)
-                    SetPlayStatus("Joined " + best.name + ".");
-                else
-                {
-                    SetPlayStatus("Connection timeout to " + best.name + ".");
-                    nm.Shutdown();
-                }
-
-                _busy = false;
-                SetAllButtonsInteractable(true);
+                SetPlayStatus($"Connection timeout to {bestMatch.Name}.");
+                nm.Shutdown();
             }
+
+            _busy = false;
+            SetAllButtonsInteractable(true);
         }
 
         // ---------- Status helpers ----------
@@ -303,7 +378,6 @@ namespace Game.Net
             _playStatusCo = null;
         }
 
-        // Rich status + animations (from original)
         void ShowPlayStatus(string msgBase)
         {
             if (!playPanel || !playPanel.gameObject.activeSelf) return;

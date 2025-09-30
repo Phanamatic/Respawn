@@ -1,7 +1,8 @@
 // Assets/Scripts/Networking/Runtime/SessionContext.cs
-// Holds current session info for the running process.
+// Updated to hold Unity Lobby reference for relay-based sessions
 
 using UnityEngine;
+using Unity.Services.Lobbies.Models;
 
 namespace Game.Net
 {
@@ -13,7 +14,10 @@ namespace Game.Net
         public static string JoinCode { get; private set; } = "";
         public static string SessionId { get; private set; } = "";
         public static int MaxPlayers { get; private set; } = 0;
-        public static int Threshold { get; private set; } = 0; // spawn-new threshold
+        public static int Threshold { get; private set; } = 0;
+        
+        // Unity Lobby reference for relay sessions
+        public static Lobby CurrentLobby { get; private set; } = null;
 
         public static void Configure(ServerType type, int max, int threshold)
         {
@@ -27,6 +31,25 @@ namespace Game.Net
             SessionId = id ?? "";
             JoinCode = code ?? "";
             Debug.Log($"[SessionContext] Session set. Type={Type} Id={SessionId} Code={JoinCode}");
+        }
+
+        public static void SetLobby(Lobby lobby)
+        {
+            CurrentLobby = lobby;
+            if (lobby != null)
+            {
+                Debug.Log($"[SessionContext] Unity Lobby set. Name={lobby.Name} Id={lobby.Id}");
+            }
+        }
+
+        public static void Clear()
+        {
+            Type = ServerType.None;
+            JoinCode = "";
+            SessionId = "";
+            MaxPlayers = 0;
+            Threshold = 0;
+            CurrentLobby = null;
         }
     }
 }

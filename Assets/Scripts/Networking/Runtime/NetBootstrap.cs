@@ -1,5 +1,6 @@
 // Assets/Scripts/Networking/Runtime/NetBootstrap.cs
-// Set sensible 1v1/2v2 defaults so "waiting" means not full.
+// Unity 6 (6000.0.52f1) – Relay + Lobby host/client bootstrap with profile sanitization.
+// Requires: Assets/Scripts/Networking/Runtime/Relay/RelayUtils.cs
 
 using System;
 using System.Linq;
@@ -12,8 +13,11 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
-using System.Net;
-using System.Net.Sockets;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
+using Unity.Networking.Transport.Relay;
 
 namespace Game.Net
 {
@@ -29,7 +33,6 @@ namespace Game.Net
             }
 
             var args = new Args(Environment.GetCommandLineArgs());
-
             var go = new GameObject("MpsBootstrapRunner");
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<MpsBootstrapRunner>().Run(args);
@@ -77,6 +80,14 @@ namespace Game.Net
                 _ = RunAsync(args);
             }
 
+            private static string SanitizeProfile(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return "Default";
+                var safe = new string(s.Where(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_').ToArray());
+                if (safe.Length > 30) safe = safe.Substring(0, 30);
+                return string.IsNullOrWhiteSpace(safe) ? "Default" : safe;
+            }
+
             private async Task RunAsync(Args args)
             {
                 var env = args.GetStr("-env", "production");
@@ -90,9 +101,10 @@ namespace Game.Net
                     PlayerPrefs.Save();
                 }
 
+                // Short, valid default profile. Server can override with -profile Server
                 var profileCli = args.GetStr("-profile", null);
-                var defaultProfile = Application.isEditor ? "Editor" : $"Client-{installId}";
-                var profile = string.IsNullOrWhiteSpace(profileCli) ? defaultProfile : profileCli.Trim();
+                var defaultProfile = Application.isEditor ? "Editor" : $"Cli_{installId.Substring(0, 10)}";
+                var profile = SanitizeProfile(string.IsNullOrWhiteSpace(profileCli) ? defaultProfile : profileCli.Trim());
 
                 Debug.Log("[NetBootstrap] Starting UGS initialization...");
                 await UgsInitializer.EnsureAsync(env, profile);
@@ -105,11 +117,11 @@ namespace Game.Net
                 if (!UgsInitializer.IsReady)
                 {
                     Debug.LogError("[NetBootstrap] UGS not ready: " + (UgsInitializer.LastError ?? "unknown"));
-                } else {
-                    Debug.Log("[NetBootstrap] UGS initialized successfully.");
+                    return;
                 }
+                Debug.Log("[NetBootstrap] UGS initialized successfully.");
 
-                // --- Wait for NetworkManager + UnityTransport to exist and be wired ---
+                // Wait for NetworkManager + UnityTransport
                 NetworkManager nm = null;
                 UnityTransport utp = null;
 
@@ -126,7 +138,6 @@ namespace Game.Net
                     await Task.Yield();
                 }
 
-                // Ensure a UnityTransport is present and assigned.
                 while (!nm.TryGetComponent(out utp))
                 {
                     utp = nm.GetComponent<UnityTransport>();
@@ -142,13 +153,12 @@ namespace Game.Net
                 if (nm.NetworkConfig == null) nm.NetworkConfig = new NetworkConfig();
                 if (nm.NetworkConfig.NetworkTransport == null) nm.NetworkConfig.NetworkTransport = utp;
 
-                // De-dupe network prefabs in a version-agnostic way (compare prefab refs).
                 SanitizeNetworkPrefabs(nm);
 
-                // --- CLI parsing ---
+                // CLI
                 bool wantHost = args.HasFlag("-mpsHost");
-                string joinCode = args.GetStr("-mpsJoin", null);
-                bool allowClientAutoJoin = args.HasFlag("-autoJoin"); // UI controls join unless true
+                string cliJoinCode = args.GetStr("-mpsJoin", null);
+                bool allowClientAutoJoin = args.HasFlag("-autoJoin");
 
                 string serverTypeStr = args.GetStr("-serverType", "lobby").ToLowerInvariant();
                 var type = serverTypeStr == "1v1" ? ServerType.OneVOne : serverTypeStr == "2v2" ? ServerType.TwoVTwo : ServerType.Lobby;
@@ -157,49 +167,57 @@ namespace Game.Net
                 int threshold = args.GetInt("-threshold", type == ServerType.Lobby ? max / 2 : max);
                 SessionContext.Configure(type, max, threshold);
 
-                bool useDirect = args.GetStr("-net", "direct").ToLowerInvariant() == "direct";
-
                 if (wantHost)
                 {
-                    string listenIp = args.GetStr("-listenIp", "");
-                    string publishIp = args.GetStr("-publishIp", "");
-                    int port = args.GetInt("-port", 0);
-
-                    string region = args.GetStr("-region", "us-west1");
-
-                    if (useDirect)
+                    string region = args.GetStr("-region", "auto");
+                    try
                     {
-                        if (port == 0)
-                        {
-                            port = FindFreePort(50000, 60000);
-                            if (port < 0)
-                            {
-                                Debug.LogError("[NetBootstrap] Could not find free port.");
-                                return;
-                            }
-                        }
+                        // Relay host
+                        var allocation = await RelayService.Instance.CreateAllocationAsync(max);
+                        var relayJoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
 
-                        var listen = string.IsNullOrWhiteSpace(listenIp) ? "0.0.0.0" : listenIp;
-                        utp.SetConnectionData(listen, (ushort)port);
-                        Debug.Log($"[UTP] Server listen {listen}:{port}");
+                        // Configure UTP for Relay
+                        var rsd = RelayUtils.ToServerData(allocation, useWss: false);
+                        utp.SetRelayServerData(rsd);
+
+                        // Create Lobby and index ServerType on S1 so QuickJoin/queries work
+                        var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);
+                        var lobbyOptions = new CreateLobbyOptions
+                        {
+                            IsPrivate = false,
+                            Data = new Dictionary<string, DataObject>
+                            {
+                                ["RelayJoinCode"] = new DataObject(DataObject.VisibilityOptions.Public, relayJoinCode),
+                                ["ServerType"]    = new DataObject(DataObject.VisibilityOptions.Public, type.ToString(), DataObject.IndexOptions.S1),
+                                ["Scene"]         = new DataObject(DataObject.VisibilityOptions.Public, SceneManager.GetActiveScene().name),
+                                ["Region"]        = new DataObject(DataObject.VisibilityOptions.Public, region, DataObject.IndexOptions.S2)
+                            }
+                        };
+
+                        var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, max, lobbyOptions);
+
                         if (!nm.StartServer())
                         {
                             Debug.LogError("[NetBootstrap] StartServer failed.");
                             return;
                         }
-                        var publish = string.IsNullOrWhiteSpace(publishIp) ? "127.0.0.1" : publishIp;
-                        SessionContext.SetSession(Guid.NewGuid().ToString(), publish + ":" + port);
-                        Debug.Log($"[Direct] Hosting {type}. Publish={publish}:{port} Profile={UgsInitializer.CurrentProfile}");
+
+                        SessionContext.SetSession(lobby.Id, relayJoinCode);
+                        SessionContext.SetLobby(lobby);
+                        Debug.Log($"[Relay] Hosting {type}. LobbyId={lobby.Id} JoinCode={relayJoinCode} Region={region}");
+
+                        StartCoroutine(LobbyHeartbeat(lobby.Id));
                     }
-                    else
+                    catch (Exception e)
                     {
-                        Debug.Log("[NetBootstrap] Relay mode selected, but simplified to direct. Use -net direct for direct mode.");
+                        Debug.LogError($"[NetBootstrap] Failed to create Relay/Lobby: {e.Message}");
+                        return;
                     }
 
                     var sceneName = args.GetStr("-scene", string.Empty);
                     if (!string.IsNullOrWhiteSpace(sceneName)) StartCoroutine(CoLoadSceneNextFrame(sceneName));
                 }
-                else if (!string.IsNullOrEmpty(joinCode))
+                else if (!string.IsNullOrEmpty(cliJoinCode))
                 {
                     if (!allowClientAutoJoin)
                     {
@@ -207,25 +225,23 @@ namespace Game.Net
                         return;
                     }
 
-                    if (useDirect)
+                    try
                     {
-                        var parts = joinCode.Split(':');
-                        if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort p))
-                        {
-                            Debug.LogError("[NetBootstrap] Invalid direct join code: " + joinCode);
-                            return;
-                        }
-                        utp.SetConnectionData(parts[0], p);
-                        Debug.Log($"[UTP] Client connect {parts[0]}:{p}");
+                        var joinAllocation = await RelayService.Instance.JoinAllocationAsync(cliJoinCode);
+                        var rsd = RelayUtils.ToServerData(joinAllocation, useWss: false);
+                        utp.SetRelayServerData(rsd);
+
                         if (!nm.StartClient())
                         {
                             Debug.LogError("[NetBootstrap] StartClient failed.");
                             return;
                         }
+
+                        Debug.Log($"[Relay] Joining with code: {cliJoinCode}");
                     }
-                    else
+                    catch (Exception e)
                     {
-                        Debug.Log("[NetBootstrap] Relay join selected, but simplified to direct.");
+                        Debug.LogError($"[NetBootstrap] Failed to join relay: {e.Message}");
                     }
                 }
                 else
@@ -236,28 +252,13 @@ namespace Game.Net
                 }
             }
 
-            private int FindFreePort(int minPort, int maxPort)
+            private static System.Collections.IEnumerator LobbyHeartbeat(string lobbyId)
             {
-                for (int port = minPort; port <= maxPort; port++)
+                while (true)
                 {
-                    TcpListener listener = null;
-                    try
-                    {
-                        listener = new TcpListener(IPAddress.Any, port);
-                        listener.Start();
-                        return port;
-                    }
-                    catch
-                    {
-                        // Port is busy
-                    }
-                    finally
-                    {
-                        listener?.Stop();
-                    }
+                    yield return new WaitForSecondsRealtime(15f);
+                    _ = LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
                 }
-                Debug.LogError("[NetBootstrap] No free port found in range " + minPort + "-" + maxPort);
-                return -1;
             }
 
             private static void SanitizeNetworkPrefabs(NetworkManager nm)

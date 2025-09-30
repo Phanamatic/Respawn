@@ -90,7 +90,7 @@ public static class QuickBuildAndRun
             else
             {
                 enabled.Remove(wanted);
-                enabled.Insert(0, wanted); // ensure Admin is first
+                enabled.Insert(0, wanted); // ensure requested scene is first
             }
         }
         return enabled.ToArray();
@@ -98,24 +98,27 @@ public static class QuickBuildAndRun
 
     // ---------- Run seeds ----------
     private const string DefaultEnv = "production";
+    private const string ServerProfile = "Server"; // <= short, valid, reused across runs
+    private const string DefaultRegion = "auto";   // relay will select if supported
 
     [MenuItem("Build/Quick/Run Seeds/Run Lobby")]
     public static void RunLobbySeed() =>
-        RunServer(ArgsForServer("lobby", 16, SceneLobby, DefaultEnv, "lobby_seed.log", 7777));
+        RunServer(ArgsForServer("lobby", 16, SceneLobby, DefaultEnv, "lobby_seed.log"));
 
     [MenuItem("Build/Quick/Run Seeds/Run 1v1")]
     public static void Run1v1Seed() =>
-        RunServer(ArgsForServer("1v1", 2, Scene1v1, DefaultEnv, "1v1_seed.log", 7778));
+        RunServer(ArgsForServer("1v1", 2, Scene1v1, DefaultEnv, "1v1_seed.log"));
 
     [MenuItem("Build/Quick/Run Seeds/Run 2v2")]
     public static void Run2v2Seed() =>
-        RunServer(ArgsForServer("2v2", 4, Scene2v2, DefaultEnv, "2v2_seed.log", 7779));
+        RunServer(ArgsForServer("2v2", 4, Scene2v2, DefaultEnv, "2v2_seed.log"));
 
     [MenuItem("Build/Quick/Run Seeds/Run All")]
     public static void RunAllSeeds() { RunLobbySeed(); Run1v1Seed(); Run2v2Seed(); }
 
-    private static string ArgsForServer(string type, int max, string scene, string env, string logfile, int port)
-        => $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -logfile .\\{logfile} -net direct -port {port}";
+    // Relay hosting: remove direct IP flags. Add profile and region.
+    private static string ArgsForServer(string type, int max, string scene, string env, string logfile)
+        => $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -logfile .\\{logfile}";
 
     private static void RunServer(string args)
     {
@@ -127,6 +130,19 @@ public static class QuickBuildAndRun
     // ---------- Run clients/admin ----------
     [MenuItem("Build/Quick/Run Client")]
     public static void RunClient() => RunClientInternal("");
+
+    // optional: launch a client with a join code for targeted tests
+    [MenuItem("Build/Quick/Run Client (Prompt Join Code)")]
+    public static void RunClientWithCode()
+    {
+        var code = EditorUtility.DisplayDialogComplex("Join Code", "Enter Relay Join Code in Console and press Continue.", "Continue", "Cancel", "Paste From Clipboard");
+        if (code == 1) return;
+        string joinCode = "";
+        try { joinCode = GUIUtility.systemCopyBuffer.Trim(); } catch { }
+        if (code == 0) Debug.Log("Enter join code in Console: e.g. ABCDEF");
+        var arg = string.IsNullOrWhiteSpace(joinCode) ? "" : $"-autoJoin -mpsJoin {joinCode}";
+        RunClientInternal(arg);
+    }
 
     [MenuItem("Build/Quick/Run 2 Clients")]
     public static void RunTwoClients() { RunClient(); RunClient(); }
