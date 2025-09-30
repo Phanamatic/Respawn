@@ -1,5 +1,6 @@
 // Assets/Scripts/Networking/Runtime/Match/Match1v1Controller.cs
-// Server-authoritative: players ride the ship, are hidden during selection, then spawn at the chosen point.
+// Server-authoritative: players ride the ship visually, are hidden during selection, then spawn at ground-snapped points.
+
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Netcode;
@@ -29,10 +30,14 @@ namespace Game.Net
         [SerializeField] private Transform shipStart;
         [SerializeField] private Transform shipEnd;
         [SerializeField, Min(0.1f)] private float shipDuration = 3f;
-        [SerializeField, Min(1f)] private float cameraFollowLerp = 12f;
         [SerializeField] private string seatMountName = "SeatMount";
         [SerializeField] private string cameraMountName = "CameraMount";
         [SerializeField] private string cameraLookAtName = "CameraLookAt";
+
+        [Header("Spawn Select")]
+        [SerializeField] private GameObject spawnCursorPrefab;
+        [SerializeField] private Vector3 spawnCameraPosition;
+        [SerializeField] private Vector3 spawnCameraLookAt;
 
         [Header("Timings")]
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
@@ -46,11 +51,20 @@ namespace Game.Net
         private readonly Dictionary<ulong, Vector3> _chosenSpawns = new();
         private float _spawnDeadlineServer;
 
-        // Local UI
+        // Local UI/state
         private bool _selecting;
         private Bounds _myAreaBounds;
         private float _spawnDeadlineLocal;
         private Coroutine _flyCo, _selectCo, _uiCo;
+
+        // Spawn visualizer
+        private GameObject _spawnCursor;
+
+        // Camera control
+        private Camera _cam;
+        private IsometricCamera _isoCam;
+        private Transform _originalFollow;
+        private bool _inSpawnCam;
 
         public override void OnNetworkSpawn()
         {
@@ -66,6 +80,12 @@ namespace Game.Net
             _state.OnValueChanged += (_, __) => RefreshUI();
             _playerCount.OnValueChanged += (_, __) => RefreshUI();
             if (IsClient) RefreshUI();
+
+            if (IsClient)
+            {
+                _cam = Camera.main;
+                if (_cam) _isoCam = _cam.GetComponent<IsometricCamera>();
+            }
         }
 
         public override void OnNetworkDespawn()
@@ -109,300 +129,314 @@ namespace Game.Net
 
         void AssignTeamsIfNeeded()
         {
-            if (!areas || !areas.HasAll) return;
-            var ids = new List<ulong>(NetworkManager.ConnectedClientsIds);
-            ids.Remove(NetworkManager.ServerClientId);
-            ids.Sort();
+            var ids = NetworkManager.ConnectedClientsIds;
             for (int i = 0; i < ids.Count; i++)
-                if (!_teams.ContainsKey(ids[i])) _teams[ids[i]] = i % 2 == 0 ? TeamId.A : TeamId.B;
+            {
+                var cid = ids[i];
+                if (cid == NetworkManager.ServerClientId) continue;
+                if (!_teams.ContainsKey(cid)) _teams[cid] = (TeamId)((_teams.Count % 2) == 0 ? 0 : 1);
+
+                // Tell only that client its team.
+                SetMyTeamClientRpc(_teams[cid], ToClient(cid));
+            }
+        }
+
+        [ClientRpc]
+        void SetMyTeamClientRpc(TeamId team, ClientRpcParams p = default)
+        {
+            var mine = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < mine.Length; i++)
+                if (mine[i] && mine[i].IsOwner) { mine[i].SetTeam(team); break; }
         }
 
         void TryStartFlow()
         {
             if (_state.Value != MatchState.Waiting) return;
             if (_playerCount.Value < 2) return;
-            StartCoroutine(ServerFlow());
+
+            StartCoroutine(CoStartFlow());
         }
 
-        IEnumerator ServerFlow()
+        IEnumerator CoStartFlow()
         {
-            if (_state.Value != MatchState.Waiting) yield break;
-
             _state.Value = MatchState.Countdown;
-            for (int i = countdownSeconds; i >= 1; i--)
+
+            for (int i = countdownSeconds; i > 0; i--)
             {
-                StartCountdownClientRpc(i);
-                yield return new WaitForSeconds(1f);
+                CountdownClientRpc(i);
+                yield return new WaitForSecondsRealtime(1f);
             }
 
-            // Seat and freeze on ship start.
-            if (IsServer) SeatPlayersAtShipStart();
-            FreezeAllPlayers(true);
+            CountdownClientRpc(0);
+            yield return new WaitForSecondsRealtime(0.25f);
 
+            StartCinematic();
+        }
+
+        void StartCinematic()
+        {
             _state.Value = MatchState.FlyIn;
-            ClearCountdownClientRpc();
-            PlayFlyInClientRpc();               // client visual
-            yield return MovePlayersAlongShipPathServer(); // move players with ship on server
-
-            _state.Value = MatchState.SpawnSelect;
-
-            // Hide everyone during selection to avoid seeing players on map early.
-            SetAllPlayersVisibleClientRpc(false);
-
-            _chosenSpawns.Clear();
-            _spawnDeadlineServer = (float)NetworkManager.ServerTime.Time + spawnSelectSeconds;
-
-            foreach (var kv in _teams)
-            {
-                var bounds = kv.Value == TeamId.A ? TeamBoundsA() : TeamBoundsB();
-                BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, ToClient(kv.Key));
-            }
-
-            while (_state.Value == MatchState.SpawnSelect)
-            {
-                bool all = true;
-                foreach (var kv in _teams) if (!_chosenSpawns.ContainsKey(kv.Key)) { all = false; break; }
-                if (all) break;
-                if ((float)NetworkManager.ServerTime.Time >= _spawnDeadlineServer) break;
-                yield return null;
-            }
-
-            foreach (var kv in _teams)
-                if (!_chosenSpawns.ContainsKey(kv.Key))
-                    _chosenSpawns[kv.Key] = areas.GetRandomPoint(kv.Value);
-
-            // Teleport to chosen spawns.
-            foreach (var kv in _teams)
-            {
-                ulong cid = kv.Key;
-                if (!NetworkManager.ConnectedClients.TryGetValue(cid, out var cc) || !cc.PlayerObject) continue;
-
-                Vector3 pos = _chosenSpawns[cid];
-                pos.y = areas.transform.position.y;
-
-                var t = cc.PlayerObject.transform;
-                t.position = pos;
-
-                var look = areas.GetNeutralCenter() - t.position; look.y = 0f;
-                if (look.sqrMagnitude > 0.001f) t.rotation = Quaternion.LookRotation(look.normalized, Vector3.up);
-            }
-
-            // Reveal and unfreeze together.
-            SetAllPlayersVisibleClientRpc(true);
-            FreezeAllPlayers(false);
-
-            foreach (var kv in _teams)
-                ConfirmSpawnClientRpc(_chosenSpawns[kv.Key], ToClient(kv.Key));
-
-            BroadcastPauseAll(false);
-            _state.Value = MatchState.Playing;
+            BroadcastPauseAll(true);
+            FreezeAllPlayers(true);
+            StartCinematicClientRpc();
+            StartCoroutine(CoEndCinematicAfter(cinematicSeconds));
         }
 
-        // --- Ship seating and movement ---
-
-        void SeatPlayersAtShipStart()
-        {
-            if (!IsServer || !shipStart) return;
-
-            const float seatOffset = 1.5f;
-            foreach (var kv in _teams)
-            {
-                if (!NetworkManager.ConnectedClients.TryGetValue(kv.Key, out var cc) || !cc.PlayerObject) continue;
-                var t = cc.PlayerObject.transform;
-                float side = kv.Value == TeamId.A ? -1f : 1f;
-                Vector3 pos = shipStart.position + shipStart.right * (seatOffset * side);
-                t.SetPositionAndRotation(pos, shipStart.rotation);
-            }
-        }
-
-        IEnumerator MovePlayersAlongShipPathServer()
-        {
-            if (!IsServer || !shipStart || !shipEnd) { yield return new WaitForSeconds(cinematicSeconds); yield break; }
-
-            const float seatOffset = 1.5f;
-            float t0 = Time.time;
-            float t1 = t0 + shipDuration;
-
-            while (Time.time < t1)
-            {
-                float u = Mathf.InverseLerp(t0, t1, Time.time);
-                float e = 1f - Mathf.Pow(1f - u, 3f); // ease-out
-
-                Vector3 shipPos = Vector3.Lerp(shipStart.position, shipEnd.position, e);
-                Quaternion shipRot = Quaternion.Slerp(shipStart.rotation, shipEnd.rotation, e);
-
-                foreach (var kv in _teams)
-                {
-                    if (!NetworkManager.ConnectedClients.TryGetValue(kv.Key, out var cc) || !cc.PlayerObject) continue;
-                    var t = cc.PlayerObject.transform;
-
-                    float side = kv.Value == TeamId.A ? -1f : 1f;
-                    Vector3 offset = shipRot * (Vector3.right * (seatOffset * side));
-                    t.SetPositionAndRotation(shipPos + offset, shipRot);
-                }
-
-                yield return null;
-            }
-        }
-
-        // --- UI and spawn-select ---
-
-        [ClientRpc] void StartCountdownClientRpc(int n)
+        [ClientRpc]
+        void StartCinematicClientRpc()
         {
             if (!IsClient) return;
-            ShowCanvas(statusCanvas, true);
-            if (statusText) statusText.text = "Starting match";
-            PulseCountdown(n);
-        }
-
-        [ClientRpc] void ClearCountdownClientRpc()
-        {
-            if (!IsClient) return;
-            ClearCountdownUI();
-        }
-
-        [ClientRpc] void PlayFlyInClientRpc()
-        {
-            if (!IsClient) return;
-            ClearCountdownUI();
             if (_flyCo != null) StopCoroutine(_flyCo);
-            _flyCo = StartCoroutine(CoFlyInClient());
+            _flyCo = StartCoroutine(CoFlyIn());
         }
 
-        IEnumerator CoFlyInClient()
+        IEnumerator CoFlyIn()
         {
-            if (!shipPrefab || !shipStart || !shipEnd) yield break;
+            if (_isoCam) _isoCam.enabled = false;
 
-            var go = Instantiate(shipPrefab, shipStart.position, shipStart.rotation);
-            Transform seat     = string.IsNullOrEmpty(seatMountName)    ? null : go.transform.Find(seatMountName);
-            Transform camMount = string.IsNullOrEmpty(cameraMountName)  ? null : go.transform.Find(cameraMountName);
-            Transform camLook  = string.IsNullOrEmpty(cameraLookAtName) ? null : go.transform.Find(cameraLookAtName);
+            var ship = shipPrefab ? Instantiate(shipPrefab) : null;
+            if (!ship || !shipStart || !shipEnd) yield break;
 
-            var cam = Camera.main;
-            var iso = cam ? cam.GetComponent<IsometricCamera>() : null;
-            if (iso) iso.enabled = false;
+            var seatMount = ship.transform.Find(seatMountName);
+            var cameraMount = ship.transform.Find(cameraMountName);
+            var lookAt = ship.transform.Find(cameraLookAtName);
+            if (!seatMount || !cameraMount || !lookAt) { Debug.LogError("Ship mounts missing."); yield break; }
 
-            // Instant cut to ship view.
-            if (cam)
+            AttachAllToShip(seatMount);
+
+            if (_cam)
             {
-                Vector3 toPos = camMount ? camMount.position :
-                                seat ? seat.position + go.transform.forward * -8f + Vector3.up * 5f :
-                                shipEnd.position + shipEnd.forward * -8f + Vector3.up * 5f;
-
-                Vector3 lookPos = camLook ? camLook.position :
-                                  seat ? seat.position :
-                                  shipEnd.position;
-
-                var toRot = Quaternion.LookRotation((lookPos - toPos).normalized, Vector3.up);
-                cam.transform.SetPositionAndRotation(toPos, toRot);
+                _cam.transform.SetParent(cameraMount, false);
+                _cam.transform.localPosition = Vector3.zero;
+                _cam.transform.LookAt(lookAt.position);
             }
 
-            float t0 = Time.time, t1 = t0 + shipDuration;
-            while (Time.time < t1)
+            float t0 = Time.unscaledTime;
+            float t1 = t0 + shipDuration;
+            while (Time.unscaledTime < t1)
             {
-                float u = Mathf.InverseLerp(t0, t1, Time.time);
-                float e = 1f - Mathf.Pow(1f - u, 3f);
-
-                go.transform.SetPositionAndRotation(
-                    Vector3.Lerp(shipStart.position, shipEnd.position, e),
-                    Quaternion.Slerp(shipStart.rotation, shipEnd.rotation, e)
-                );
-
-                if (cam)
-                {
-                    Vector3 toPos =
-                        camMount ? camMount.position :
-                        seat ? seat.position + go.transform.forward * -8f + Vector3.up * 5f :
-                        shipEnd.position + shipEnd.forward * -8f + Vector3.up * 5f;
-
-                    Vector3 lookPos =
-                        camLook ? camLook.position :
-                        seat ? seat.position :
-                        shipEnd.position;
-
-                    var toRot = Quaternion.LookRotation((lookPos - toPos).normalized, Vector3.up);
-                    float t = 1f - Mathf.Exp(-cameraFollowLerp * Time.unscaledDeltaTime);
-                    cam.transform.position = Vector3.Lerp(cam.transform.position, toPos, t);
-                    cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation, toRot, t);
-                }
+                float u = Mathf.InverseLerp(t0, t1, Time.unscaledTime);
+                UpdateShipPosition(ship, u);
                 yield return null;
             }
 
-            if (iso) iso.enabled = true;
-            Destroy(go);
+            UpdateShipPosition(ship, 1f);
+            DetachAllFromShip();
+            if (_isoCam) _isoCam.enabled = true;
+            if (_cam) _cam.transform.SetParent(null, true);
+            Destroy(ship);
+        }
+
+        void UpdateShipPosition(GameObject ship, float u)
+        {
+            if (!shipStart || !shipEnd) return;
+            ship.transform.position = Vector3.Lerp(shipStart.position, shipEnd.position, u);
+            ship.transform.rotation = Quaternion.Slerp(shipStart.rotation, shipEnd.rotation, u);
+        }
+
+        void AttachAllToShip(Transform seatMount)
+        {
+            var list = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < list.Length; i++)
+            {
+                var pl = list[i];
+                if (!pl) continue;
+                pl.transform.SetParent(seatMount, true);
+                pl.transform.localPosition = pl.GetTeam() == TeamId.A ? Vector3.left * 1f : Vector3.right * 1f;
+                pl.SetVisible(true);
+            }
+        }
+
+        void DetachAllFromShip()
+        {
+            var list = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < list.Length; i++)
+                if (list[i]) list[i].transform.SetParent(null, true);
+        }
+
+        IEnumerator CoEndCinematicAfter(float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            SetAllPlayersVisibleClientRpc(false);
+            StartSpawnSelect();
+        }
+
+        void StartSpawnSelect()
+        {
+            _state.Value = MatchState.SpawnSelect;
+            _spawnDeadlineServer = Time.unscaledTime + spawnSelectSeconds;
+            _chosenSpawns.Clear();
+
+            // Target each client with their own bounds and a duration, not an absolute time.
+            foreach (var kv in _teams)
+            {
+                var cid = kv.Key;
+                var b = areas.GetTeamCollider(kv.Value).bounds;
+                BeginSpawnSelectClientRpc(b.center, b.size, spawnSelectSeconds, ToClient(cid));
+            }
+
+            StartCoroutine(CoWatchSpawnDeadline());
         }
 
         [ClientRpc]
         void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, ClientRpcParams p = default)
         {
             if (!IsClient) return;
+
             _myAreaBounds = new Bounds(areaCenter, areaSize);
-            _selecting = true;
             _spawnDeadlineLocal = Time.unscaledTime + seconds;
+            _selecting = true;
 
             ShowCanvas(spawnCanvas, true);
-            UpdateSpawnHint();
+            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
 
             SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
 
+            if (spawnCursorPrefab)
+            {
+                _spawnCursor = Instantiate(spawnCursorPrefab);
+                _spawnCursor.SetActive(false);
+            }
+
+            if (_isoCam)
+            {
+                _originalFollow = _isoCam.follow;
+                _isoCam.enabled = false;
+            }
+            if (_cam)
+            {
+                _cam.transform.position = spawnCameraPosition;
+                _cam.transform.LookAt(spawnCameraLookAt);
+            }
+            _inSpawnCam = true;
+
             if (_selectCo != null) StopCoroutine(_selectCo);
-            _selectCo = StartCoroutine(CoSpawnSelect());
+            _selectCo = StartCoroutine(CoSpawnSelectTimer());
         }
 
-        IEnumerator CoSpawnSelect()
+        IEnumerator CoSpawnSelectTimer()
         {
-            while (_selecting)
+            while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
             {
-                UpdateSpawnHint();
-
-                var cam = Camera.main;
-                if (cam && Input.GetMouseButtonDown(0))
+                if (spawnHintText)
                 {
-                    if (Physics.Raycast(cam.ScreenPointToRay(Input.mousePosition), out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
-                    {
-                        var p = hit.point;
-                        if (_myAreaBounds.Contains(p))
-                        {
-                            SubmitSpawnChoiceServerRpc(p);
-                            _selecting = false;
-                            if (spawnHintText) spawnHintText.text = "Spawning...";
-                        }
-                    }
+                    float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
+                    spawnHintText.text = $"Click to choose spawn ({remain:0}s)";
+                }
+                yield return null;
+            }
+            if (_selecting) EndSpawnSelect(false);
+        }
+
+        void Update()
+        {
+            if (!_selecting || !_cam) return;
+
+            var mouseRay = _cam.ScreenPointToRay(Input.mousePosition);
+            bool validHit = Physics.Raycast(mouseRay, out var hit, 2000f, groundMask, QueryTriggerInteraction.Ignore)
+                            && _myAreaBounds.Contains(hit.point);
+
+            if (validHit)
+            {
+                if (_spawnCursor)
+                {
+                    _spawnCursor.transform.position = hit.point + Vector3.up * 0.01f;
+                    _spawnCursor.SetActive(true);
                 }
 
-                if (Time.unscaledTime >= _spawnDeadlineLocal) _selecting = false;
-                yield return null;
+                if (Input.GetMouseButtonDown(0))
+                {
+                    ChooseSpawnServerRpc(hit.point);
+                    EndSpawnSelect(true);
+                }
+            }
+            else
+            {
+                if (_spawnCursor) _spawnCursor.SetActive(false);
             }
         }
 
-        void UpdateSpawnHint()
-        {
-            float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-            if (spawnHintText) spawnHintText.text = $"Click in your area to spawn\nAuto-assign in {Mathf.CeilToInt(remain)}s";
-        }
-
-        [ClientRpc]
-        void ConfirmSpawnClientRpc(Vector3 pos, ClientRpcParams p = default)
-        {
-            if (!IsClient) return;
-            _selecting = false;
-            ShowCanvas(spawnCanvas, false);
-            ShowCanvas(statusCanvas, false);
-            ClearCountdownUI();
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, default);
-        }
-
         [ServerRpc(RequireOwnership = false)]
-        void SubmitSpawnChoiceServerRpc(Vector3 worldPoint, ServerRpcParams rpc = default)
+        void ChooseSpawnServerRpc(Vector3 point, ServerRpcParams rpc = default)
         {
             if (!IsServer || _state.Value != MatchState.SpawnSelect) return;
-
             ulong cid = rpc.Receive.SenderClientId;
             if (!_teams.TryGetValue(cid, out var team)) return;
-            if (!areas || !areas.HasAll) return;
-            if (!areas.Contains(team, worldPoint)) return;
+            if (!areas.Contains(team, point)) return;
 
-            _chosenSpawns[cid] = worldPoint;
+            _chosenSpawns[cid] = point;
+            if (_chosenSpawns.Count >= _playerCount.Value)
+                SpawnAllAtChosenPoints();
+        }
+
+        IEnumerator CoWatchSpawnDeadline()
+        {
+            yield return new WaitForSecondsRealtime(spawnSelectSeconds + 0.1f);
+            if (_state.Value == MatchState.SpawnSelect) SpawnAllAtChosenPoints();
+        }
+
+        void SpawnAllAtChosenPoints()
+        {
+            _state.Value = MatchState.Playing;
+
+            var ids = NetworkManager.ConnectedClientsIds;
+            for (int i = 0; i < ids.Count; i++)
+            {
+                var cid = ids[i];
+                if (cid == NetworkManager.ServerClientId) continue;
+                if (!_teams.TryGetValue(cid, out var team)) continue;
+
+                Vector3 point = _chosenSpawns.TryGetValue(cid, out var chosen) ? chosen : areas.GetRandomPoint(team);
+                SpawnPlayerAtServer(cid, point, team);
+            }
+
+            SetAllPlayersVisibleClientRpc(true);
+            BroadcastPauseAll(false);
+        }
+
+        // inside Match1v1Controller
+void SpawnPlayerAtServer(ulong clientId, Vector3 point, TeamId team)
+{
+    var player = NetworkManager.ConnectedClients[clientId]?.PlayerObject?.GetComponent<PlayerNetwork>();
+    if (!player) return;
+
+    // set facing first
+    Vector3 look = areas.GetNeutralCenter() - point; look.y = 0f;
+    Quaternion rot = look.sqrMagnitude > 0.001f ? Quaternion.LookRotation(look.normalized, Vector3.up) : Quaternion.identity;
+    player.transform.SetPositionAndRotation(point, rot);
+
+    // hard snap to ground, then unfreeze
+    var capsule = player.GetComponent<CapsuleCollider>();
+    GroundClampServer.SnapToGround(player.transform, groundMask, 0.02f, capsule, 10f, 50f);
+
+    player.SetFrozenServer(false);
+}
+
+
+        [ClientRpc]
+        void SetAllPlayersVisibleClientRpc(bool visible)
+        {
+            if (!IsClient) return;
+            var list = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < list.Length; i++) if (list[i]) list[i].SetVisible(visible);
+        }
+
+        void EndSpawnSelect(bool success)
+        {
+            _selecting = false;
+            ShowCanvas(spawnCanvas, false);
+
+            if (_spawnCursor) Destroy(_spawnCursor);
+
+            if (_inSpawnCam)
+            {
+                if (_isoCam)
+                {
+                    _isoCam.follow = _originalFollow;
+                    _isoCam.enabled = true;
+                }
+                _inSpawnCam = false;
+            }
         }
 
         void FreezeAllPlayers(bool frozen)
@@ -410,17 +444,24 @@ namespace Game.Net
             foreach (var cc in NetworkManager.ConnectedClientsList)
             {
                 if (!cc.PlayerObject) continue;
-                var pn = cc.PlayerObject.GetComponent<Game.Net.PlayerNetwork>();
+                var pn = cc.PlayerObject.GetComponent<PlayerNetwork>();
                 if (pn) pn.SetFrozenServer(frozen);
             }
         }
 
-        [ClientRpc]
-        void SetAllPlayersVisibleClientRpc(bool visible)
+        TeamId GetMyTeam()
         {
-            if (!IsClient) return;
-            var list = FindObjectsByType<Game.Net.PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            for (int i = 0; i < list.Length; i++) if (list[i]) list[i].SetVisible(visible);
+            var nm = NetworkManager.Singleton;
+            if (!nm || !nm.IsClient) return TeamId.A;
+            var localPlayer = nm.LocalClient?.PlayerObject?.GetComponent<PlayerNetwork>();
+            return localPlayer ? localPlayer.GetTeam() : TeamId.A;
+        }
+
+        [ClientRpc]
+        void CountdownClientRpc(int number)
+        {
+            if (number > 0) PulseCountdown(number);
+            else ClearCountdownUI();
         }
 
         void PauseInputFor(ulong clientId, bool paused) =>
@@ -440,7 +481,7 @@ namespace Game.Net
         [ClientRpc] void SetPlayerInputPausedClientRpc(bool paused, ClientRpcParams p = default)
         {
             if (!IsClient) return;
-            var players = FindObjectsByType<Game.Net.PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             for (int i = 0; i < players.Length; i++)
             {
                 var pl = players[i];
@@ -456,10 +497,11 @@ namespace Game.Net
             }
         }
 
+        // helpers
+
         Bounds TeamBoundsA() => areas.GetTeamCollider(TeamId.A).bounds;
         Bounds TeamBoundsB() => areas.GetTeamCollider(TeamId.B).bounds;
 
-        // helper to target a single client in ClientRpc
         static ClientRpcParams ToClient(ulong clientId) =>
             new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } };
 

@@ -1,4 +1,4 @@
-// Assets/Scripts/Match/SpawnAreaHighlighter.cs
+// Assets/Scripts/Networking/Runtime/Match/SpawnAreaHighlighter.cs
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -31,6 +31,11 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
     void OnDisable() { s_All.Remove(this); }
 
+    void Start()
+    {
+        AssignMeshAndMat();
+    }
+
     void Build()
     {
         var child = transform.Find("AreaVisual");
@@ -45,14 +50,23 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         child.localPosition = _col.center + Vector3.up * yOffset;
         child.localScale = new Vector3(_col.size.x, 1f, _col.size.z);
 
-        _mf = child.GetComponent<MeshFilter>() ?? child.gameObject.AddComponent<MeshFilter>();
-        _mr = child.GetComponent<MeshRenderer>() ?? child.gameObject.AddComponent<MeshRenderer>();
+        _mf = child.GetComponent<MeshFilter>();
+        if (_mf == null) _mf = child.gameObject.AddComponent<MeshFilter>();
 
+        _mr = child.GetComponent<MeshRenderer>();
+        if (_mr == null) _mr = child.gameObject.AddComponent<MeshRenderer>();
+    }
+
+    private void AssignMeshAndMat()
+    {
+        if (_mf == null) { Debug.LogError("MeshFilter is null after adding."); return; }
         if (_mf.sharedMesh == null) _mf.sharedMesh = CreateQuadXZ();
 
+        if (_mr == null) { Debug.LogError("MeshRenderer is null after adding."); return; }
         if (_mr.sharedMaterial == null)
         {
             var shader = Shader.Find("Unlit/Color");
+            if (shader == null) { Debug.LogError("Unlit/Color shader not found."); return; }
             var mat = new Material(shader);
             mat.SetInt("_ZWrite", 0);
             mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
@@ -69,7 +83,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
     void Apply()
     {
-        if (!_mr || !_col) return;
+        if (_mr == null || _col == null) return;
         _mr.transform.localPosition = _col.center + Vector3.up * yOffset;
         _mr.transform.localScale = new Vector3(_col.size.x, 1f, _col.size.z);
 

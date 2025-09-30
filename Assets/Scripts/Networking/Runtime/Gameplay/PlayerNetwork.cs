@@ -1,7 +1,6 @@
-// Assets/Scripts/Networking/Runtime/Gameplay/PlayerNetwork.cs
-// Server-auth movement with stamina + dash, interpolation for remotes,
-// plus freeze/visibility controls used by Match1v1Controller.
+// Server-auth movement with stamina + dash, interpolation for remotes.
 
+using System;
 using UnityEngine;
 using Unity.Netcode;
 using Unity.Netcode.Components;
@@ -59,86 +58,56 @@ namespace Game.Net
         Rigidbody _rb;
         CapsuleCollider _capsule;
 
-        // freeze/visibility caches
         Renderer[] _renderers;
         Collider[] _colliders;
 
-        // Network state buffer
-        private struct NetworkState
-        {
-            public Vector3 position;
-            public float yaw;
-            public Vector3 velocity;
-            public float timestamp;
-            public bool isDashing;
-        }
+        struct NetworkState { public Vector3 position; public float yaw; public Vector3 velocity; public float timestamp; public bool isDashing; }
         NetworkState[] _stateBuffer = new NetworkState[30];
         int _stateCount;
-        float _lastReceivedTimestamp = -1f;
 
-        // Sync vars (server writes, clients read)
-        NetworkVariable<Vector3> _netPosition = new NetworkVariable<Vector3>();
-        NetworkVariable<float> _netYaw = new NetworkVariable<float>();
-        NetworkVariable<Vector3> _netVelocity = new NetworkVariable<Vector3>();
-        NetworkVariable<bool> _netIsDashing = new NetworkVariable<bool>();
+        NetworkVariable<Vector3> _netPosition = new();
+        NetworkVariable<float> _netYaw = new();
+        NetworkVariable<Vector3> _netVelocity = new();
+        NetworkVariable<bool> _netIsDashing = new();
 
-        // input (owner only)
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
-        Vector2 _inMove, _inMouse;
-        bool _inSprint;
+        Vector2 _inMove, _inMouse; bool _inSprint;
 
-        // stamina
-        float _stamina;
-        float _sprintRegenResumeAt;
+        float _stamina; float _sprintRegenResumeAt;
 
-        // dash state
-        bool _isDashing;
-        float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw;
-        Vector3 _dashDirXZ;
-        float _dashQueuedUntil;
+        bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ; float _dashQueuedUntil;
 
-        // camera
-        Camera _cam;
-        IsometricCamera _isoCam;
-        int _camBindTries;
+        Camera _cam; IsometricCamera _isoCam; int _camBindTries;
 
-        // control flags
         bool _inputPaused;
         bool _frozen;
 
-        void Awake()
-        {
-            _rb = GetComponent<Rigidbody>();
-            _capsule = GetComponent<CapsuleCollider>();
-
-            _rb.useGravity = true;
-            _rb.interpolation = RigidbodyInterpolation.None; // custom interp for remotes
-            _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
-
-            // collect visuals/colliders; prefer modelRoot if assigned
-            var root = modelRoot ? modelRoot : transform;
-            _renderers = root.GetComponentsInChildren<Renderer>(true);
-            _colliders = GetComponentsInChildren<Collider>(true);
-
-            _stamina = sprintStaminaMax;
-        }
+        private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
 
         public override void OnNetworkSpawn()
         {
+            if (!_rb)
+            {
+                _rb = GetComponent<Rigidbody>();
+                _capsule = GetComponent<CapsuleCollider>();
+            }
+
             if (IsServer)
             {
+                // Ensure authoritative spawn stands on ground and is depenetrated.
+                TrySnapToGroundImmediate();
+                ResolveInitialPenetration();
+
                 SetPhase(initialPhase);
-                SetFrozenServer(true); // start hidden/frozen until unfreezed by match flow
+                if (initialPhase == PlayerPhase.Lobby) SetFrozenServer(false);
             }
 
             if (IsOwner)
             {
                 SetupInputAndCamera();
-                TrySnapToGroundImmediate();
+                TrySnapToGroundImmediate(); // client visual safety
 
-                // backup sync for safety
                 if (!GetComponent<NetworkTransform>())
                 {
                     var nt = gameObject.AddComponent<NetworkTransform>();
@@ -153,10 +122,11 @@ namespace Game.Net
 
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
+                SetInputPaused(false);
             }
             else
             {
-                _rb.isKinematic = true;   // client-side proxy
+                _rb.isKinematic = true;
                 _rb.useGravity = false;
             }
 
@@ -166,9 +136,26 @@ namespace Game.Net
             _netIsDashing.OnValueChanged += OnDashingChanged;
         }
 
+        void Awake()
+        {
+            _rb = GetComponent<Rigidbody>();
+            _capsule = GetComponent<CapsuleCollider>();
+
+            _rb.useGravity = true;
+            _rb.interpolation = RigidbodyInterpolation.None;
+            _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+
+            var root = modelRoot ? modelRoot : transform;
+            _renderers = root.GetComponentsInChildren<Renderer>(true);
+            _colliders = GetComponentsInChildren<Collider>(true);
+
+            _stamina = sprintStaminaMax;
+        }
+
         public override void OnNetworkDespawn()
         {
-            if (_map != null) _map.Disable();
+            _map?.Disable();
             if (_aDash != null) _aDash.performed -= OnDashPerformed;
             _map = null; _aMove = _aMouse = _aSprint = _aDash = null;
 
@@ -177,6 +164,34 @@ namespace Game.Net
             _netVelocity.OnValueChanged -= OnVelocityChanged;
             _netIsDashing.OnValueChanged -= OnDashingChanged;
         }
+
+        // ==== HUD binding API (for PlayerHUDBinder) ====
+        public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI)
+        {
+            sprintFill = sprintFillUI;
+            sprintLabel = sprintLabelUI;
+            dashFill = dashFillUI;
+            dashLabel = dashLabelUI;
+        }
+
+        public void AssignHud(Component root)
+        {
+            if (!root) return;
+            sprintFill ??= root.GetComponentInChildren<Image>(true);
+            sprintLabel ??= root.GetComponentInChildren<TMP_Text>(true);
+
+            foreach (var img in root.GetComponentsInChildren<Image>(true))
+                if (img && img.gameObject.name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashFill = img; break; }
+
+            foreach (var txt in root.GetComponentsInChildren<TMP_Text>(true))
+                if (txt && txt.gameObject.name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashLabel = txt; break; }
+        }
+
+        public void ClearHud()
+        {
+            sprintFill = null; sprintLabel = null; dashFill = null; dashLabel = null;
+        }
+        // ================================================
 
         void SetupInputAndCamera()
         {
@@ -212,7 +227,10 @@ namespace Game.Net
             _dashQueuedUntil = 0f;
             _inMove = Vector2.zero;
 
-            var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
+            if (_rb && !_rb.isKinematic)
+            {
+                var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
+            }
             if (paused) _map?.Disable(); else _map?.Enable();
         }
 
@@ -240,12 +258,7 @@ namespace Game.Net
 
         void Update()
         {
-            if (!IsOwner)
-            {
-                InterpolateRemotePlayer();
-                return;
-            }
-
+            if (!IsOwner) { InterpolateRemotePlayer(); return; }
             if (_inputPaused) { UpdateUI(); return; }
 
             _inMove   = _aMove?.ReadValue<Vector2>() ?? Vector2.zero;
@@ -258,6 +271,10 @@ namespace Game.Net
         void FixedUpdate()
         {
             if (!IsOwner) return;
+            if (_rb == null) return;
+
+            // Do not write velocity to kinematic bodies.
+            if (_rb.isKinematic) return;
 
             if (_inputPaused)
             {
@@ -268,7 +285,6 @@ namespace Game.Net
             float dt = Time.fixedDeltaTime;
             float now = Time.time;
 
-            // camera-relative basis
             Vector3 fwd = Vector3.forward, right = Vector3.right;
             if (_cam)
             {
@@ -276,7 +292,6 @@ namespace Game.Net
                 right = _cam.transform.right; right.y = 0f; right = right.sqrMagnitude > 1e-4f ? right.normalized : Vector3.right;
             }
 
-            // aim yaw from mouse
             float yaw = transform.eulerAngles.y;
             if (_cam)
             {
@@ -289,7 +304,6 @@ namespace Game.Net
                 }
             }
 
-            // start dash if buffered + ready
             if (!_isDashing && now <= _dashQueuedUntil && now >= _dashReadyAt)
             {
                 _dashQueuedUntil = 0f;
@@ -327,15 +341,15 @@ namespace Game.Net
                 return;
             }
 
-            // stamina drain/regen
             bool canSprint = _stamina > 0.05f;
             bool wantSprint = _inSprint && canSprint && _inMove.sqrMagnitude > 0.01f;
 
             if (wantSprint) { _stamina = Mathf.Max(0f, _stamina - sprintDrainPerSec * dt); _sprintRegenResumeAt = now + sprintRegenDelay; }
             else if (now >= _sprintRegenResumeAt) { _stamina = Mathf.Min(sprintStaminaMax, _stamina + sprintRegenPerSec * dt); }
 
-            // movement (camera-relative)
-            Vector3 wish = right * _inMove.x + fwd * _inMove.y;
+            Vector3 wish = (_cam ? _cam.transform.right : Vector3.right) * _inMove.x
+                         + (_cam ? _cam.transform.forward : Vector3.forward) * _inMove.y;
+            wish.y = 0f;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
             transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
@@ -346,7 +360,6 @@ namespace Game.Net
             vel.z = wish.z * speedMove;
             _rb.linearVelocity = vel;
 
-            // send state to server (throttled)
             if (Time.frameCount % 2 == 0)
             {
                 SendStateUpdateServerRpc(transform.position, yaw, vel, _isDashing);
@@ -399,16 +412,13 @@ namespace Game.Net
 
             if (_stateCount >= _stateBuffer.Length)
             {
-                for (int i = 1; i < _stateBuffer.Length; i++)
-                    _stateBuffer[i - 1] = _stateBuffer[i];
+                for (int i = 1; i < _stateBuffer.Length; i++) _stateBuffer[i - 1] = _stateBuffer[i];
                 _stateBuffer[_stateBuffer.Length - 1] = state;
             }
             else
             {
                 _stateBuffer[_stateCount++] = state;
             }
-
-            _lastReceivedTimestamp = state.timestamp;
         }
 
         void InterpolateRemotePlayer()
@@ -423,12 +433,7 @@ namespace Game.Net
             for (int i = 0; i < _stateCount - 1; i++)
             {
                 if (_stateBuffer[i].timestamp <= currentTime && _stateBuffer[i + 1].timestamp > currentTime)
-                {
-                    from = _stateBuffer[i];
-                    to = _stateBuffer[i + 1];
-                    found = true;
-                    break;
-                }
+                { from = _stateBuffer[i]; to = _stateBuffer[i + 1]; found = true; break; }
             }
 
             if (!found)
@@ -483,33 +488,76 @@ namespace Game.Net
             }
         }
 
-        public void AssignHud(Image sprintFill, TMP_Text sprintLabel, Image dashFill, TMP_Text dashLabel)
+        void ResolveInitialPenetration()
         {
-            this.sprintFill = sprintFill;
-            this.sprintLabel = sprintLabel;
-            this.dashFill = dashFill;
-            this.dashLabel = dashLabel;
-            UpdateUI();
+            var c = _capsule ? _capsule : GetComponent<CapsuleCollider>();
+            if (!c) return;
+
+            int iters = 0;
+            const int maxIters = 5;
+
+            while (iters++ < maxIters)
+            {
+                GetCapsuleWorld(c, transform, out var p0, out var p1, out var r);
+                var overlaps = Physics.OverlapCapsule(p0, p1, r, groundMask, QueryTriggerInteraction.Ignore);
+                if (overlaps == null || overlaps.Length == 0) break;
+
+                Vector3 push = Vector3.zero;
+                foreach (var col in overlaps)
+                {
+                    if (col == c) continue;
+                    if (Physics.ComputePenetration(
+                        c, transform.position, transform.rotation,
+                        col, col.transform.position, col.transform.rotation,
+                        out var dir, out var dist))
+                    {
+                        if (dist > 0f) push += dir * dist;
+                    }
+                }
+
+                if (push.sqrMagnitude < 1e-6f) break;
+                if (push.y < 0f) push.y = 0f;
+                transform.position += push + Vector3.up * groundSkin;
+            }
+        }
+
+        static void GetCapsuleWorld(CapsuleCollider cap, Transform t, out Vector3 p0, out Vector3 p1, out float radius)
+        {
+            Vector3 center = t.TransformPoint(cap.center);
+            float height = Mathf.Max(cap.height, cap.radius * 2f);
+            float half = Mathf.Max(0f, height * 0.5f - cap.radius);
+            Vector3 axis = cap.direction == 0 ? t.right : (cap.direction == 2 ? t.forward : t.up);
+            p0 = center + axis * half;
+            p1 = center - axis * half;
+
+            var ls = t.lossyScale;
+            if (cap.direction == 0) radius = cap.radius * Mathf.Max(ls.y, ls.z);
+            else if (cap.direction == 2) radius = cap.radius * Mathf.Max(ls.x, ls.y);
+            else radius = cap.radius * Mathf.Max(ls.x, ls.z);
         }
 
         [ServerRpc(RequireOwnership = false)]
         public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
-        void SetPhase(PlayerPhase phase) { /* ability gating hook */ }
 
-        // ------- Freeze / Visibility API used by match flow -------
+        void SetPhase(PlayerPhase phase)
+        {
+            if (phase == PlayerPhase.Lobby && IsServer) SetFrozenServer(false);
+        }
 
-        // Server-only. Freezes physics and disables colliders. Mirrors to clients.
+        // ------- Freeze / Visibility -------
+
         public void SetFrozenServer(bool frozen)
         {
             if (!IsServer) return;
 
             _frozen = frozen;
 
-            // stop motion
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
+            if (_rb && !_rb.isKinematic)
+            {
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+            }
 
-            // on server, flip kinematic to truly freeze sim
             _rb.isKinematic = frozen;
             SetCollidersEnabled(!frozen);
 
@@ -521,17 +569,23 @@ namespace Game.Net
         {
             _frozen = frozen;
 
-            // proxies keep kinematic true, but still zero out
-            _rb.linearVelocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
+            if (_rb && !_rb.isKinematic)
+            {
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+            }
 
-            // keep client colliders aligned with server intent
+            if (IsOwner)
+            {
+                _rb.isKinematic = frozen;
+                _rb.useGravity = !frozen;
+            }
+
             SetCollidersEnabled(!frozen);
         }
 
         public void SetVisible(bool visible)
         {
-            // lazy refresh if needed
             if (_renderers == null || _renderers.Length == 0)
             {
                 var root = modelRoot ? modelRoot : transform;
@@ -550,5 +604,8 @@ namespace Game.Net
             for (int i = 0; i < _colliders.Length; i++)
                 if (_colliders[i]) _colliders[i].enabled = enabled;
         }
+
+        public TeamId GetTeam() => _team.Value;
+        public void SetTeam(TeamId team) { if (IsServer) _team.Value = team; }
     }
 }

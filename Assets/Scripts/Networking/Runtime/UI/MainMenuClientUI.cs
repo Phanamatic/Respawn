@@ -1,14 +1,16 @@
 // Assets/Scripts/Networking/Runtime/UI/MainMenuClientUI.cs
-// Join-on-click UI with retry + exponential backoff.
+// Join-on-click UI with robust session handling.
 
-using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using Unity.Services.Multiplayer;
 
 namespace Game.Net
 {
@@ -23,8 +25,8 @@ namespace Game.Net
         [SerializeField, Min(0.25f)] private float directoryRefreshSeconds = 1.0f;
 
         [Header("Join Backoff")]
-        [SerializeField, Min(0.25f)] private float joinBaseDelaySeconds = 1.0f; // used
-        [SerializeField, Min(1)] private int joinMaxRetries = 3;                 // used
+        [SerializeField, Min(0.25f)] private float joinBaseDelaySeconds = 1.0f;
+        [SerializeField, Min(1)] private int joinMaxRetries = 3;
 
         [Header("Guards")]
         [SerializeField] private bool singleJoinPerRun = true;
@@ -34,16 +36,12 @@ namespace Game.Net
         private string _ellipsisBase;
         private bool _joining;
 
-        // constants for stable behavior
-        private const float ConnectTimeoutSeconds = 8f;     // time to wait per attempt
-        private const float MaxBackoffSeconds = 30f;        // cap
-
         private void OnEnable()
         {
             if (playButton) playButton.onClick.AddListener(OnPlayClicked);
             SetStatus("Idle");
             StartCoroutine(UpdateLobbyDirectoryLoop());
-
+            // Force 60 FPS as requested
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 60;
         }
@@ -102,147 +100,151 @@ namespace Game.Net
                 yield break;
             }
 
-            // Parse ip:port from directory code
-            var nmLocal = NetworkManager.Singleton;
-            var utp = nmLocal.GetComponent<UnityTransport>();
-            var parts = code.Split(':');
-            if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort port))
+            SetStatusAnimated("Leaving old sessions");
+            yield return new WaitForSecondsRealtime(1.5f);
+
+            var joined = false;
+            float delay = Mathf.Max(0.25f, joinBaseDelaySeconds);
+            int attempts429 = 0;
+
+            while (!joined)
             {
+                SetStatusAnimated($"Joining {friendlyName}");
+                Debug.Log($"[MainMenu] Attempting to join {code}");
+
+                // Parse code as ip:port
+                var parts = code.Split(':');
+                if (parts.Length != 2 || !ushort.TryParse(parts[1], out ushort port))
+                {
+                    StopStatusAnimation();
+                    SetStatus("Invalid join code format.");
+                    Done(false);
+                    yield break;
+                }
+
+                var utp = nm.GetComponent<UnityTransport>();
+                if (utp == null)
+                {
+                    StopStatusAnimation();
+                    SetStatus("UnityTransport missing.");
+                    Done(false);
+                    yield break;
+                }
+
+                utp.SetConnectionData(parts[0], port);
+
+                bool ok = false;
+                yield return StartNgoClientAndWait(v => ok = v);
+                if (ok) 
+                { 
+                    StopStatusAnimation();
+                    SetStatus($"Joined {friendlyName}");
+                    Done(true); 
+                    yield break; 
+                }
+
+                if (attempts429 < joinMaxRetries)
+                {
+                    StopStatusAnimation();
+                    SetStatus($"Connection failed. Retrying in {delay:0.0}s");
+                    yield return new WaitForSecondsRealtime(delay);
+                    attempts429++; delay *= 2f;
+                    continue;
+                }
+
                 StopStatusAnimation();
-                SetStatus("Invalid join code format.");
+                SetStatus("Join failed.");
                 Done(false);
                 yield break;
             }
-            utp.SetConnectionData(parts[0], port);
-
-            float backoff = Mathf.Clamp(joinBaseDelaySeconds, 0.25f, MaxBackoffSeconds);
-            int attempts = Mathf.Max(1, joinMaxRetries);
-
-            for (int attempt = 1; attempt <= attempts; attempt++)
-            {
-                SetStatusAnimated($"Joining {friendlyName} (try {attempt}/{attempts})");
-                Debug.Log($"[MainMenu] Attempting to join {code} attempt {attempt}/{attempts}");
-
-                bool started = nmLocal.StartClient();
-                if (!started)
-                {
-                    StopStatusAnimation();
-                    SetStatus("Failed to start client.");
-                }
-                else
-                {
-                    // Wait for connected or timeout while client is active
-                    float t = 0f;
-                    while (t < ConnectTimeoutSeconds && nmLocal.IsClient && !nmLocal.IsConnectedClient)
-                    {
-                        t += Time.unscaledDeltaTime;
-                        yield return null;
-                    }
-
-                    if (nmLocal.IsConnectedClient)
-                    {
-                        StopStatusAnimation();
-                        SetStatus($"Joined {friendlyName}");
-                        Done(true);
-                        s_DidJoinThisRun = true;
-                        yield break;
-                    }
-                }
-
-                // Clean up failed attempt
-                if (nmLocal.IsClient || nmLocal.ShutdownInProgress)
-                {
-                    nmLocal.Shutdown();
-                    // give NGO a frame to teardown sockets
-                    yield return null;
-                }
-
-                if (attempt < attempts)
-                {
-                    StopStatusAnimation();
-                    SetStatus($"Retrying in {backoff:0.0}s");
-                    yield return new WaitForSecondsRealtime(backoff);
-                    backoff = Mathf.Min(backoff * 2f, MaxBackoffSeconds);
-                }
-            }
-
-            StopStatusAnimation();
-            SetStatus("Connection failed.");
-            Done(false);
         }
 
-        private static SessionDirectory.Entry PickLeastLoadedWithIndex(List<SessionDirectory.Entry> list, out int index)
+        private IEnumerator StartNgoClientAndWait(System.Action<bool> onDone)
         {
-            index = 0;
-            if (list == null || list.Count == 0) return null;
+            var nm = NetworkManager.Singleton;
+            if (nm == null) { onDone?.Invoke(false); yield break; }
 
-            var best = list[0];
-            for (int i = 1; i < list.Count; i++)
+            if (!nm.IsClient && !nm.IsServer)
             {
-                if (list[i].current < best.current)
+                if (!nm.StartClient())
                 {
-                    best = list[i];
-                    index = i;
+                    SetStatus("StartClient failed.");
+                    onDone?.Invoke(false);
+                    yield break;
                 }
             }
-            return best;
+
+            float t = 0f, timeout = 15f;
+            while (!nm.IsConnectedClient && t < timeout)
+            {
+                t += Time.unscaledDeltaTime;
+                yield return null;
+            }
+            onDone?.Invoke(nm.IsConnectedClient);
         }
 
+        // -------- Directory UI --------
         private IEnumerator UpdateLobbyDirectoryLoop()
         {
-            for (;;)
+            while (isActiveAndEnabled)
             {
                 var lobbies = SessionDirectory.GetSnapshot(e => e.type == "lobby");
-                int open = lobbies?.Count ?? 0;
-                if (openLobbiesText) openLobbiesText.text = $"Open Lobbies: {open}";
+                if (openLobbiesText)
+                {
+                    if (lobbies == null || lobbies.Count == 0)
+                    {
+                        openLobbiesText.text = "Open Lobbies (0)";
+                    }
+                    else
+                    {
+                        openLobbiesText.text = $"Open Lobbies ({lobbies.Count})";
+                    }
+                }
                 yield return new WaitForSecondsRealtime(directoryRefreshSeconds);
             }
         }
 
-        private void SetBusy(bool busy)
+        private static SessionDirectory.Entry PickLeastLoadedWithIndex(List<SessionDirectory.Entry> list, out int friendlyIndex)
         {
-            if (playButton) playButton.interactable = !busy;
+            friendlyIndex = 0;
+            if (list == null || list.Count == 0) return null;
+
+            list.Sort((a, b) => a.current.CompareTo(b.current));
+            var best = list[0];
+
+            if (!string.IsNullOrEmpty(best.name) && best.name.StartsWith("Lobby_"))
+            {
+                var tail = best.name.Substring("Lobby_".Length);
+                if (int.TryParse(tail, out int idx)) friendlyIndex = idx;
+            }
+            if (friendlyIndex == 0) friendlyIndex = 1;
+            return best;
+        }
+
+        // -------- UI helpers --------
+        private void SetBusy(bool busy) { if (playButton) playButton.interactable = !busy; }
+        private void SetStatus(string s) { if (statusText) statusText.text = s; }
+        private void SetStatusAnimated(string baseText) { StopStatusAnimation(); _ellipsisBase = baseText; _ellipsisCo = StartCoroutine(Ellipsis()); }
+        private void StopStatusAnimation() { if (_ellipsisCo != null) StopCoroutine(_ellipsisCo); _ellipsisCo = null; _ellipsisBase = null; }
+        private IEnumerator Ellipsis()
+        {
+            int dots = 0;
+            while (!string.IsNullOrEmpty(_ellipsisBase))
+            {
+                dots = (dots + 1) % 4;
+                SetStatus(_ellipsisBase + new string('.', dots));
+                yield return new WaitForSecondsRealtime(0.33f);
+            }
         }
 
         private void Done(bool success)
         {
+            if (success && singleJoinPerRun) s_DidJoinThisRun = true;
             _joining = false;
             SetBusy(false);
-            if (success) s_DidJoinThisRun = true;
         }
 
-        private void SetStatus(string msg)
-        {
-            StopStatusAnimation();
-            if (statusText) statusText.text = msg ?? "";
-        }
-
-        private void SetStatusAnimated(string msg)
-        {
-            StopStatusAnimation();
-            _ellipsisBase = msg ?? "";
-            _ellipsisCo = StartCoroutine(EllipsisCo());
-        }
-
-        private void StopStatusAnimation()
-        {
-            if (_ellipsisCo != null) StopCoroutine(_ellipsisCo);
-            _ellipsisCo = null;
-            _ellipsisBase = null;
-        }
-
-        private IEnumerator EllipsisCo()
-        {
-            const string kDots = "...";
-            int dots = 0;
-            while (true)
-            {
-                if (statusText) statusText.text = _ellipsisBase + kDots.Substring(0, dots);
-                dots = (dots + 1) % 4;
-                yield return new WaitForSecondsRealtime(0.333f);
-            }
-        }
-
+        // -------- Misc --------
         private static bool ValidateNetworkManager()
         {
             var nm = NetworkManager.Singleton;

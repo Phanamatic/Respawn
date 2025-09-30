@@ -18,6 +18,7 @@ GameObject:
   - component: {fileID: 4918574695991783337}
   - component: {fileID: 643495328251867668}
   - component: {fileID: 3944781503140636565}
+  - component: {fileID: 6125363240826229288}
   m_Layer: 0
   m_Name: PlayerAvatar
   m_TagString: Player
@@ -251,6 +252,8 @@ MonoBehaviour:
   dashDuration: 0.6
   dashCooldown: 0.8
   dashInputBuffer: 0.2
+  interpolationDelay: 0.1
+  extrapolationLimit: 15
   groundMask:
     serializedVersion: 2
     m_Bits: 4294967295
@@ -262,6 +265,7 @@ MonoBehaviour:
   sprintLabel: {fileID: 0}
   dashFill: {fileID: 0}
   dashLabel: {fileID: 0}
+  modelRoot: {fileID: 0}
 --- !u!114 &3944781503140636565
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -279,6 +283,25 @@ MonoBehaviour:
   UseRigidBodyForMotion: 0
   AutoUpdateKinematicState: 1
   AutoSetKinematicOnDespawn: 1
+--- !u!114 &6125363240826229288
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7629307799589511846}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ce74914aa38a74a458ebd379f79446e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  ShowTopMostFoldoutHeaderGroup: 1
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 8
+  skin: 0.02
+  probeUp: 2
+  probeDown: 6
 --- !u!1 &9137048065677077562
 GameObject:
   m_ObjectHideFlags: 0
