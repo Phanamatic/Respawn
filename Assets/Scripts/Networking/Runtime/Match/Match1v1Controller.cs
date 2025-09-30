@@ -288,13 +288,24 @@ namespace Game.Net
             Transform lookAt = FindDeep(_shipInstance.transform, cameraLookAtName);
 
             var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var anchors = new List<PlayerVisualAnchor>(players.Length);
             foreach (var player in players)
             {
                 if (!player) continue;
-                player.transform.SetParent(seatMount, false);
+
+                var anchor = player.GetComponent<PlayerVisualAnchor>();
+                if (!anchor) anchor = player.gameObject.AddComponent<PlayerVisualAnchor>();
+
+                if (anchor.SafeVisualRoot == null)
+                {
+                    Debug.LogWarning("[Match1v1] No safe visual root on player; skipping cinematic attach.");
+                    player.SetVisible(true);
+                    continue;
+                }
+
                 float xOffset = player.GetTeam() == TeamId.A ? -1.5f : 1.5f;
-                player.transform.localPosition = new Vector3(xOffset, 0, 0);
-                player.transform.localRotation = Quaternion.identity;
+                anchor.AttachTo(seatMount, new Vector3(xOffset, 0, 0), Quaternion.identity, disableColliders: true);
+                anchors.Add(anchor);
                 player.SetVisible(true);
             }
 
@@ -316,8 +327,8 @@ namespace Game.Net
                 yield return null;
             }
 
-            foreach (var player in players)
-                if (player) player.transform.SetParent(null, true);
+            foreach (var anchor in anchors)
+                if (anchor) anchor.DetachToWorld(restoreColliders: true);
 
             if (_cam) _cam.transform.SetParent(null, true);
             if (_isoCam) _isoCam.enabled = true;
