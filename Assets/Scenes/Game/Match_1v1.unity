@@ -992,7 +992,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 711288403}
-  - component: {fileID: 711288402}
+  - component: {fileID: 711288404}
   m_Layer: 0
   m_Name: Player Spawner
   m_TagString: Untagged
@@ -1000,25 +1000,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &711288402
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 711288401}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c6686d7c190ae9849846661c9094bb3f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  playerPrefab: {fileID: 3191172038672659176, guid: 4727661349ff41a4686c47c0b0dcb113, type: 3}
-  spawnPoints:
-  - {fileID: 1410125199}
-  - {fileID: 807459956}
-  - {fileID: 251284701}
-  - {fileID: 1617448066}
-  randomRadius: 6
 --- !u!4 &711288403
 Transform:
   m_ObjectHideFlags: 0
@@ -1034,6 +1015,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &711288404
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 711288401}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1d3ec79b81be3b64d96c92cebe9afb2b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  playerPrefab: {fileID: 0}
+  fallbackSpawn: {fileID: 0}
+  yLift: 1
 --- !u!1 &807459952
 GameObject:
   m_ObjectHideFlags: 0
@@ -2215,10 +2211,12 @@ MonoBehaviour:
   shipStart: {fileID: 353541202}
   shipEnd: {fileID: 536940034}
   shipDuration: 3
-  cameraFollowLerp: 12
   seatMountName: SeatMount
   cameraMountName: CameraMount
   cameraLookAtName: CameraLookAt
+  spawnCursorPrefab: {fileID: 0}
+  spawnCameraPosition: {x: 0, y: 0, z: 0}
+  spawnCameraLookAt: {x: 0, y: 0, z: 0}
   countdownSeconds: 3
   cinematicSeconds: 3.5
   spawnSelectSeconds: 10
