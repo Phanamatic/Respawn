@@ -98,6 +98,7 @@ namespace Game.Net
         Camera _cam; IsometricCamera _isoCam; int _camBindTries;
 
         bool _inputPaused;
+        float _localSpawnTime = float.PositiveInfinity;
         bool _frozen;
 
         private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
@@ -145,6 +146,7 @@ namespace Game.Net
             {
                 SetupInputAndCamera();
                 TrySnapToGroundImmediate(); // client visual safety
+                _localSpawnTime = Time.time;
             }
             SetInputPaused(false);
 
@@ -177,11 +179,15 @@ namespace Game.Net
             if (_aDash != null) _aDash.performed -= OnDashPerformed;
             _map = null; _aMove = _aMouse = _aSprint = _aDash = null;
 
+            _localSpawnTime = float.PositiveInfinity;
+
             _netPosition.OnValueChanged -= OnPositionChanged;
             _netYaw.OnValueChanged -= OnYawChanged;
             _netVelocity.OnValueChanged -= OnVelocityChanged;
             _netIsDashing.OnValueChanged -= OnDashingChanged;
         }
+
+        public float LocalSpawnTime => _localSpawnTime;
 
         // ==== HUD binding API (for PlayerHUDBinder) ====
         public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI)

@@ -6,6 +6,7 @@ namespace Game.Net
     public sealed class LobbyPlayTrigger : MonoBehaviour
     {
         [SerializeField] private LobbyUI lobbyUI;
+        [SerializeField, Min(0f)] private float spawnEntryGraceSeconds = 0.6f;
 
         void Reset()
         {
@@ -15,16 +16,33 @@ namespace Game.Net
 
         void OnTriggerEnter(Collider other)
         {
-            if (!other.CompareTag("Player")) return;
+            var player = ResolveLocalPlayer(other);
+            if (!player) return;
+
+            if (Time.time - player.LocalSpawnTime < spawnEntryGraceSeconds)
+                return;
+
             if (!lobbyUI) lobbyUI = FindFirstObjectByType<LobbyUI>(FindObjectsInactive.Include);
             if (lobbyUI) lobbyUI.OpenPlayPanelFromWorld(transform);
         }
 
         void OnTriggerExit(Collider other)
         {
-            if (!other.CompareTag("Player")) return;
+            var player = ResolveLocalPlayer(other);
+            if (!player) return;
+
             if (!lobbyUI) lobbyUI = FindFirstObjectByType<LobbyUI>(FindObjectsInactive.Include);
             if (lobbyUI) lobbyUI.NotifyPlatformExited();
+        }
+
+        PlayerNetwork ResolveLocalPlayer(Collider other)
+        {
+            if (!other || !other.CompareTag("Player")) return null;
+
+            var player = other.GetComponentInParent<PlayerNetwork>();
+            if (!player || !player.IsOwner) return null;
+
+            return player;
         }
     }
 }
