@@ -90,16 +90,16 @@ public static class QuickBuildAndRun
             else
             {
                 enabled.Remove(wanted);
-                enabled.Insert(0, wanted); // ensure requested scene is first
+                enabled.Insert(0, wanted);
             }
         }
         return enabled.ToArray();
     }
 
-    // ---------- Run seeds ----------
+    // ---------- Run (Relay + Lobby) ----------
     private const string DefaultEnv = "production";
-    private const string ServerProfile = "Server"; // <= short, valid, reused across runs
-    private const string DefaultRegion = "auto";   // relay will select if supported
+    private const string ServerProfile = "Server"; // short, valid
+    private const string DefaultRegion = "auto";   // Relay auto-pick
 
     [MenuItem("Build/Quick/Run Seeds/Run Lobby")]
     public static void RunLobbySeed() =>
@@ -116,7 +116,19 @@ public static class QuickBuildAndRun
     [MenuItem("Build/Quick/Run Seeds/Run All")]
     public static void RunAllSeeds() { RunLobbySeed(); Run1v1Seed(); Run2v2Seed(); }
 
-    // Relay hosting: remove direct IP flags. Add profile and region.
+    // Aliases under a cleaner menu
+    [MenuItem("Build/Quick/Run Relay/Lobby")]
+    public static void RunRelayLobby() => RunLobbySeed();
+    [MenuItem("Build/Quick/Run Relay/1v1")]
+    public static void RunRelay1v1() => Run1v1Seed();
+    [MenuItem("Build/Quick/Run Relay/2v2")]
+    public static void RunRelay2v2() => Run2v2Seed();
+    [MenuItem("Build/Quick/Run Relay/All Seeds")]
+    public static void RunRelayAll() => RunAllSeeds();
+    [MenuItem("Build/Quick/Run Relay/Client")]
+    public static void RunRelayClient() => RunClient();
+
+    // Relay hosting: no direct IP flags. Add profile/region/env.
     private static string ArgsForServer(string type, int max, string scene, string env, string logfile)
         => $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -logfile .\\{logfile}";
 
@@ -131,7 +143,6 @@ public static class QuickBuildAndRun
     [MenuItem("Build/Quick/Run Client")]
     public static void RunClient() => RunClientInternal("");
 
-    // optional: launch a client with a join code for targeted tests
     [MenuItem("Build/Quick/Run Client (Prompt Join Code)")]
     public static void RunClientWithCode()
     {

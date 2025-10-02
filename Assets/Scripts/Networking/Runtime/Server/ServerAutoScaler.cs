@@ -1,10 +1,8 @@
-// Assets/Scripts/Networking/Runtime/ServerAutoScaler.cs
 // Spawns a new server process when threshold is reached.
-
+// Path: Assets/Scripts/Networking/Runtime/ServerAutoScaler.cs
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-// Aliases to avoid Debug ambiguity and to reference Process types cleanly.
 using UDebug = UnityEngine.Debug;
 using SProcess = System.Diagnostics.Process;
 using SProcessStartInfo = System.Diagnostics.ProcessStartInfo;
@@ -31,9 +29,7 @@ namespace Game.Net
             if (threshold <= 0) return;
 
             if (connected >= threshold)
-            {
                 _spawnedChild = TrySpawnChildServer();
-            }
         }
 
         private bool TrySpawnChildServer()
@@ -46,7 +42,8 @@ namespace Game.Net
             var type = SessionContext.Type == ServerType.Lobby ? "lobby" :
                        SessionContext.Type == ServerType.OneVOne ? "1v1" : "2v2";
 
-            var args = $"-batchmode -nographics -mpsHost -net direct -serverType {type} -max {SessionContext.MaxPlayers} -scene \"{scene}\"";
+            // Host with Relay+Lobby via NetBootstrap. Region can be "auto".
+            var args = $"-batchmode -nographics -mpsHost -serverType {type} -max {SessionContext.MaxPlayers} -scene \"{scene}\" -region auto";
             var psi = new SProcessStartInfo(exe, args)
             {
                 UseShellExecute = false,

@@ -3427,7 +3427,7 @@ MonoBehaviour:
   winsNeeded: 5
   winLeadNeeded: 2
   suddenDeathAt: 7
-  playerPrefab: {fileID: 0}
+  playerPrefab: {fileID: 3191172038672659176, guid: 4727661349ff41a4686c47c0b0dcb113, type: 3}
   roundStartGraceSeconds: 1.5
 --- !u!1 &1912432504
 GameObject:
