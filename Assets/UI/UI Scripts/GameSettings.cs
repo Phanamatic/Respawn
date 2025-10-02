@@ -29,8 +29,8 @@ namespace UI.Scripts
 
         private void Start()
         {
-            LoadSettings();
             SetupListeners();
+            LoadSettings();
         }
 
         private void LoadSettings()
@@ -48,21 +48,20 @@ namespace UI.Scripts
                 QualitySettings.vSyncCount = vsyncToggle.isOn ? 1 : 0;
             }
 
-            // Sound
+            // Sound - Load from AudioManager (set without triggering listeners)
             if (masterVolumeSlider != null)
             {
-                masterVolumeSlider.value = PlayerPrefs.GetFloat(MASTER_VOLUME_KEY, 1f);
-                AudioListener.volume = masterVolumeSlider.value;
+                masterVolumeSlider.SetValueWithoutNotify(AudioManager.Instance.MasterVolume);
             }
 
             if (musicVolumeSlider != null)
             {
-                musicVolumeSlider.value = PlayerPrefs.GetFloat(MUSIC_VOLUME_KEY, 1f);
+                musicVolumeSlider.SetValueWithoutNotify(AudioManager.Instance.MusicVolume);
             }
 
             if (sfxVolumeSlider != null)
             {
-                sfxVolumeSlider.value = PlayerPrefs.GetFloat(SFX_VOLUME_KEY, 1f);
+                sfxVolumeSlider.SetValueWithoutNotify(AudioManager.Instance.SFXVolume);
             }
 
             // Accessibility
@@ -86,7 +85,7 @@ namespace UI.Scripts
             if (vsyncToggle != null)
                 vsyncToggle.onValueChanged.AddListener(SetVSync);
 
-            // Sound
+            // Sound - Setup listeners first
             if (masterVolumeSlider != null)
                 masterVolumeSlider.onValueChanged.AddListener(SetMasterVolume);
 
@@ -122,23 +121,17 @@ namespace UI.Scripts
         // Sound Methods
         public void SetMasterVolume(float volume)
         {
-            AudioListener.volume = volume;
-            PlayerPrefs.SetFloat(MASTER_VOLUME_KEY, volume);
-            PlayerPrefs.Save();
+            AudioManager.Instance.SetMasterVolume(volume);
         }
 
         public void SetMusicVolume(float volume)
         {
-            PlayerPrefs.SetFloat(MUSIC_VOLUME_KEY, volume);
-            PlayerPrefs.Save();
-            // You can hook this up to your music AudioSource later
+            AudioManager.Instance.SetMusicVolume(volume);
         }
 
         public void SetSFXVolume(float volume)
         {
-            PlayerPrefs.SetFloat(SFX_VOLUME_KEY, volume);
-            PlayerPrefs.Save();
-            // You can hook this up to your SFX AudioSource later
+            AudioManager.Instance.SetSFXVolume(volume);
         }
 
         // Accessibility Methods
@@ -157,17 +150,17 @@ namespace UI.Scripts
         // Public getters for other scripts to use
         public static float GetMasterVolume()
         {
-            return PlayerPrefs.GetFloat(MASTER_VOLUME_KEY, 1f);
+            return AudioManager.Instance.MasterVolume;
         }
 
         public static float GetMusicVolume()
         {
-            return PlayerPrefs.GetFloat(MUSIC_VOLUME_KEY, 1f);
+            return AudioManager.Instance.MusicVolume;
         }
 
         public static float GetSFXVolume()
         {
-            return PlayerPrefs.GetFloat(SFX_VOLUME_KEY, 1f);
+            return AudioManager.Instance.SFXVolume;
         }
 
         public static float GetMouseSensitivity()
