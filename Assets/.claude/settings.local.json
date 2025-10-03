@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(for id in 33005274 929185749 576081375 597209176 1253120858 3096650 1158575409 1289263528 1972838053)",
+      "Bash(do grep -A3 \"m_GameObject: {fileID: $id}\" \"Scenes/Game/Lobby.unity\")",
+      "Bash(done)",
+      "Bash(do echo \"=== Child $id ===\")",
+      "Read(///**)",
+      "Bash(for id in 1977998402031059252 4203709177311245529 5634316489254484473 5427444065009539566)",
+      "Bash(do echo \"=== GameObject $id ===\")",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
