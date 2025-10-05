@@ -50,6 +50,8 @@ namespace Game.Net
         [SerializeField] private string seatMountName = "SeatMount";
         [SerializeField] private string cameraMountName = "CameraMount";
         [SerializeField] private string cameraLookAtName = "CameraLookAt";
+        [SerializeField, Tooltip("Optional lightweight visual used if no PlayerNetwork exists yet.")]
+        private GameObject cinematicStandInPrefab;   // visual-only prefab (no NetworkObject)
 
         [Header("Spawn Select")]
         [SerializeField] private GameObject spawnCursorPrefab;
@@ -60,7 +62,7 @@ namespace Game.Net
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
         [SerializeField, Min(3f)] private float cinematicSeconds = 3.5f;
         [SerializeField, Min(3f)] private float spawnSelectSeconds = 10f;
-        [SerializeField, Min(10f)] private float roundDurationSeconds = 60f;
+        [SerializeField, Min(10f)] private float roundDurationSeconds = 90f;
         [SerializeField, Min(2f)] private float roundEndDelaySeconds = 3f;
 
         [Header("Win Conditions")]
@@ -75,7 +77,28 @@ namespace Game.Net
         [Header("Safety")]
         [SerializeField, Min(0.1f)] private float roundStartGraceSeconds = 1.5f;
 
-        // Network Variables
+        [Header("Required Players")]
+        [SerializeField] private TMP_Text _requiredPlayersUI;
+        [SerializeField, Min(2)] private int requiredPlayers = 2;
+
+        [Header("Intro Pan")]
+        [SerializeField] Transform mapPanStart;
+        [SerializeField] Transform mapPanEnd;
+        [SerializeField, Min(0.1f)] float mapPanSeconds = 3f;
+
+        Coroutine _cineCo, _panCo;   // track coroutines so we can stop safely
+
+        [Header("Spawn Select Camera Target")]
+        [SerializeField] Transform spawnSelectLookTarget;
+
+        [Header("Spawn Camera Framing")]
+        [SerializeField, Min(0.5f)] float spawnCamBackMultiplier = 1.8f;
+        [SerializeField, Min(0f)]   float spawnCamMinBack        = 22f;
+        [SerializeField, Min(0f)]   float spawnCamHeightMin      = 35f;
+        [SerializeField, Min(0.1f)] float spawnCamHeightMultiplier = 3.0f;
+        [SerializeField] Transform  spawnCamBackRef; // Optional: use this transform’s forward for “behind” direction
+
+        bool _didIntroPanThisRound;
         private readonly NetworkVariable<MatchState> _state = new();
         private readonly NetworkVariable<int> _playerCount = new();
         private readonly NetworkVariable<int> _roundNumber = new();
@@ -151,6 +174,7 @@ namespace Game.Net
             RecountPlayers();
             AssignTeamsIfNeeded();
             PauseInputFor(clientId, true);
+            UpdateRequiredPlayersClientRpc(_playerCount.Value, requiredPlayers);
             TryStartFlow();
         }
 
@@ -159,6 +183,7 @@ namespace Game.Net
             _teams.Remove(clientId);
             _chosenSpawns.Remove(clientId);
             RecountPlayers();
+            UpdateRequiredPlayersClientRpc(_playerCount.Value, requiredPlayers);
 
             if (_playerCount.Value < 2 && _state.Value != MatchState.MatchEnd)
             {
@@ -175,31 +200,38 @@ namespace Game.Net
             for (int i = 0; i < ids.Count; i++)
                 if (ids[i] != NetworkManager.ServerClientId) count++;
             _playerCount.Value = count;
+            RefreshUIClientRpc();
         }
 
         void AssignTeamsIfNeeded()
         {
-            var ids = NetworkManager.ConnectedClientsIds;
-            int teamIndex = 0;
-            for (int i = 0; i < ids.Count; i++)
+            var all = NetworkManager.ConnectedClientsIds;
+            var nonServer = new List<ulong>(all.Count);
+            for (int i = 0; i < all.Count; i++)
             {
-                var cid = ids[i];
-                if (cid == NetworkManager.ServerClientId) continue;
-                if (!_teams.ContainsKey(cid))
-                {
-                    _teams[cid] = (TeamId)(teamIndex % 2);
-                    teamIndex++;
-                }
+                var cid = all[i];
+                if (cid != NetworkManager.ServerClientId) nonServer.Add(cid);
+            }
+
+            // Stable order
+            nonServer.Sort();
+
+            for (int i = 0; i < nonServer.Count; i++)
+            {
+                var cid = nonServer[i];
+                var want = (TeamId)(i % 2);
+                if (!_teams.TryGetValue(cid, out var have) || have != want)
+                    _teams[cid] = want;
 
                 var player = NetworkManager.ConnectedClients[cid]?.PlayerObject?.GetComponent<PlayerNetwork>();
-                if (player) player.SetTeam(_teams[cid]);
+                if (player) player.SetTeam(want);
             }
         }
 
         void TryStartFlow()
         {
             if (_state.Value != MatchState.Waiting) return;
-            if (_playerCount.Value < 2) return;
+            if (_playerCount.Value < requiredPlayers) return;
             StartCoroutine(CoStartMatch());
         }
 
@@ -210,6 +242,7 @@ namespace Game.Net
             _winsTeamB.Value = 0;
             _suddenDeath.Value = false;
             _firstRound = true;
+            _didIntroPanThisRound = false;
 
             yield return StartRound();
         }
@@ -262,18 +295,22 @@ namespace Game.Net
         void StartCinematicClientRpc()
         {
             if (!IsClient) return;
-            if (_flyCo != null) StopCoroutine(_flyCo);
-            _flyCo = StartCoroutine(CoFlyIn());
+            if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
+            _cineCo = StartCoroutine(CoFlyIn());
         }
 
         IEnumerator CoFlyIn()
         {
-            if (_cam)
-            {
-                _preCinematicCamPos = _cam.transform.position;
-                _preCinematicCamRot = _cam.transform.rotation;
-            }
+            if (!AcquireCameraSafe()) yield break;
 
+            _preCinematicCamPos = _cam.transform.position;
+            _preCinematicCamRot = _cam.transform.rotation;
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            if (_isoCam == null) _isoCam = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
+#else
+            if (_isoCam == null) _isoCam = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
+#endif
             if (_isoCam) _isoCam.enabled = false;
 
             _shipInstance = shipPrefab ? Instantiate(shipPrefab) : null;
@@ -283,33 +320,68 @@ namespace Game.Net
                 yield break;
             }
 
-            Transform seatMount = FindDeep(_shipInstance.transform, seatMountName) ?? _shipInstance.transform;
+            // Mounts
+            Transform seatMount   = EnsureSeatMount(_shipInstance.transform, seatMountName);
             Transform cameraMount = FindDeep(_shipInstance.transform, cameraMountName);
-            Transform lookAt = FindDeep(_shipInstance.transform, cameraLookAtName);
+            Transform lookAt      = FindDeep(_shipInstance.transform, cameraLookAtName);
 
-            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            var anchors = new List<PlayerVisualAnchor>(players.Length);
-            foreach (var player in players)
+            // Always use client-only stand-ins on the ship. Never reparent networked player objects.
+            var players       = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var hiddenAnchors = new List<PlayerVisualAnchor>(players.Length);
+            var tempStandIns  = new List<GameObject>(2);
+
+            // Hide real models during cinematic
+            foreach (var p in players)
             {
-                if (!player) continue;
+                if (!p) continue;
+                var a = p.GetComponent<PlayerVisualAnchor>() ?? p.gameObject.AddComponent<PlayerVisualAnchor>();
+                a.SetModelVisible(false);
+                hiddenAnchors.Add(a);
 
-                var anchor = player.GetComponent<PlayerVisualAnchor>();
-                if (!anchor) anchor = player.gameObject.AddComponent<PlayerVisualAnchor>();
-
-                if (anchor.SafeVisualRoot == null)
+                // pick seat by team for nice framing
+                float xOffset = p.GetTeam() == TeamId.A ? -1.5f : 1.5f;
+                var prefab = cinematicStandInPrefab ? cinematicStandInPrefab : (playerPrefab ? playerPrefab.gameObject : null);
+                var stand = prefab ? Instantiate(prefab) : null;
+                if (stand)
                 {
-                    Debug.LogWarning("[Match1v1] No safe visual root on player; skipping cinematic attach.");
-                    player.SetVisible(true);
-                    continue;
-                }
+                    foreach (var no in stand.GetComponentsInChildren<NetworkObject>(true)) Destroy(no);
+                    foreach (var rb in stand.GetComponentsInChildren<Rigidbody>(true)) Destroy(rb);
+                    foreach (var col in stand.GetComponentsInChildren<Collider>(true)) col.enabled = false;
+                    foreach (var beh in stand.GetComponentsInChildren<Behaviour>(true))
+                        if (!(beh is Animator)) beh.enabled = false;
 
-                float xOffset = player.GetTeam() == TeamId.A ? -1.5f : 1.5f;
-                anchor.AttachTo(seatMount, new Vector3(xOffset, 0, 0), Quaternion.identity, disableColliders: true);
-                anchors.Add(anchor);
-                player.SetVisible(true);
+                    stand.transform.SetParent(seatMount, false);
+                    stand.transform.localPosition = new Vector3(xOffset, 0, 0);
+                    stand.transform.localRotation = Quaternion.identity;
+                    tempStandIns.Add(stand);
+                }
             }
 
-            if (_cam && cameraMount && lookAt)
+            // If no players yet, still show two generic riders
+            if (players.Length == 0)
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    var prefab = cinematicStandInPrefab ? cinematicStandInPrefab : (playerPrefab ? playerPrefab.gameObject : null);
+                    var stand = prefab ? Instantiate(prefab) : null;
+                    if (!stand) break;
+
+                    foreach (var no in stand.GetComponentsInChildren<NetworkObject>(true)) Destroy(no);
+                    foreach (var rb in stand.GetComponentsInChildren<Rigidbody>(true)) Destroy(rb);
+                    foreach (var col in stand.GetComponentsInChildren<Collider>(true)) col.enabled = false;
+                    foreach (var beh in stand.GetComponentsInChildren<Behaviour>(true))
+                        if (!(beh is Animator)) beh.enabled = false;
+
+                    float xOffset = (i == 0) ? -1.5f : 1.5f;
+                    stand.transform.SetParent(seatMount, false);
+                    stand.transform.localPosition = new Vector3(xOffset, 0, 0);
+                    stand.transform.localRotation = Quaternion.identity;
+                    tempStandIns.Add(stand);
+                }
+            }
+
+            // Camera attach
+            if (AcquireCameraSafe() && cameraMount && lookAt)
             {
                 _cam.transform.SetParent(cameraMount, false);
                 _cam.transform.localPosition = Vector3.zero;
@@ -317,8 +389,9 @@ namespace Game.Net
                 _cam.transform.LookAt(lookAt.position);
             }
 
-            float elapsed = 0;
-            while (elapsed < shipDuration)
+            // Animate ship
+            float elapsed = 0f;
+            while (_shipInstance && elapsed < shipDuration)
             {
                 float t = elapsed / shipDuration;
                 _shipInstance.transform.position = Vector3.Lerp(shipStart.position, shipEnd.position, t);
@@ -327,14 +400,17 @@ namespace Game.Net
                 yield return null;
             }
 
-            foreach (var anchor in anchors)
-                if (anchor) anchor.DetachToWorld(restoreColliders: true);
+            // Restore models and cleanup
+            for (int i = 0; i < hiddenAnchors.Count; i++)
+                if (hiddenAnchors[i]) hiddenAnchors[i].SetModelVisible(true);
 
-            if (_cam) _cam.transform.SetParent(null, true);
+            for (int i = 0; i < tempStandIns.Count; i++)
+                if (tempStandIns[i]) Destroy(tempStandIns[i]);
+
+            // Detach camera but DO NOT destroy the ship yet.
+            // Ship stays visible until spawn-select actually begins.
+            DetachCameraFromShip();
             if (_isoCam) _isoCam.enabled = true;
-
-            Destroy(_shipInstance);
-            _shipInstance = null;
         }
 
         [ClientRpc]
@@ -346,10 +422,23 @@ namespace Game.Net
             _spawnDeadlineLocal = Time.unscaledTime + seconds;
             _selecting = true;
 
+            // Make sure highlight state is set immediately for round 1.
+            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
+
+            // Run the intro pan once, then open the spawn UI.
+            if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
+            {
+                _didIntroPanThisRound = true;
+                // Keep the ship until spawn-select begins. Only hide players/stand-ins and detach the camera.
+                PrepareCinematicForPanLocal();
+                StartCoroutine(CoIntroPanThenOpenSpawnUI());
+                return;
+            }
+
+            // No pan path: frame camera from bounds and open UI now.
+            FrameSpawnCamera(_myAreaBounds);
             ShowCanvas(spawnCanvas, true);
             if (spawnHintText) spawnHintText.text = "Click to choose spawn";
-
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
 
             if (!_spawnCursor)
             {
@@ -378,7 +467,15 @@ namespace Game.Net
             if (_cam)
             {
                 _cam.transform.position = spawnCameraPosition;
-                _cam.transform.rotation = Quaternion.LookRotation((spawnCameraLookAt - spawnCameraPosition).normalized, Vector3.up);
+                if (spawnSelectLookTarget)
+                {
+                    var look = (spawnSelectLookTarget.position - _cam.transform.position).normalized;
+                    _cam.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
+                }
+                else
+                {
+                    _cam.transform.rotation = Quaternion.LookRotation((spawnCameraLookAt - spawnCameraPosition).normalized, Vector3.up);
+                }
             }
 
             if (_selectCo != null) StopCoroutine(_selectCo);
@@ -401,6 +498,9 @@ namespace Game.Net
 
         void Update()
         {
+            // Avoid nulls before NGO starts
+            if (!Application.isPlaying) return;
+
             if (_selecting && _cam)
             {
                 var ray = _cam.ScreenPointToRay(Input.mousePosition);
@@ -444,9 +544,10 @@ namespace Game.Net
 
             if (IsClient && _state.Value == MatchState.Playing && roundTimerText)
             {
-                float timeLeft = Mathf.Max(0, _roundEndTime.Value - Time.time);
-                int minutes = (int)(timeLeft / 60);
-                int seconds = (int)(timeLeft % 60);
+                var serverNow = GetServerNowSafe();
+                var t = Mathf.Max(0f, _roundEndTime.Value - serverNow);
+                int minutes = (int)(t / 60);
+                int seconds = (int)(t % 60);
                 roundTimerText.text = $"{minutes:0}:{seconds:00}";
             }
         }
@@ -465,7 +566,7 @@ namespace Game.Net
             // Store the exact XZ and let server snap Y to Ground on spawn.
             _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
 
-            if (_chosenSpawns.Count >= _playerCount.Value)
+            if (_chosenSpawns.Count >= 2)
                 SpawnAllAndStartRound();
         }
 
@@ -499,8 +600,10 @@ namespace Game.Net
             }
 
             _state.Value = MatchState.Playing;
-            _roundStartTimeServer = Time.time;
-            _roundEndTime.Value = Time.time + roundDurationSeconds;
+            // server-authoritative start/end; guard if server time not ready yet
+            var now = GetServerNowSafe();
+            _roundStartTimeServer = now;
+            _roundEndTime.Value   = now + roundDurationSeconds;
 
             SetAllPlayersVisibleClientRpc(true);
             FreezeAllPlayers(false);
@@ -584,7 +687,7 @@ namespace Game.Net
 
                 if (!someoneAlive_A && someoneAlive_B) roundWinner = 1;      // B wins
                 else if (!someoneAlive_B && someoneAlive_A) roundWinner = 0; // A wins
-                else if (Time.time >= _roundEndTime.Value)
+                else if (GetServerNowSafe() >= _roundEndTime.Value)
                 {
                     if      (healthSum_A > healthSum_B) roundWinner = 0;
                     else if (healthSum_B > healthSum_A) roundWinner = 1;
@@ -607,6 +710,7 @@ namespace Game.Net
 
             if (winnerTeam == 0) _winsTeamA.Value++;
             else if (winnerTeam == 1) _winsTeamB.Value++;
+            else { _winsTeamA.Value++; _winsTeamB.Value++; } // draw => both get a point
 
             ShowRoundEndClientRpc(winnerTeam);
             StartCoroutine(CoPostRoundFlow());
@@ -726,6 +830,162 @@ namespace Game.Net
             return null;
         }
 
+        // Camera framing from spawn area bounds.
+        // Places camera higher and centered behind the look target. Less side bias.
+        void FrameSpawnCamera(Bounds b)
+        {
+            if (!AcquireCameraSafe()) return;
+
+            Vector3 lookPos = spawnSelectLookTarget ? spawnSelectLookTarget.position : b.center;
+
+            // Back distance scales with area size
+            float maxExtent = Mathf.Max(b.extents.x, b.extents.z);
+            float back = Mathf.Max(spawnCamMinBack, maxExtent * spawnCamBackMultiplier);
+
+            // Height scales with area size; ensure a higher vantage
+            float height = Mathf.Max(spawnCamHeightMin, maxExtent * spawnCamHeightMultiplier);
+
+            // Choose a consistent "behind" direction:
+            // 1) Use explicit reference’s forward if provided
+            // 2) Else use spawnSelectLookTarget.forward
+            // 3) Else fall back to pan path direction or world +Z
+            Vector3 behindDir =
+                (spawnCamBackRef ? spawnCamBackRef.forward :
+                (spawnSelectLookTarget ? spawnSelectLookTarget.forward :
+                (mapPanEnd && mapPanStart ? (mapPanEnd.position - mapPanStart.position).normalized : Vector3.forward)));
+
+            // Place camera behind the look target, elevated
+            Vector3 pos = lookPos - behindDir.normalized * back + Vector3.up * height;
+            _cam.transform.SetPositionAndRotation(pos, Quaternion.LookRotation((lookPos - pos).normalized, Vector3.up));
+        }
+
+        // Remove any ship/stand-in leftovers and hide real player visuals until actual spawn.
+        void ForceClearCinematicResidueLocal()
+        {
+            // Detach cam if it’s under the ship
+            DetachCameraFromShip();
+
+            if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
+
+            var anchors = UnityEngine.Object.FindObjectsByType<PlayerVisualAnchor>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < anchors.Length; i++)
+            {
+                var a = anchors[i];
+                if (!a) continue;
+                a.DetachToWorld(true);     // ensure no parenting remains
+                a.SetModelVisible(false);  // hide until actual spawn
+            }
+        }
+
+        // Prepare for pan: detach camera and hide player models/stand-ins, but keep the ship alive.
+        void PrepareCinematicForPanLocal()
+        {
+            DetachCameraFromShip();
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var anchors = UnityEngine.Object.FindObjectsByType<PlayerVisualAnchor>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#else
+            var anchors = UnityEngine.Object.FindObjectsOfType<PlayerVisualAnchor>();
+#endif
+            for (int i = 0; i < anchors.Length; i++)
+            {
+                var a = anchors[i];
+                if (!a) continue;
+                a.DetachToWorld(true);
+                a.SetModelVisible(false);
+            }
+        }
+
+        // Destroy ship and any client-only stand-ins once spawn-select begins.
+        void ClearCinematicShip()
+        {
+            DetachCameraFromShip();
+            if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var standIns = UnityEngine.Object.FindObjectsByType<Animator>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#else
+            var standIns = UnityEngine.Object.FindObjectsOfType<Animator>();
+#endif
+            // Best-effort: remove any loose client-only stand-ins we created (they have no NetworkObject)
+            for (int i = 0; i < standIns.Length; i++)
+            {
+                var anim = standIns[i]; if (!anim) continue;
+                var no = anim.GetComponentInParent<Unity.Netcode.NetworkObject>();
+                if (no == null)
+                {
+                    // Destroy only if it was under the ship or still near the ship spawn path
+                    if (_shipInstance == null || (anim.transform && !anim.transform.IsChildOf(_shipInstance.transform)))
+                        continue;
+                    UnityEngine.Object.Destroy(anim.gameObject);
+                }
+            }
+        }
+
+        IEnumerator CoIntroPanThenOpenSpawnUI()
+        {
+            if (_panCo != null) { StopCoroutine(_panCo); _panCo = null; }
+            if (!AcquireCameraSafe()) yield break;
+
+            // temporary disable iso cam while we pan
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            if (_isoCam == null) _isoCam = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
+#else
+            if (_isoCam == null) _isoCam = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
+#endif
+            if (_isoCam) _isoCam.enabled = false;
+
+            // position at start
+            _cam.transform.SetParent(null, true);
+            _cam.transform.position = mapPanStart ? mapPanStart.position : _cam.transform.position;
+            _cam.transform.rotation = mapPanStart ? mapPanStart.rotation : _cam.transform.rotation;
+
+            float t = 0f;
+            while (t < 1f)
+            {
+                if (!AcquireCameraSafe()) yield break;
+                t += Time.unscaledDeltaTime / Mathf.Max(0.001f, mapPanSeconds);
+                _cam.transform.position = Vector3.LerpUnclamped(mapPanStart.position, mapPanEnd.position, t);
+
+                // Always face the spawn-select look target during the pan if assigned
+                if (spawnSelectLookTarget)
+                {
+                    var dir = spawnSelectLookTarget.position - _cam.transform.position;
+                    dir.y = 0f;
+                    if (dir.sqrMagnitude > 1e-4f)
+                        _cam.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
+                }
+                else
+                {
+                    _cam.transform.rotation = Quaternion.SlerpUnclamped(mapPanStart.rotation, mapPanEnd.rotation, t);
+                }
+                yield return null;
+            }
+
+            // cut to spawn-select framing
+            // clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
+            ClearCinematicShip();
+            FrameSpawnCamera(_myAreaBounds);
+            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
+            _panCo = null; // mark pan done
+
+            ShowCanvas(spawnCanvas, true);
+            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
+        }
+
+        // Ensure a SeatMount exists under the ship and return it.
+        Transform EnsureSeatMount(Transform shipRoot, string mountName)
+        {
+            var t = FindDeep(shipRoot, mountName);
+            if (t) return t;
+
+            var go = new GameObject(string.IsNullOrEmpty(mountName) ? "SeatMount" : mountName);
+            go.transform.SetParent(shipRoot, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            return go.transform;
+        }
+
         void FreezeAllPlayers(bool frozen)
         {
             foreach (var cc in NetworkManager.ConnectedClientsList)
@@ -755,7 +1015,7 @@ namespace Game.Net
             if (paused && statusText && statusCanvas)
             {
                 statusText.text = _state.Value == MatchState.Waiting
-                    ? $"Waiting for {_playerCount.Value}/2 players"
+                    ? $"Waiting for {_playerCount.Value}/{requiredPlayers} players"
                     : "Please wait";
                 ShowCanvas(statusCanvas, true);
             }
@@ -768,6 +1028,17 @@ namespace Game.Net
             foreach (var pl in players) if (pl) pl.SetVisible(visible);
         }
 
+        // Live "players joined" UI update
+        [ClientRpc]
+        void UpdateRequiredPlayersClientRpc(int joined, int needed)
+        {
+            if (statusText && statusCanvas && _state.Value == MatchState.Waiting)
+            {
+                statusText.text = $"Waiting for {joined}/{needed} players";
+                ShowCanvas(statusCanvas, true);
+            }
+        }
+
         [ClientRpc]
         void CountdownClientRpc(int number)
         {
@@ -777,6 +1048,12 @@ namespace Game.Net
                 if (number > 0 && _uiCo != null) StopCoroutine(_uiCo);
                 if (number > 0) _uiCo = StartCoroutine(CoPulse(countdownText));
             }
+        }
+
+        [ClientRpc]
+        void RefreshUIClientRpc()
+        {
+            RefreshUI();
         }
 
         IEnumerator CoPulse(TMP_Text t)
@@ -799,6 +1076,7 @@ namespace Game.Net
         {
             if (!IsClient) return;
 
+            // Update texts
             if (scoreTextA) scoreTextA.text = $"Team A: {_winsTeamA.Value}";
             if (scoreTextB) scoreTextB.text = $"Team B: {_winsTeamB.Value}";
             if (roundNumberText)
@@ -808,18 +1086,29 @@ namespace Game.Net
                 roundNumberText.text = roundText;
             }
 
+            // Hide score/timer HUD until actual round play begins
+            bool showHud = (_state.Value == MatchState.Playing);
+            if (roundTimerText)   roundTimerText.gameObject.SetActive(showHud);
+            if (scoreTextA)       scoreTextA.gameObject.SetActive(showHud);
+            if (scoreTextB)       scoreTextB.gameObject.SetActive(showHud);
+            if (roundNumberText)  roundNumberText.gameObject.SetActive(showHud);
+
+            // Status panel gating
             if (_state.Value == MatchState.Waiting)
             {
                 ShowCanvas(statusCanvas, true);
                 if (statusText)
-                    statusText.text = _playerCount.Value >= 2
-                        ? "2 players connected. Match starting..."
-                        : $"Waiting for {_playerCount.Value}/2 players";
+                    statusText.text = _playerCount.Value >= requiredPlayers
+                        ? $"{requiredPlayers} players connected. Match starting..."
+                        : $"Waiting for {_playerCount.Value}/{requiredPlayers} players";
             }
             else if (_state.Value == MatchState.Playing)
             {
                 ShowCanvas(statusCanvas, false);
             }
+
+            // Update required players UI
+            if (_requiredPlayersUI) _requiredPlayersUI.text = requiredPlayers.ToString();
         }
 
         static void ShowCanvas(CanvasGroup cg, bool show)
@@ -830,6 +1119,53 @@ namespace Game.Net
             cg.blocksRaycasts = show;
             if (cg.gameObject.activeSelf != show)
                 cg.gameObject.SetActive(show);
+        }
+
+        // Safe server clock (works before NGO is listening)
+        static float GetServerNowSafe()
+        {
+            var nm = Unity.Netcode.NetworkManager.Singleton;
+            if (nm != null && nm.IsListening)
+                return (float)nm.ServerTime.TimeAsFloat;
+            return Time.unscaledTime;
+        }
+
+        // Unity fake-null safe checks
+        static bool IsUnityNull(Object o) => o == null;
+
+        bool AcquireCameraSafe()
+        {
+            if (!IsUnityNull(_cam)) return true;
+
+            // Prefer the scene's main camera
+            _cam = Camera.main;
+
+            // Fallback to IsometricCamera’s Camera
+            if (IsUnityNull(_cam))
+            {
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+                var iso = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
+#else
+                var iso = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
+#endif
+                if (iso) _cam = iso.GetComponent<Camera>();
+            }
+
+            // Any camera as last resort
+            if (IsUnityNull(_cam))
+            {
+                var cams = UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                if (cams != null && cams.Length > 0) _cam = cams[0];
+            }
+
+            return !IsUnityNull(_cam);
+        }
+
+        void DetachCameraFromShip()
+        {
+            if (IsUnityNull(_cam)) return;
+            if (_shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
+                _cam.transform.SetParent(null, true);
         }
 
         static ClientRpcParams ToClient(ulong clientId) =>

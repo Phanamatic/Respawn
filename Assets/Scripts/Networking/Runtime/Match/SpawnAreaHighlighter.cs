@@ -34,6 +34,8 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     void Start()
     {
         AssignMeshAndMat();
+        // Ensure first-round visuals apply even if SetMode was already called.
+        Apply();
     }
 
     void Build()
@@ -90,8 +92,9 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         if (s_Mode == Mode.Hidden) { _mr.enabled = false; return; }
 
         _mr.enabled = true;
-        var myWorld = ToWorldBounds(_col);
-        bool isMine = BoundsApproximatelyEqualXZ(myWorld, s_Target, 0.05f);
+        var myWorld = ToWorldBounds(_col);                 // true world AABB
+        bool isMine = ContainsXZ(myWorld, s_Target.center) // center falls inside
+                   && SizesRoughlyMatchXZ(myWorld.size, s_Target.size);
         var mat = _mr.sharedMaterial;
         if (mat) mat.color = isMine ? activeColor : inactiveColor;
     }
@@ -114,16 +117,19 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
     static Bounds ToWorldBounds(BoxCollider c)
     {
-        var center = c.transform.TransformPoint(c.center);
-        var extents = Vector3.Scale(c.size * 0.5f, c.transform.lossyScale);
-        return new Bounds(center, extents * 2f);
+        // Use Unity's world AABB (handles rotation and scale).
+        return c.bounds;
     }
 
-    static bool BoundsApproximatelyEqualXZ(Bounds a, Bounds b, float eps)
+    static bool ContainsXZ(Bounds b, Vector3 p)
     {
-        return Mathf.Abs(a.center.x - b.center.x) <= eps
-            && Mathf.Abs(a.center.z - b.center.z) <= eps
-            && Mathf.Abs(a.size.x - b.size.x) <= eps * 2f
-            && Mathf.Abs(a.size.z - b.size.z) <= eps * 2f;
+        return p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z;
+    }
+
+    static bool SizesRoughlyMatchXZ(Vector3 a, Vector3 b)
+    {
+        // Tolerate authoring/scale differences
+        float eps = Mathf.Max(0.5f, 0.1f * Mathf.Max(a.x, a.z));
+        return Mathf.Abs(a.x - b.x) <= eps && Mathf.Abs(a.z - b.z) <= eps;
     }
 }

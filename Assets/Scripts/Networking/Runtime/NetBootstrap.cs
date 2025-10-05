@@ -88,6 +88,25 @@ namespace Game.Net
                 return string.IsNullOrWhiteSpace(safe) ? "Default" : safe;
             }
 
+            private static int ComputeLobbyCapacity(string serverType, int playerCap)
+            {
+                // Normalize type
+                string t = (serverType ?? string.Empty).Trim().ToLowerInvariant();
+
+                // Map to known player caps when caller passes only "max" from CLI:
+                // lobby: 16 players, 1v1: 2 players, 2v2: 4 players.
+                int nonServerCap = t switch
+                {
+                    "lobby" => 16,
+                    "1v1" or "onevone" or "match_1v1" => 2,
+                    "2v2" or "twovtwo" or "match_2v2" => 4,
+                    _ => playerCap > 0 ? playerCap : 16
+                };
+
+                // Add one slot for the dedicated server’s lobby membership.
+                return Math.Max(1, nonServerCap + 1);
+            }
+
             private async Task RunAsync(Args args)
             {
                 var env = args.GetStr("-env", "production");
@@ -194,7 +213,11 @@ namespace Game.Net
                             }
                         };
 
-                        var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, max, lobbyOptions);
+                        // Reserve one seat for the dedicated server itself.
+                        // Player caps remain: Lobby=16, 1v1=2, 2v2=4.
+                        int playerCap   = max;
+                        int lobbyCap    = ComputeLobbyCapacity(type.ToString().ToLowerInvariant(), playerCap);
+                        var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, lobbyCap, lobbyOptions);
 
                         if (!nm.StartServer())
                         {
@@ -281,11 +304,24 @@ namespace Game.Net
                             ?? (UnityEngine.Object)(entryType.GetProperty("SourcePrefabToOverride")?.GetValue(entry));
 
                         if (!prefab) continue;
-                        if (!seen.Add(prefab))
+
+                        bool remove = false;
+
+                        // 1) Drop any entries whose root lacks a NetworkObject (e.g. cinematic stand-ins).
+                        if (prefab is GameObject go && !go.TryGetComponent<Unity.Netcode.NetworkObject>(out _))
+                        {
+                            Debug.LogWarning($"[NetBootstrap] Removing non-network prefab from registration: {prefab.name}");
+                            remove = true;
+                        }
+
+                        // 2) Drop duplicates.
+                        if (!remove && !seen.Add(prefab))
                         {
                             Debug.LogWarning($"[NetBootstrap] Removing duplicate NetworkPrefab entry: {prefab.name}");
-                            list.RemoveAt(i);
+                            remove = true;
                         }
+
+                        if (remove) list.RemoveAt(i);
                     }
                 }
                 catch (Exception e)

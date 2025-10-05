@@ -14,7 +14,7 @@ namespace Game.Net
     {
         [Header("Performance Profile")]
         [Tooltip("Choose preset based on game type")]
-        [SerializeField] private PerformanceProfile profile = PerformanceProfile.FastPacedShooter; // 60 Hz by default
+        [SerializeField] private PerformanceProfile profile = PerformanceProfile.Competitive; // 128 tick by default
 
         [Header("Custom Settings (if Custom profile)")]
         [SerializeField, Range(30, 256)] private int tickRate = 60;
@@ -167,12 +167,13 @@ namespace Game.Net
             utp.MaxConnectAttempts = 8;
             utp.DisconnectTimeoutMS = 6000;
 
-            SetUTPProperty(utp, "MaxPacketQueueSize", 256);
-            SetUTPProperty(utp, "MaxSendQueueSize",   Mathf.Clamp(targetTick * 4, 256, 4096));
-            SetUTPProperty(utp, "MaxReceiveQueueSize",Mathf.Clamp(targetTick * 4, 256, 4096));
+            SetUTPProperty(utp, "MaxPacketQueueSize", 2048);
+            SetUTPProperty(utp, "MaxSendQueueSize",   2048);
+            SetUTPProperty(utp, "MaxReceiveQueueSize",2048);
             SetUTPProperty(utp, "MaxPacketSize", 1400);
 
-            SetUTPReliabilityMode(utp);
+            // Keep mixed reliability; do not force ReliableSequenced for all traffic.
+            // (Intentionally no SetUTPReliabilityMode here)
         }
 
         private static void SetUTPProperty(UnityTransport utp, string name, object value)

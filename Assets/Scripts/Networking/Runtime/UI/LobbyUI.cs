@@ -282,25 +282,10 @@ namespace Game.Net
                 while (nm.IsConnectedClient) yield return null;
             }
 
-            // Join the Unity Lobby
-            var joinLobbyTask = LobbyService.Instance.JoinLobbyByIdAsync(bestMatch.Id);
-            yield return new WaitUntil(() => joinLobbyTask.IsCompleted);
-
-            if (joinLobbyTask.Exception != null)
+            // Do NOT join the Lobby as a client. Use public data from the query result.
+            if (bestMatch.Data == null || !bestMatch.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
             {
-                Debug.LogError($"[LobbyUI] Failed to join lobby: {joinLobbyTask.Exception}");
-                SetPlayStatus("Failed to join match.");
-                _busy = false;
-                SetAllButtonsInteractable(true);
-                yield break;
-            }
-
-            var joinedLobby = joinLobbyTask.Result;
-
-            // Get the Relay join code from lobby data
-            if (!joinedLobby.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
-            {
-                Debug.LogError("[LobbyUI] No relay code in match lobby");
+                Debug.LogError("[LobbyUI] No relay code on queried lobby (public data missing)");
                 SetPlayStatus("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
@@ -325,7 +310,7 @@ namespace Game.Net
             var joinAllocation = joinAllocTask.Result;
 
             // Configure transport for Relay
-            utp.SetRelayServerData(AllocationUtils.ToRelayServerData(joinAllocation, "dtls"));
+            utp.SetRelayServerData(Game.Net.RelayUtils.ToServerData(joinAllocation, useWss: false));
 
             // Start client
             if (!nm.StartClient())
@@ -347,7 +332,7 @@ namespace Game.Net
             if (nm.IsConnectedClient)
             {
                 SetPlayStatus($"Joined {bestMatch.Name}.");
-                SessionContext.SetLobby(joinedLobby);
+                SessionContext.SetSession(bestMatch.Id, relayJoinCode);
             }
             else
             {

@@ -55,6 +55,14 @@ namespace Game.Net
         {
             if (!NM.IsServer) return;
 
+            // If a Match controller is present, it owns spawning logic. Do not auto-spawn here.
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var match = FindFirstObjectByType<Game.Net.Match1v1Controller>(FindObjectsInactive.Exclude);
+#else
+            var match = FindObjectOfType<Game.Net.Match1v1Controller>(false);
+#endif
+            if (match != null) return;
+
             // Already has a PlayerObject? Do nothing; Match controller will place it later.
             if (NM.ConnectedClients.TryGetValue(clientId, out var cc) && cc.PlayerObject && cc.PlayerObject.IsSpawned)
                 return;

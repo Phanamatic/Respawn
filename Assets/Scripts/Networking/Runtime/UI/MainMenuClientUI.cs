@@ -36,11 +36,15 @@ namespace Game.Net
 
         // --- Shared throttle and cache across all instances ---
         private static double s_NextAllowedQueryTime;            // token-bucket style min interval
-        private const double MinQueryIntervalSeconds = 1.75;     // ~34 QPS per minute max, under typical limits
+        // Adaptable global throttle (shared across scene reloads)
+        private static double s_MinQueryIntervalSeconds = 3.5;   // safer base
         private static List<Lobby> s_LobbyCache;
         private static double s_LobbyCacheAt;
         private const double CacheTtlSeconds = 5.0;
         private static bool s_QueryInFlight;
+        // dynamic penalty window when 429s are observed
+        private static double s_ScanPenaltyUntil;
+        private static int s_BackoffExp; // 0..5
 
         private Coroutine _ellipsisCo;
         private string _ellipsisBase;
@@ -93,6 +97,9 @@ namespace Game.Net
             StopStatusAnimation();
             _servicesInitialized = true;
 
+            // Clean up any stale lobby memberships from prior runs
+            yield return StartCoroutine(LeaveAllJoinedLobbies());
+
             // Start a single refresh loop. Do not restart it on Play.
             StartCoroutine(UpdateLobbyListLoop());
             SetStatus("Ready");
@@ -115,11 +122,17 @@ namespace Game.Net
             s_QueryInFlight = true;
 
             var now = Time.unscaledTimeAsDouble;
+
+            // honor global penalty window if active
+            if (now < s_ScanPenaltyUntil)
+                yield return new WaitForSecondsRealtime((float)(s_ScanPenaltyUntil - now));
+
             var wait = s_NextAllowedQueryTime - now;
             if (wait > 0) yield return new WaitForSecondsRealtime((float)wait);
 
-            // reserve next slot
-            s_NextAllowedQueryTime = Math.Max(now, s_NextAllowedQueryTime) + MinQueryIntervalSeconds;
+            // reserve next slot with slight jitter
+            float jitter = UnityEngine.Random.Range(0.05f, 0.25f);
+            s_NextAllowedQueryTime = Math.Max(now, s_NextAllowedQueryTime) + s_MinQueryIntervalSeconds + jitter;
         }
 
         private void ReleaseLobbyReadSlot()
@@ -139,6 +152,9 @@ namespace Game.Net
             _joining = true;
             SetBusy(true);
             SetStatusAnimated("Finding server");
+
+            // Ensure we are not stuck as a member of a previous lobby
+            yield return StartCoroutine(LeaveAllJoinedLobbies());
 
             // First try Quick Join to cut a round trip
             Lobby joinedLobby = null;
@@ -160,13 +176,19 @@ namespace Game.Net
                 if (quickTask.Exception == null)
                 {
                     joinedLobby = quickTask.Result;
+                    // success: reset penalty
+                    s_BackoffExp = 0; s_MinQueryIntervalSeconds = 3.5; s_ScanPenaltyUntil = 0;
                     break;
                 }
 
                 var ex = quickTask.Exception.InnerException ?? quickTask.Exception;
                 if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
                 {
-                    var backoff = Jitter(1f * (1 << i));
+                    s_BackoffExp = Mathf.Clamp(s_BackoffExp + 1, 0, 5);
+                    double penalty = Math.Pow(2, s_BackoffExp) * 1.0;
+                    s_ScanPenaltyUntil = Time.unscaledTimeAsDouble + penalty;
+                    s_MinQueryIntervalSeconds = Math.Min(8.0, 3.5 + s_BackoffExp * 0.75);
+                    var backoff = Jitter((float)penalty);
                     Debug.LogWarning($"[MainMenu] Rate limited on QuickJoin. Retry in {backoff:0.0}s");
                     yield return new WaitForSecondsRealtime(backoff);
                     continue;
@@ -360,7 +382,7 @@ namespace Game.Net
         {
             if (!AuthenticationService.Instance.IsSignedIn) yield break;
 
-            // use cache if fresh
+            // serve cache if fresh
             if (Time.unscaledTimeAsDouble - s_LobbyCacheAt <= CacheTtlSeconds && s_LobbyCache != null)
             {
                 SetOpenCountText(s_LobbyCache);
@@ -370,7 +392,7 @@ namespace Game.Net
             yield return ThrottleLobbyRead();
             var queryOptions = new QueryLobbiesOptions
             {
-                Count = 10,
+                Count = 8,
                 Filters = new List<QueryFilter> { new QueryFilter(QueryFilter.FieldOptions.S1, "Lobby", QueryFilter.OpOptions.EQ) }
             };
 
@@ -383,14 +405,22 @@ namespace Game.Net
                 var ex = task.Exception.InnerException ?? task.Exception;
                 if (ex is LobbyServiceException le && le.Reason == LobbyExceptionReason.RateLimited)
                 {
-                    Debug.LogWarning("[MainMenu] Rate limit hit on query lobbies count.");
-                    // leave text as-is
-                    yield break;
+                    // Back off aggressively and widen spacing for a short window.
+                    s_BackoffExp = Mathf.Clamp(s_BackoffExp + 1, 0, 5);
+                    double penalty = Math.Pow(2, s_BackoffExp) * 2.0; // 2,4,8,16,32,64s
+                    s_ScanPenaltyUntil = Time.unscaledTimeAsDouble + penalty;
+                    s_MinQueryIntervalSeconds = Math.Min(8.0, 3.5 + s_BackoffExp * 0.75);
+                    Debug.LogWarning($"[MainMenu] Rate limit on lobby scan. Backing off {penalty:0}s");
+                    yield break; // keep last shown count
                 }
 
                 Debug.LogWarning($"[MainMenu] Failed to query lobbies: {ex.Message}");
                 yield break;
             }
+
+            // Success resets penalty and tightens spacing back to base
+            s_BackoffExp = 0;
+            s_MinQueryIntervalSeconds = 3.5;
 
             s_LobbyCache = task.Result.Results ?? new List<Lobby>();
             s_LobbyCacheAt = Time.unscaledTimeAsDouble;
@@ -434,6 +464,31 @@ namespace Game.Net
             if (success && singleJoinPerRun) s_DidJoinThisRun = true;
             _joining = false;
             SetBusy(false);
+        }
+        
+        // Best-effort leave of any joined lobbies to avoid "already a member" errors after crashes/editor restarts.
+        private IEnumerator LeaveAllJoinedLobbies()
+        {
+            List<string> lobbyIds = null;
+
+            // Throttle too, since these are service calls
+            yield return ThrottleLobbyRead();
+            var getTask = LobbyService.Instance.GetJoinedLobbiesAsync();
+            yield return new WaitUntil(() => getTask.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (getTask.Exception == null) lobbyIds = getTask.Result;
+
+            if (lobbyIds != null && lobbyIds.Count > 0)
+            {
+                for (int i = 0; i < lobbyIds.Count; i++)
+                {
+                    var leaveTask = LobbyService.Instance.RemovePlayerAsync(lobbyIds[i], AuthenticationService.Instance.PlayerId);
+                    yield return new WaitUntil(() => leaveTask.IsCompleted);
+                }
+                // small cooldown so service reflects the leave
+                yield return new WaitForSecondsRealtime(0.15f);
+            }
         }
 
         private static bool ValidateNetworkManager()

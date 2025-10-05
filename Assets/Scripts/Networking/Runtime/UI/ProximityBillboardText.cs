@@ -5,7 +5,7 @@ using TMPro;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(TextMeshPro))]
-public sealed class ProximityBillboardText : NetworkBehaviour
+public sealed class ProximityBillboardText : MonoBehaviour
 {
     [Header("Proximity")]
     [SerializeField, Min(0.1f)] float triggerRadius = 6f;
@@ -28,7 +28,7 @@ public sealed class ProximityBillboardText : NetworkBehaviour
 
     [Header("Visibility")]
     [Tooltip("If true and this object is under a player NetworkObject, only that local owner sees the billboard.")]
-    [SerializeField] bool showOnlyForOwner = true;
+    [SerializeField] bool showOnlyForOwner = false;   // world billboards default to visible for any client in radius
 
     TextMeshPro _tmp;
     float _t;                 // 0..1 open state
@@ -47,53 +47,86 @@ public sealed class ProximityBillboardText : NetworkBehaviour
         _cam = Camera.main;
         _baseFontSize = Mathf.Max(1f, _tmp.fontSize);
         _t = 0f;
-        _tmp.fontSize = 0f; // start closed
+        // Start fully closed and hidden
+        _tmp.fontSize = 0f;
+        _tmp.enabled = false;
+        transform.localScale = Vector3.zero;
+        // Hide any renderers under this root to be safe on all TMP variants
+        var rs = GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < rs.Length; i++) rs[i].enabled = false;
+
         _ownerNO = GetComponentInParent<NetworkObject>();
+        // Billboard opens/closes per-client; no network authority needed here.
     }
 
-    public override void OnNetworkSpawn()
+    void Start()
     {
-        // Run only on clients. Dedicated server and server-logic never show or tick this.
-        if (!IsClient)
+        // If attached under a player object and owner-only is set, show only for that local owner.
+        bool gateToOwner = false;
+        if (showOnlyForOwner && _ownerNO != null && _ownerNO.IsPlayerObject)
+        {
+            var pn = _ownerNO.GetComponent<Game.Net.PlayerNetwork>();
+            gateToOwner = pn != null && !pn.IsOwner;
+        }
+        else
+        {
+            gateToOwner = false; // never gate world objects
+        }
+
+        if (gateToOwner)
         {
             if (_tmp) _tmp.enabled = false;
             enabled = false;
             return;
         }
 
-        // Owner-gated visibility (common for player-attached billboards like "Press E").
-        if (showOnlyForOwner && _ownerNO != null && !_ownerNO.IsOwner)
-        {
-            if (_tmp) _tmp.enabled = false;
-            enabled = false; // fully disable updates so no transform churn on remotes
-            return;
-        }
-
-        // Ensure visible component is enabled for the local viewer.
         if (_tmp) _tmp.enabled = true;
     }
 
     void LateUpdate()
     {
-        if (!IsClient) return; // extra safety on host-mode state changes
+        // runs locally on each client; no NGO dependency
 
         if (!target) target = ResolveLocalPlayerTransform();
-        if (!_cam) _cam = Camera.main;
+        if (!_cam)
+        {
+            _cam = Camera.main;
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            if (!_cam) _cam = FindFirstObjectByType<Camera>(FindObjectsInactive.Exclude);
+#else
+            if (!_cam) _cam = FindObjectOfType<Camera>();
+#endif
+        }
 
         float dist = target ? Vector3.Distance(target.position, transform.position) : float.MaxValue;
         _open = dist <= triggerRadius;
 
+        // Per-client show/hide gate
+        if (_open && (_tmp == null || !_tmp.enabled))
+        {
+            if (_tmp) _tmp.enabled = true;
+            // enable renderers when starting to open
+            var ren = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < ren.Length; i++) ren[i].enabled = true;
+        }
+
+        // Animate open/close
         float dt = Time.unscaledDeltaTime;
         float dur = _open ? Mathf.Max(0.001f, openDuration) : Mathf.Max(0.001f, closeDuration);
         float dir = _open ? 1f : -1f;
         float tPrev = _t;
         _t = Mathf.Clamp01(_t + dir * (dt / dur));
 
-        // Smoothstep easing
-        float ease = _t * _t * (3f - 2f * _t);
+        // Apply 0%→100% scale
+        transform.localScale = Vector3.one * _t;
 
-        // Scale font from 0% to 100% locally only
-        _tmp.fontSize = Mathf.LerpUnclamped(0f, _baseFontSize, ease);
+        // Fully close → hard hide so outsiders never see it
+        if (!_open && _t <= 0f)
+        {
+            if (_tmp) _tmp.enabled = false;
+            var ren = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < ren.Length; i++) ren[i].enabled = false;
+        }
 
         // Spin only while opening
         bool isOpeningNow = dir > 0f && _t > 0f && _t < 1f && _t >= tPrev;
