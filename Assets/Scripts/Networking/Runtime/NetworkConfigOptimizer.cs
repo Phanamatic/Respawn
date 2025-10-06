@@ -116,7 +116,8 @@ namespace Game.Net
 
             // NGO settings
             config.EnableSceneManagement = true;
-            config.ForceSamePrefabs = false;
+            // Enforce identical prefab tables across client/server to prevent desync.
+            config.ForceSamePrefabs = true;
             config.RecycleNetworkIds = true;
             config.NetworkIdRecycleDelay = 1f;
             config.RpcHashSize = HashSize.VarIntFourBytes;
@@ -127,6 +128,7 @@ namespace Game.Net
 
             // Transport tuning
             ConfigureUnityTransport(nm, targetTick);
+            SanitizePrefabs(nm);
 
 #if UNITY_EDITOR
             Debug.Log($"[NetworkConfigOptimizer] Applied {profile} profile. TickRate={targetTick}Hz");
@@ -149,6 +151,51 @@ namespace Game.Net
             {
                 try { field.SetValue(obj, value); } catch { }
             }
+        }
+
+        private static void SanitizePrefabs(NetworkManager nm)
+        {
+            try
+            {
+                // Handle both old and new NGO layouts via reflection.
+                var cfg = nm.NetworkConfig;
+                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                object npContainer = cfg.GetType().GetField("Prefabs", flags)?.GetValue(cfg)
+                                  ?? cfg.GetType().GetField("NetworkPrefabs", flags)?.GetValue(cfg)
+                                  ?? cfg.GetType().GetProperty("Prefabs", flags)?.GetValue(cfg);
+
+                if (npContainer == null) return;
+
+                var listField = npContainer.GetType().GetField("NetworkPrefabList", flags)
+                              ?? npContainer.GetType().GetField("Prefabs", flags);
+                var list = listField?.GetValue(npContainer) as System.Collections.IList;
+                if (list == null) return;
+
+                // Remove entries without NetworkObject or obvious cinematic/stand-in objects.
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var entry = list[i];
+                    var et = entry.GetType();
+                    var fi = et.GetField("Prefab", flags);
+                    var pi = et.GetProperty("Prefab", flags);
+                    UnityEngine.GameObject go = null;
+                    if (fi != null) go = fi.GetValue(entry) as UnityEngine.GameObject;
+                    else if (pi != null) go = pi.GetValue(entry) as UnityEngine.GameObject;
+                    if (!go) { list.RemoveAt(i); continue; }
+
+                    var no = go.GetComponent<Unity.Netcode.NetworkObject>();
+                    var name = go.name ?? string.Empty;
+
+                    if (!no || name.IndexOf("Animation", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+#if UNITY_EDITOR
+                        UnityEngine.Debug.LogWarning($"[NetworkConfigOptimizer] Removing invalid network prefab entry: {name}");
+#endif
+                        list.RemoveAt(i);
+                    }
+                }
+            }
+            catch { /* best-effort sanitizer */ }
         }
 
         private static void ConfigureUnityTransport(NetworkManager nm, int targetTick)

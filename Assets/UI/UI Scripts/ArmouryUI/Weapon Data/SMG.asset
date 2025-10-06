@@ -13,8 +13,11 @@ MonoBehaviour:
   m_Name: SMG
   m_EditorClassIdentifier: 
   weaponName: SMG
-  weaponIcon: {fileID: -1052942170, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  weaponIcon: {fileID: 21300000, guid: 2b02b3f4000b5d844ac87b0b4d288fc9, type: 3}
   category: 0
+  primaryType: 1
+  secondaryType: 0
+  utilityType: 0
   damage: 20
   ammo: 25
   fireRate: 10

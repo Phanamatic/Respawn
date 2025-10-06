@@ -51,5 +51,11 @@ namespace Game.Net
             Threshold = 0;
             CurrentLobby = null;
         }
+
+        // Cached loadout for the signed-in player (client-side convenience)
+        private static bool _hasLoadout;
+        private static Game.Net.PlayerLoadout _loadout;
+        public static void SetLoadout(Game.Net.PlayerLoadout lo) { _loadout = lo; _hasLoadout = true; }
+        public static bool TryGetLoadout(out Game.Net.PlayerLoadout lo) { lo = _loadout; return _hasLoadout; }
     }
 }

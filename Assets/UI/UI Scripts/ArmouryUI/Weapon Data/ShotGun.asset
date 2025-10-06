@@ -13,8 +13,11 @@ MonoBehaviour:
   m_Name: ShotGun
   m_EditorClassIdentifier: 
   weaponName: Shotgun
-  weaponIcon: {fileID: 466599975, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  weaponIcon: {fileID: 21300000, guid: 85dcd0dbac7b10442ae769b12545f68a, type: 3}
   category: 0
+  primaryType: 2
+  secondaryType: 0
+  utilityType: 0
   damage: 45
   ammo: 6
   fireRate: 3

@@ -19,6 +19,13 @@ namespace Game.Net
     [DisallowMultipleComponent]
     public sealed class PlayerNetwork : NetworkBehaviour
     {
+        // Keep this declared once and at the top so the NetworkVariable order is identical on all builds.
+        private readonly NetworkVariable<Game.Net.NetLoadout> _netLoadout =
+            new NetworkVariable<Game.Net.NetLoadout>(
+                new Game.Net.NetLoadout(),
+                NetworkVariableReadPermission.Everyone,
+                NetworkVariableWritePermission.Server
+            );
         [Header("Movement")]
         [SerializeField, Min(0f)] float moveSpeed = 8.5f;
         [SerializeField, Min(1f)] float sprintMultiplier = 1.9f;
@@ -100,6 +107,10 @@ namespace Game.Net
                 _rb = GetComponent<Rigidbody>();
                 _capsule = GetComponent<CapsuleCollider>();
             }
+
+            // Client: send saved loadout to server after spawn
+            if (IsOwner)
+                StartCoroutine(CoLoadAndSendLoadout());
 
             // ~2 ticks of interpolation for remotes
             try
@@ -298,6 +309,25 @@ namespace Game.Net
             UpdateUI();
         }
 
+        // Load CloudSave -> send to server (owner only). Validated server-side.
+        System.Collections.IEnumerator CoLoadAndSendLoadout()
+        {
+            // Prefer cached value from SessionContext to avoid a network read
+            PlayerLoadout lo = SessionContext.TryGetLoadout(out var cached) ? cached : PlayerLoadout.Default;
+
+            // If not cached, try CloudSave
+            if (!SessionContext.TryGetLoadout(out _))
+            {
+                var task = CloudSaveClient.LoadLoadoutAsync(PlayerLoadout.Default);
+                while (!task.IsCompleted) yield return null;
+                lo = task.Result;
+                SessionContext.SetLoadout(lo);
+            }
+
+            var net = NetLoadout.From(lo);
+            EquipLoadoutServerRpc(net.primary, net.secondary, net.util);
+        }
+
         void FixedUpdate()
         {
             if (!IsOwner) return;
@@ -403,6 +433,24 @@ namespace Game.Net
             _netYaw.Value = yaw;
             _netVelocity.Value = velocity;
             _netIsDashing.Value = isDashing;
+        }
+
+        // Authoritative equip. Validates indices and applies to replicated var.
+        [ServerRpc(RequireOwnership = true)]
+        void EquipLoadoutServerRpc(byte primary, byte secondary, byte util, ServerRpcParams p = default)
+        {
+            // Validate ranges
+            if (primary > (byte)PrimaryType.Sniper) primary = 0;
+            if (secondary > (byte)SecondaryType.MachinePistol) secondary = 0;
+            if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
+
+            _netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+
+#if UNITY_EDITOR
+            Debug.Log($"[PlayerNetwork] Equipped loadout P={(PrimaryType)primary} S={(SecondaryType)secondary} U={(UtilityType)util} for {OwnerClientId}");
+#endif
+
+            // TODO: hook your weapon/inventory system here using _netLoadout.Value.ToModel()
         }
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)

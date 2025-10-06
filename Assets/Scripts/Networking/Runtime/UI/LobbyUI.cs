@@ -53,6 +53,7 @@ namespace Game.Net
         [SerializeField] private RectTransform armouryPanel;
         [SerializeField] private CanvasGroup armouryPanelCg;
         [SerializeField] private Button armouryCloseButton;
+        [SerializeField] private Game.Net.LoadoutUI loadoutUI; // assign on the Armoury panel
         [Header("Armoury Status (optional)")]
         [SerializeField] private GameObject armouryStatusPanel;
         [SerializeField] private TMP_Text armouryStatusText;
@@ -431,6 +432,9 @@ namespace Game.Net
 
             PauseLocalPlayer(true);
             if (playerHudRoot) playerHudRoot.SetActive(false);
+
+            // If we opened the Armoury, refresh/load the loadout UI
+            if (rt == armouryPanel && loadoutUI) loadoutUI.Opened();
 
             StartCoroutine(AnimateOpen(rt, cg, fromPos, toPos, fromScale, toScale));
         }

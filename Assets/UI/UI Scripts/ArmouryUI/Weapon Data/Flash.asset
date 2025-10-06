@@ -10,14 +10,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 00faed2051e80584eb91879babb29f4b, type: 3}
-  m_Name: Knife
+  m_Name: Flash
   m_EditorClassIdentifier: 
-  weaponName: Knife
-  weaponIcon: {fileID: 21300000, guid: 2db755892af5537478ab2a3aa771dbfa, type: 3}
-  category: 2
+  weaponName: Stun
+  weaponIcon: {fileID: 21300000, guid: ea87f0b5594cd3743aec05514893ee80, type: 3}
+  category: 3
   primaryType: 0
   secondaryType: 0
-  utilityType: 0
-  damage: 100
-  ammo: 1
-  fireRate: 5
+  utilityType: 3
+  damage: 30
+  ammo: 3
+  fireRate: 1

@@ -78,8 +78,9 @@ namespace Game.Net
             pos.y += yLift;
 
             var inst = Instantiate(playerPrefab, pos, rot);
-            try { NM.AddNetworkPrefab(inst.gameObject); } catch { }
+            // Do NOT register instances at runtime; NetworkManager must already know this prefab.
             inst.SpawnAsPlayerObject(clientId);
+            // Remove the runtime AddNetworkPrefab that was corrupting prefab tables.
 
 #if UNITY_EDITOR
             Debug.Log($"[GamePlayerSpawner] Spawned missing Player for {clientId} at {pos} ({reason})");
