@@ -64,8 +64,12 @@ namespace Game.Net
         Collider[] _colliders;
 
         struct NetworkState { public Vector3 position; public float yaw; public Vector3 velocity; public float timestamp; public bool isDashing; }
-        NetworkState[] _stateBuffer = new NetworkState[30];
+        NetworkState[] _stateBuffer = new NetworkState[64];
         int _stateCount;
+
+        // Toggle the old RPC+NetworkVariable replication off by default.
+        // We rely on NetworkTransform for movement replication.
+        [SerializeField] bool useLegacyStateReplication = false;
 
         NetworkVariable<Vector3> _netPosition = new();
         NetworkVariable<float> _netYaw = new();
@@ -96,6 +100,14 @@ namespace Game.Net
                 _rb = GetComponent<Rigidbody>();
                 _capsule = GetComponent<CapsuleCollider>();
             }
+
+            // ~2 ticks of interpolation for remotes
+            try
+            {
+                var tick = (int)(NetworkManager.Singleton ? NetworkManager.Singleton.NetworkConfig.TickRate : 60);
+                interpolationDelay = Mathf.Max(2f / Mathf.Max(30, tick), 0.01f);
+            }
+            catch { /* keep serialized default */ }
 
             if (IsServer)
             {
@@ -142,10 +154,13 @@ namespace Game.Net
                 _rb.useGravity = false;
             }
 
-            _netPosition.OnValueChanged += OnPositionChanged;
-            _netYaw.OnValueChanged += OnYawChanged;
-            _netVelocity.OnValueChanged += OnVelocityChanged;
-            _netIsDashing.OnValueChanged += OnDashingChanged;
+            if (useLegacyStateReplication)
+            {
+                _netPosition.OnValueChanged += OnPositionChanged;
+                _netYaw.OnValueChanged += OnYawChanged;
+                _netVelocity.OnValueChanged += OnVelocityChanged;
+                _netIsDashing.OnValueChanged += OnDashingChanged;
+            }
         }
 
         void Awake()
@@ -171,10 +186,13 @@ namespace Game.Net
             if (_aDash != null) _aDash.performed -= OnDashPerformed;
             _map = null; _aMove = _aMouse = _aSprint = _aDash = null;
 
-            _netPosition.OnValueChanged -= OnPositionChanged;
-            _netYaw.OnValueChanged -= OnYawChanged;
-            _netVelocity.OnValueChanged -= OnVelocityChanged;
-            _netIsDashing.OnValueChanged -= OnDashingChanged;
+            if (useLegacyStateReplication)
+            {
+                _netPosition.OnValueChanged -= OnPositionChanged;
+                _netYaw.OnValueChanged -= OnYawChanged;
+                _netVelocity.OnValueChanged -= OnVelocityChanged;
+                _netIsDashing.OnValueChanged -= OnDashingChanged;
+            }
         }
 
         // ==== HUD binding API (for PlayerHUDBinder) ====
@@ -372,7 +390,7 @@ namespace Game.Net
             vel.z = wish.z * speedMove;
             _rb.linearVelocity = vel;
 
-            if (Time.frameCount % 2 == 0)
+            if (useLegacyStateReplication && Time.frameCount % 4 == 0) // ~15 Hz when enabled
             {
                 SendStateUpdateServerRpc(transform.position, yaw, vel, _isDashing);
             }
@@ -435,6 +453,7 @@ namespace Game.Net
 
         void InterpolateRemotePlayer()
         {
+            if (!useLegacyStateReplication) return; // NetworkTransform drives remotes
             if (_stateCount < 2) return;
 
             float currentTime = (NetworkManager.Singleton ? NetworkManager.Singleton.ServerTime.TimeAsFloat : Time.time) - interpolationDelay;

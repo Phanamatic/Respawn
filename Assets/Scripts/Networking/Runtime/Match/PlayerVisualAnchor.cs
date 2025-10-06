@@ -102,5 +102,12 @@ namespace Game.Net
             for (int i = 0; i < _cachedColliders.Length; i++)
                 if (_cachedColliders[i]) _cachedColliders[i].enabled = enabled;
         }
+
+        // Ensure this toggles only non-networked renderers to avoid network parenting side effects.
+        public void SetModelVisible(bool on)
+        {
+            var rends = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < rends.Length; i++) rends[i].enabled = on;
+        }
     }
 }

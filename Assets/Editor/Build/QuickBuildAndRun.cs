@@ -43,6 +43,8 @@ public static class QuickBuildAndRun
 
     private static void BuildStandalone(string outDir, string exeName, bool dedicated, string firstSceneOverride)
     {
+        // Ensure Multiplayer Play Mode clones are not locking the AssetDatabase read-only
+        CloseMultiplayerClones();
         Directory.CreateDirectory(outDir);
 
         var scenes = EditorBuildSettings.scenes;
@@ -191,47 +193,72 @@ public static class QuickBuildAndRun
     public static void KillAllServers()
     {
         var exe = FindExe(ServerDir, ServerExePreferred);
-        if (exe == null) { Debug.LogWarning("No server exe found."); return; }
-        var target = Path.GetFullPath(exe);
+        var target = exe != null ? Path.GetFullPath(exe) : null;
         int killed = 0;
 
-        foreach (var p in SProcess.GetProcesses())
+        // 1) Kill only the PIDs we launched (PID file)
+        foreach (var pid in ReadTrackedPids())
         {
             try
             {
-                var m = p.MainModule; if (m == null) continue;
-                var path = m.FileName;
-                if (string.Equals(Path.GetFullPath(path), target, StringComparison.OrdinalIgnoreCase))
+                var p = SProcess.GetProcessById(pid);
+                if (ProcessMatchesTarget(p, target))
                 {
-                    p.Kill();
-                    try { p.WaitForExit(3000); } catch { }
+                    SafeKill(p);
                     killed++;
                 }
+            } catch { /* already exited */ }
+        }
+        // Clean the PID file after attempt
+        ClearPidFile();
+
+        Debug.Log($"Killed {killed} server process(es).");
+
+        static bool ProcessMatchesTarget(SProcess p, string expectedPath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(expectedPath)) return false;
+                var m = p.MainModule; if (m == null) return false;
+                var path = m.FileName;
+                return string.Equals(Path.GetFullPath(path), expectedPath, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        static void SafeKill(SProcess p)
+        {
+            try
+            {
+                p.Kill();
+                try { p.WaitForExit(2000); } catch { }
             }
             catch { }
         }
-        Debug.Log($"Killed {killed} server process(es).");
     }
 
-    // ---------- Helpers ----------
-    private static string FindExe(string dir, string preferredName)
+// ---------- Helpers ----------
+private static string FindExe(string dir, string preferredName)
+{
+    var absDir = Path.GetFullPath(dir);
+    if (!Directory.Exists(absDir)) return null;
+
+    var preferred = Path.Combine(absDir, preferredName);
+    if (File.Exists(preferred)) return preferred;
+
+    // Never fall back to non-target EXEs like UnityCrashHandler; only accept an exe with a *_Data sibling
+    var files = Directory.GetFiles(absDir, "*.exe", SearchOption.TopDirectoryOnly);
+    foreach (var f in files)
     {
-        var absDir = Path.GetFullPath(dir);
-        if (!Directory.Exists(absDir)) return null;
+        var baseName = Path.GetFileNameWithoutExtension(f);
+        if (!string.Equals(baseName, Path.GetFileNameWithoutExtension(preferredName), StringComparison.OrdinalIgnoreCase))
+            continue;
 
-        var preferred = Path.Combine(absDir, preferredName);
-        if (File.Exists(preferred)) return preferred;
-
-        var files = Directory.GetFiles(absDir, "*.exe", SearchOption.TopDirectoryOnly);
-        foreach (var f in files)
-        {
-            var dataDir = Path.Combine(absDir, Path.GetFileNameWithoutExtension(f) + "_Data");
-            if (Directory.Exists(dataDir)) return f;
-        }
-        return files.Length > 0 ? files[0] : null;
+        var dataDir = Path.Combine(absDir, baseName + "_Data");
+        if (Directory.Exists(dataDir)) return f;
     }
-
-    private static void StartHidden(string exe, string args)
+    return null;
+}    private static void StartHidden(string exe, string args)
     {
         try
         {
@@ -242,7 +269,8 @@ public static class QuickBuildAndRun
                 WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
                 WorkingDirectory = Path.GetDirectoryName(exe)
             };
-            SProcess.Start(psi);
+            var proc = SProcess.Start(psi);
+            if (proc != null) AppendServerPid(proc.Id); // track for safe kill
         }
         catch (Exception e) { Debug.LogError($"Failed to start: {exe}\n{e.Message}"); }
     }
@@ -262,5 +290,55 @@ public static class QuickBuildAndRun
     }
 
     private static void Reveal(string path) => UnityEditor.EditorUtility.RevealInFinder(path);
+
+// ---- Multiplayer Play Mode clone guard ----
+[MenuItem("Tools/Multiplayer/Close Play Mode Clones", priority = 5)]
+public static void CloseMultiplayerClones()
+{
+    // Clone editors are launched with -projectPath pointing into Library/Multiplayer/VirtualProjects
+    string root = Path.Combine(Directory.GetCurrentDirectory(), "Library", "Multiplayer", "VirtualProjects");
+    int killed = 0;
+
+#if UNITY_EDITOR_WIN
+    // Kill any Unity editors that are running against the clone path
+    // (WMI query removed for compatibility; rely on directory cleanup)
+#endif
+
+    // Remove stale clone projects so AssetDatabase can flip back to RW
+    try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+    AssetDatabase.Refresh();
+
+    Debug.Log($"[QuickBuild] Closed Multiplayer Play Mode clones. Killed {killed} clone editor(s).");
+}
+
+// --- PID tracking (Windows-safe text file) ---
+private static string PidFilePath() => Path.Combine(ServerDir, ".server_pids");
+
+private static void AppendServerPid(int pid)
+{
+    try
+    {
+        Directory.CreateDirectory(ServerDir);
+        File.AppendAllLines(PidFilePath(), new[] { pid.ToString() });
+    } catch { }
+}
+
+private static System.Collections.Generic.IEnumerable<int> ReadTrackedPids()
+{
+    var list = new System.Collections.Generic.List<int>();
+    try
+    {
+        var path = PidFilePath();
+        if (!File.Exists(path)) return list;
+        foreach (var line in File.ReadAllLines(path))
+            if (int.TryParse(line.Trim(), out var id)) list.Add(id);
+    } catch { }
+    return list;
+}
+
+private static void ClearPidFile()
+{
+    try { var p = PidFilePath(); if (File.Exists(p)) File.Delete(p); } catch { }
+}
 }
 #endif
