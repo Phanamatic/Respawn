@@ -34929,8 +34929,8 @@ MonoBehaviour:
   queue2v2Button: {fileID: 645947905}
   playCloseButton: {fileID: 90405439}
   playerHudRoot: {fileID: 290817340}
-  playStatusPanel: {fileID: 0}
-  playStatusText: {fileID: 0}
+  playStatusPanel: {fileID: 2121086447}
+  playStatusText: {fileID: 1830599156}
   playStatusShowSeconds: 5
   statsPanel: {fileID: 36431738}
   statsPanelCg: {fileID: 36431735}
@@ -34942,8 +34942,8 @@ MonoBehaviour:
   armouryPanelCg: {fileID: 3946146966110220746}
   armouryCloseButton: {fileID: 8974706026454302427}
   loadoutUI: {fileID: 6369312593438363805}
-  armouryStatusPanel: {fileID: 0}
-  armouryStatusText: {fileID: 0}
+  armouryStatusPanel: {fileID: 6367817223307375444}
+  armouryStatusText: {fileID: 562797428968060539}
   armouryStatusShowSeconds: 5
   reopenCooldownSeconds: 5
 --- !u!1 &830374453
