@@ -7,6 +7,7 @@ using static Game.Net.UtilityType;
 using static Game.Net.PrimaryType;
 using static Game.Net.SecondaryType;
 using TMPro;
+using UIScripts = global::UI.Scripts;
 
 namespace Game.Net
 {
@@ -20,7 +21,7 @@ namespace Game.Net
         [SerializeField] Image utilityImage;
 
         [Header("Catalog (drag all WeaponData assets here)")]
-        [SerializeField] UI.Scripts.WeaponData[] catalog;
+        [SerializeField] UIScripts.WeaponData[] catalog;
 
         [Header("Scroll Grid")]
         [SerializeField] Transform listRoot;                   // ScrollView Content
@@ -78,10 +79,10 @@ namespace Game.Net
         [SerializeField, Min(1)] int columnCount = 2;   // force two columns
 
         // Active tab drives equip routing.
-        UI.Scripts.WeaponCategory _currentCategory = UI.Scripts.WeaponCategory.Primary;
+    UIScripts.WeaponCategory _currentCategory = UIScripts.WeaponCategory.Primary;
 
         // Derive Utility type when authoring missed enum.
-        UtilityType CoerceUtility(UI.Scripts.WeaponData w)
+    UtilityType CoerceUtility(UIScripts.WeaponData w)
         {
             if (w.utilityType != UtilityType.None) return w.utilityType;
             var n = (w.weaponName ?? string.Empty).ToLowerInvariant();
@@ -133,10 +134,10 @@ namespace Game.Net
         {
             if (on)
             {
-                if (primaryTabBtn)   primaryTabBtn.onClick.AddListener(() => ShowCategory(UI.Scripts.WeaponCategory.Primary));
-                if (secondaryTabBtn) secondaryTabBtn.onClick.AddListener(() => ShowCategory(UI.Scripts.WeaponCategory.Secondary));
-                if (meleeTabBtn)     meleeTabBtn.onClick.AddListener(() => ShowCategory(UI.Scripts.WeaponCategory.Melee));
-                if (utilityTabBtn)   utilityTabBtn.onClick.AddListener(() => ShowCategory(UI.Scripts.WeaponCategory.Utility));
+                if (primaryTabBtn)   primaryTabBtn.onClick.AddListener(() => ShowCategory(UIScripts.WeaponCategory.Primary));
+                if (secondaryTabBtn) secondaryTabBtn.onClick.AddListener(() => ShowCategory(UIScripts.WeaponCategory.Secondary));
+                if (meleeTabBtn)     meleeTabBtn.onClick.AddListener(() => ShowCategory(UIScripts.WeaponCategory.Melee));
+                if (utilityTabBtn)   utilityTabBtn.onClick.AddListener(() => ShowCategory(UIScripts.WeaponCategory.Utility));
 
                 if (saveBtn)    saveBtn.onClick.AddListener(OnSaveClicked);
                 if (discardBtn) discardBtn.onClick.AddListener(OnDiscardClicked);
@@ -160,7 +161,7 @@ namespace Game.Net
 
             RefreshImages();
             // Default to Primary list on open
-            ShowCategory(UI.Scripts.WeaponCategory.Primary);
+            ShowCategory(UIScripts.WeaponCategory.Primary);
         }
 
         async Task LoadFromCloud()
@@ -218,7 +219,7 @@ namespace Game.Net
         }
 
         // Build the scroll list for a category
-        void ShowCategory(UI.Scripts.WeaponCategory category)
+    void ShowCategory(UIScripts.WeaponCategory category)
         {
             if (!listRoot)
             {
@@ -234,10 +235,10 @@ namespace Game.Net
             LoadoutItemView prefab = null;
             switch (category)
             {
-                case UI.Scripts.WeaponCategory.Primary:   prefab = primaryItemPrefab;   break;
-                case UI.Scripts.WeaponCategory.Secondary: prefab = secondaryItemPrefab; break;
-                case UI.Scripts.WeaponCategory.Melee:     prefab = meleeItemPrefab;     break;
-                case UI.Scripts.WeaponCategory.Utility:   prefab = utilityItemPrefab;   break;
+                case UIScripts.WeaponCategory.Primary:   prefab = primaryItemPrefab;   break;
+                case UIScripts.WeaponCategory.Secondary: prefab = secondaryItemPrefab; break;
+                case UIScripts.WeaponCategory.Melee:     prefab = meleeItemPrefab;     break;
+                case UIScripts.WeaponCategory.Utility:   prefab = utilityItemPrefab;   break;
             }
             if (!prefab)
             {
@@ -256,16 +257,16 @@ namespace Game.Net
             int created = 0;
 
             // Build filtered list first.
-            var items = new System.Collections.Generic.List<UI.Scripts.WeaponData>(catalog.Length);
+            var items = new System.Collections.Generic.List<UIScripts.WeaponData>(catalog.Length);
             for (int i = 0; i < catalog.Length; i++)
             {
                 var w = catalog[i];
                 if (!w) continue;
 
-                if (category == UI.Scripts.WeaponCategory.Utility)
+                if (category == UIScripts.WeaponCategory.Utility)
                 {
                     // Show all Utility-category assets OR anything with a utility type set.
-                    if (!(w.category == UI.Scripts.WeaponCategory.Utility || w.utilityType != UtilityType.None)) continue;
+                    if (!(w.category == UIScripts.WeaponCategory.Utility || w.utilityType != UtilityType.None)) continue;
                 }
                 else if (w.category != category) continue;
 
@@ -273,9 +274,9 @@ namespace Game.Net
             }
 
             // Custom order for Primary: AR, Shotgun, SMG, LMG, Sniper
-            if (category == UI.Scripts.WeaponCategory.Primary)
+            if (category == UIScripts.WeaponCategory.Primary)
             {
-                int Order(UI.Scripts.WeaponData w) => w.primaryType switch
+                int Order(UIScripts.WeaponData w) => w.primaryType switch
                 {
                     PrimaryType.AR     => 0,
                     PrimaryType.Shotgun=> 1,
@@ -347,23 +348,23 @@ namespace Game.Net
             }
         }
 
-        void OnEquipClicked(UI.Scripts.WeaponData w)
+    void OnEquipClicked(UIScripts.WeaponData w)
         {
             // Drive equip by the active tab to avoid misrouted secondary-on-primary clicks.
             switch (_currentCategory)
             {
-                case UI.Scripts.WeaponCategory.Primary:
+                case UIScripts.WeaponCategory.Primary:
                     _working.Primary = w.primaryType;
                     Notify($"Set Primary to {w.weaponName}");
                     break;
-                case UI.Scripts.WeaponCategory.Secondary:
+                case UIScripts.WeaponCategory.Secondary:
                     _working.Secondary = w.secondaryType;
                     Notify($"Set Secondary to {w.weaponName}");
                     break;
-                case UI.Scripts.WeaponCategory.Melee:
+                case UIScripts.WeaponCategory.Melee:
                     Notify("Set Melee to Knife");
                     break; // fixed Knife
-                case UI.Scripts.WeaponCategory.Utility:
+                case UIScripts.WeaponCategory.Utility:
                     _working.Utility = CoerceUtility(w);
                     Notify($"Set Utility to {w.weaponName}");
                     break;
@@ -377,7 +378,7 @@ namespace Game.Net
             if (catalog != null)
             {
                 for (int i = 0; i < catalog.Length; i++)
-                    if (catalog[i] && catalog[i].category == UI.Scripts.WeaponCategory.Primary && catalog[i].primaryType == p)
+                    if (catalog[i] && catalog[i].category == UIScripts.WeaponCategory.Primary && catalog[i].primaryType == p)
                         return catalog[i].weaponIcon;
             }
             return null;
@@ -388,7 +389,7 @@ namespace Game.Net
             if (catalog != null)
             {
                 for (int i = 0; i < catalog.Length; i++)
-                    if (catalog[i] && catalog[i].category == UI.Scripts.WeaponCategory.Secondary && catalog[i].secondaryType == s)
+                    if (catalog[i] && catalog[i].category == UIScripts.WeaponCategory.Secondary && catalog[i].secondaryType == s)
                         return catalog[i].weaponIcon;
             }
             return null;
@@ -399,7 +400,7 @@ namespace Game.Net
             if (catalog != null)
             {
                 for (int i = 0; i < catalog.Length; i++)
-                    if (catalog[i] && catalog[i].category == UI.Scripts.WeaponCategory.Utility && catalog[i].utilityType == u)
+                    if (catalog[i] && catalog[i].category == UIScripts.WeaponCategory.Utility && catalog[i].utilityType == u)
                         return catalog[i].weaponIcon;
             }
             return null;
