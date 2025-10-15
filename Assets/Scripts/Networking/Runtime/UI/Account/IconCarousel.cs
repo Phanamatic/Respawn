@@ -15,7 +15,9 @@ namespace Game.UI.Account
         [SerializeField] ScrollRect scrollRect;
         [SerializeField] RectTransform content;
         [SerializeField] float spacing = 200f;   // content HorizontalLayoutGroup spacing
-        [SerializeField] Vector2 itemPreferredSize = new Vector2(96, 96); // applied to each item (LayoutElement)
+        // Keep for optional override, but default to respecting prefab size.
+        [SerializeField] Vector2 itemPreferredSize = new Vector2(96, 96);
+        [SerializeField] bool respectPrefabSize = true;   // do NOT resize buttons by default
 
         [Header("Auto Scroll")]
         [SerializeField, Min(0f)] float autoScrollSpeed = 120f;   // px/s to the right
@@ -45,11 +47,12 @@ namespace Game.UI.Account
             // Configure ScrollRect for horizontal-only, unrestricted movement.
             scrollRect.horizontal = true;
             scrollRect.vertical = false;
-            // Clamp to bounds for hard left stop, keep inertia for smooth feel.
-            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            // Unrestricted so we can loop seamlessly without hard edges.
+            scrollRect.movementType = ScrollRect.MovementType.Unrestricted;
             scrollRect.elasticity   = 0.05f;
             scrollRect.inertia      = true;
-            scrollRect.scrollSensitivity = 200f; // faster mouse wheel scroll
+            scrollRect.decelerationRate = 0.065f;   // smoother glide
+            scrollRect.scrollSensitivity = 100f;    // steadier user scroll feel
 
             // Configure Content as a long horizontal strip.
             content.anchorMin = new Vector2(0, 0.5f);
@@ -60,8 +63,9 @@ namespace Game.UI.Account
             // Ensure layout + fitter so children lay out left-to-right.
             _layout = content.GetComponent<HorizontalLayoutGroup>();
             if (!_layout) _layout = content.gameObject.AddComponent<HorizontalLayoutGroup>();
-            _layout.childControlWidth = true;
-            _layout.childControlHeight = true;
+            // Respect prefab sizing. Do not force-resize children.
+            _layout.childControlWidth = false;
+            _layout.childControlHeight = false;
             _layout.childForceExpandWidth = false;
             _layout.childForceExpandHeight = false;
             _layout.spacing = spacing; // 200
@@ -90,13 +94,15 @@ namespace Game.UI.Account
                     var id   = spr.name;
                     item.Bind(id, spr, onPicked);
 
-                    // Ensure each item reports a preferred size to the layout.
-                    var rt = go.transform as RectTransform;
-                    var le = go.GetComponent<LayoutElement>();
-                    if (!le) le = go.AddComponent<LayoutElement>();
-                    if (itemPreferredSize.x > 0) le.preferredWidth  = itemPreferredSize.x;
-                    if (itemPreferredSize.y > 0) le.preferredHeight = itemPreferredSize.y;
-                    if (rt) rt.sizeDelta = itemPreferredSize;
+                    // Do not resize the original prefab unless explicitly requested.
+                    if (!respectPrefabSize)
+                    {
+                        var rt = go.transform as RectTransform;
+                        var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
+                        if (itemPreferredSize.x > 0) le.preferredWidth  = itemPreferredSize.x;
+                        if (itemPreferredSize.y > 0) le.preferredHeight = itemPreferredSize.y;
+                        if (rt) rt.sizeDelta = itemPreferredSize;
+                    }
                 }
             }
 
@@ -124,26 +130,24 @@ namespace Game.UI.Account
         {
             if (!_built || _blockWidth <= 1f) return;
 
-            var vp  = scrollRect.viewport ? scrollRect.viewport : (RectTransform)scrollRect.transform;
-            float contentWidth  = content.rect.width;
-            float viewportWidth = vp.rect.width;
-            float leftBoundX    = 0f; // hard stop at far left
-            float rightBoundX   = Mathf.Min(0f, viewportWidth - contentWidth); // negative
-
             Vector2 pos = content.anchoredPosition;
 
+            // User input window
             bool recentInput = _userDragging || (Time.unscaledTime - _lastUserInputTime) < resumeDelay;
 
-            if (!recentInput)
+            // Auto scroll to the left with smooth damping
+            if (!recentInput && autoScrollSpeed > 0f)
             {
                 float targetX = pos.x - autoScrollSpeed * Time.unscaledDeltaTime;
-                if (targetX <= rightBoundX) targetX = leftBoundX;
                 float t = 1f - Mathf.Exp(-smoothDamping * Time.unscaledDeltaTime);
                 pos.x = Mathf.Lerp(pos.x, targetX, t);
             }
 
-            if (pos.x > leftBoundX) pos.x = leftBoundX;
-            if (pos.x < rightBoundX) pos.x = rightBoundX;
+            // Seamless infinite wrap across repeated blocks, no clamps or snaps.
+            float wrap = Mathf.Max(1f, _blockWidth);
+            float minX = -wrap * (repetitions - 1); // we built N blocks in a row
+            if (pos.x <= minX) pos.x += wrap;       // jumped too far left -> move right by one block
+            else if (pos.x >= 0f) pos.x -= wrap;    // jumped too far right -> move left by one block
 
             content.anchoredPosition = pos;
         }
@@ -163,27 +167,40 @@ namespace Game.UI.Account
         _lastUserInputTime = Time.unscaledTime;
     }
 
-    // Center the view on the first item with the given id.
-    public void CenterOn(string id)
-    {
-        if (!_built || string.IsNullOrEmpty(id)) return;
-        var vp = scrollRect.viewport ? scrollRect.viewport : (RectTransform)scrollRect.transform;
-        float viewHalf = vp.rect.width * 0.5f;
-
-        for (int i = 0; i < content.childCount; i++)
+        // Center on the nearest duplicate of the requested id to avoid big jumps.
+        public void CenterOn(string id)
         {
-            var child = content.GetChild(i) as RectTransform;
-            if (!child) continue;
-            var pi = child.GetComponent<ProfileIconItem>();
-            if (pi == null || pi.Id != id) continue;
+            if (!_built || string.IsNullOrEmpty(id)) return;
+            var vp = scrollRect.viewport ? scrollRect.viewport : (RectTransform)scrollRect.transform;
+            float viewHalf = vp.rect.width * 0.5f;
 
-            float childCenter = child.anchoredPosition.x + child.rect.width * 0.5f;
-            Vector2 pos = content.anchoredPosition;
-            pos.x = -childCenter + viewHalf;
-            content.anchoredPosition = pos;
-            return;
+            float currCenter = -content.anchoredPosition.x + viewHalf;
+            RectTransform best = null;
+            float bestDelta = float.MaxValue;
+            float bestAdjustedCenter = 0f;
+
+            for (int i = 0; i < content.childCount; i++)
+            {
+                var child = content.GetChild(i) as RectTransform;
+                if (!child) continue;
+                var pi = child.GetComponent<ProfileIconItem>();
+                if (pi == null || pi.Id != id) continue;
+
+                float baseCenter = child.anchoredPosition.x + child.rect.width * 0.5f;
+                // Pick nearest copy by offsetting by whole block widths.
+                int k = Mathf.RoundToInt((currCenter - baseCenter) / _blockWidth);
+                float adjusted = baseCenter + k * _blockWidth;
+                float d = Mathf.Abs(adjusted - currCenter);
+                if (d < bestDelta) { bestDelta = d; best = child; bestAdjustedCenter = adjusted; }
+            }
+
+            if (best != null)
+            {
+                Vector2 pos = content.anchoredPosition;
+                pos.x = -bestAdjustedCenter + viewHalf;
+                content.anchoredPosition = pos;
+            }
         }
-    }
 
     /// Highlight selection across all items.
     public void SetSelected(string id)

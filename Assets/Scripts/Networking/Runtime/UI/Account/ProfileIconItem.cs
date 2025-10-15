@@ -13,6 +13,7 @@ namespace Game.UI.Account
         [Header("Selection Frame")]
         [SerializeField] RectTransform framePanel;   // panel behind the button/image
         [SerializeField] Vector2 borderPadding = new Vector2(6f, 6f); // always bigger than button
+        [SerializeField] bool matchImageScaleAndSize = true;  // keep frame same scale/size as image
         [SerializeField, Min(1f)] float selectedScale = 1.08f; // extra pop when selected
         [SerializeField] float scaleLerp = 18f;      // smoothness
 
@@ -23,7 +24,13 @@ namespace Game.UI.Account
 
         void Awake()
         {
-            if (framePanel) _baseScale = framePanel.localScale;
+            if (matchImageScaleAndSize && image)
+            {
+                _baseScale = image.rectTransform.localScale;
+                if (framePanel) framePanel.localScale = _baseScale;
+            }
+            else if (framePanel) _baseScale = framePanel.localScale;
+
             ApplyFramePadding();
         }
 
@@ -32,7 +39,15 @@ namespace Game.UI.Account
             Id = id;
             _onClick = onClick;
             if (image && sprite) image.sprite = sprite;
+
+            if (matchImageScaleAndSize && image && framePanel)
+            {
+                _baseScale = image.rectTransform.localScale;
+                framePanel.localScale = _baseScale;
+            }
+
             ApplyFramePadding();
+
             if (button)
             {
                 button.onClick.RemoveAllListeners();
@@ -47,6 +62,10 @@ namespace Game.UI.Account
             if (!framePanel) return;
 
             var target = _baseScale * (_selected ? selectedScale : 1f);
+            if (matchImageScaleAndSize && image)
+            {
+                target = image.rectTransform.localScale * (_selected ? selectedScale : 1f);
+            }
             if (instant) framePanel.localScale = target;
             else framePanel.localScale = Vector3.Lerp(framePanel.localScale, target, 1f); // snap once; LateUpdate smooths
         }
@@ -55,6 +74,10 @@ namespace Game.UI.Account
         {
             if (!framePanel) return;
             var target = _baseScale * (_selected ? selectedScale : 1f);
+            if (matchImageScaleAndSize && image)
+            {
+                target = image.rectTransform.localScale * (_selected ? selectedScale : 1f);
+            }
             float t = 1f - Mathf.Exp(-scaleLerp * Time.unscaledDeltaTime);
             framePanel.localScale = Vector3.Lerp(framePanel.localScale, target, t);
         }
@@ -71,8 +94,14 @@ namespace Game.UI.Account
             framePanel.anchoredPosition = imgRT.anchoredPosition;
 
             // Expand around the image
-            framePanel.offsetMin = new Vector2(-borderPadding.x, -borderPadding.y);
-            framePanel.offsetMax = new Vector2( borderPadding.x,  borderPadding.y);
+            var padding = borderPadding;
+            if (matchImageScaleAndSize)
+            {
+                var scale = imgRT.localScale;
+                padding *= Mathf.Max(scale.x, scale.y);
+            }
+            framePanel.offsetMin = new Vector2(-padding.x, -padding.y);
+            framePanel.offsetMax = new Vector2( padding.x,  padding.y);
 
             framePanel.SetAsFirstSibling(); // render behind the button
         }

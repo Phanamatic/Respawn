@@ -4,6 +4,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using UnityEngine.SceneManagement;
+using System;
+using System.Threading;
 using Game.Services;
 using Game.Net;
 
@@ -48,6 +50,7 @@ namespace Game.UI.Account
         [SerializeField] string nextScene = "MainMenu";
 
         PlayFabAuthService _auth;
+        const int AuthTimeoutMs = 15000;     // 15s guard for auth calls
         string _selectedIconId;              // holds chosen icon before sign-in
         bool _iconSaved;                     // avoid double saves
 
@@ -93,12 +96,23 @@ namespace Game.UI.Account
             if (!ValidPassword(pass)) { siStatus.text = "Password too short."; return; }
 
             siSubmit.interactable = false; siStatus.text = "Signing in...";
-            var res = await _auth.SignInAsync(email, pass);
-            if (!res.ok) { siStatus.text = res.error; siSubmit.interactable = true; return; }
+            try
+            {
+                var res = await TimeoutAfter(_auth.SignInAsync(email, pass), AuthTimeoutMs);
+                if (!res.ok) { siStatus.text = res.error ?? "Sign-in failed."; return; }
 
-            siStatus.text = "OK";
-            await TrySaveSelectedIconAsync(); // save if user picked before sign-in
-            LoadNext();
+                siStatus.text = "OK";
+                await TrySaveSelectedIconAsync();
+                LoadNext();
+            }
+            catch (Exception e)
+            {
+                siStatus.text = $"Sign-in failed: {ShortReason(e)}";
+            }
+            finally
+            {
+                siSubmit.interactable = true;
+            }
         }
 
         async Task DoCreate()
@@ -115,18 +129,44 @@ namespace Game.UI.Account
             if (!string.IsNullOrEmpty(name) && name.Length < 2) { crStatus.text = "Name too short."; return; }
 
             crSubmit.interactable = false; crStatus.text = "Creating...";
-            var res = await _auth.RegisterAsync(email, pass, name ?? string.Empty, user ?? string.Empty);
-            if (!res.ok) { crStatus.text = res.error; crSubmit.interactable = true; return; }
+            try
+            {
+                var res = await TimeoutAfter(_auth.RegisterAsync(email, pass, name ?? string.Empty, user ?? string.Empty), AuthTimeoutMs);
+                if (!res.ok) { crStatus.text = res.error ?? "Create failed."; return; }
 
-            crStatus.text = "OK";
-            await TrySaveSelectedIconAsync(); // persist chosen profile icon
-            LoadNext();
+                crStatus.text = "OK";
+                await TrySaveSelectedIconAsync();
+                LoadNext();
+            }
+            catch (Exception e)
+            {
+                crStatus.text = $"Create failed: {ShortReason(e)}";
+            }
+            finally
+            {
+                crSubmit.interactable = true;
+            }
         }
 
         void LoadNext()
         {
             if (!string.IsNullOrWhiteSpace(nextScene) && Application.CanStreamedLevelBeLoaded(nextScene))
                 SceneManager.LoadScene(nextScene);
+        }
+
+        // Shared helpers
+        static async Task<T> TimeoutAfter<T>(Task<T> task, int ms)
+        {
+            using var cts = new CancellationTokenSource();
+            var delay = Task.Delay(ms, cts.Token);
+            var done = await Task.WhenAny(task, delay);
+            if (done == task) { cts.Cancel(); return await task; }
+            throw new TimeoutException("Network timeout");
+        }
+
+        static string ShortReason(Exception e)
+        {
+            return e is TimeoutException ? "Timed out" : (e?.Message ?? "Unknown error");
         }
 
         void BuildIconList()

@@ -9,9 +9,9 @@ namespace Game.Services
     /// Cloud Save helpers for player profile data (v2 APIs).
     public static class PlayerProfileStore
     {
-        const string KeyProfileIcon     = "profile.icon";
-        const string KeyIdentityPlayFab = "identity.playfab";
-        const string KeyIdentityUgs     = "identity.ugs";
+        const string KeyProfileIcon     = "profile_icon";
+        const string KeyIdentityPlayFab = "identity_playfab";
+        const string KeyIdentityUgs     = "identity_ugs";
 
         public static async Task<bool> SaveProfileIconAsync(string iconId)
         {
