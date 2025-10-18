@@ -19,4 +19,9 @@ public class SocialLinks : MonoBehaviour
     {
         Application.OpenURL("https://x.com/JsTwoGuysStudio");
     }
+
+     public void OpenWebsite()
+    {
+        Application.OpenURL("https://www.justtwoguys.com");
+    }
 }
