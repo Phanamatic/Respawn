@@ -26,6 +26,18 @@ namespace Game.Net
                 NetworkVariableReadPermission.Everyone,
                 NetworkVariableWritePermission.Server
             );
+
+        // Replicate the currently equipped slot (0=Primary,1=Secondary,2=Melee,3=Utility)
+        private readonly NetworkVariable<byte> _activeSlot =
+            new NetworkVariable<byte>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+        // Local cache for quick checks
+        Game.Net.PlayerLoadout _myLoadout = Game.Net.PlayerLoadout.Default;
+
+        // Simple server rate-limits
+        float _lastSwitchServerTime, _lastThrowServerTime;
+        const float k_MinSwitchInterval = 0.08f;   // ~10/s
+        const float k_MinThrowInterval  = 0.5f;    // guard spam
         [Header("Movement")]
         [SerializeField, Min(0f)] float moveSpeed = 8.5f;
         [SerializeField, Min(1f)] float sprintMultiplier = 1.9f;
@@ -85,6 +97,7 @@ namespace Game.Net
 
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
+        InputAction _aSlot1, _aSlot2, _aSlot3, _aThrow;
         Vector2 _inMove, _inMouse; bool _inSprint;
 
         float _stamina; float _sprintRegenResumeAt;
@@ -107,6 +120,9 @@ namespace Game.Net
                 _rb = GetComponent<Rigidbody>();
                 _capsule = GetComponent<CapsuleCollider>();
             }
+
+            // Observe active slot to react locally (e.g., show weapon later)
+            _activeSlot.OnValueChanged += (_, __) => OnActiveSlotChanged();
 
             // Client: send saved loadout to server after spawn
             if (IsOwner)
@@ -194,8 +210,14 @@ namespace Game.Net
         public override void OnNetworkDespawn()
         {
             _map?.Disable();
-            if (_aDash != null) _aDash.performed -= OnDashPerformed;
-            _map = null; _aMove = _aMouse = _aSprint = _aDash = null;
+            if (_aDash  != null) _aDash.performed  -= OnDashPerformed;
+            if (_aSlot1 != null) _aSlot1.performed -= _ => RequestSwitchSlot(0);
+            if (_aSlot2 != null) _aSlot2.performed -= _ => RequestSwitchSlot(1);
+            if (_aSlot3 != null) _aSlot3.performed -= _ => RequestSwitchSlot(2);
+            if (_aThrow != null) _aThrow.performed -= _ => RequestThrowUtility();
+            _map = null; _aMove = _aMouse = _aSprint = _aDash = null; _aSlot1 = _aSlot2 = _aSlot3 = _aThrow = null;
+
+            _activeSlot.OnValueChanged -= (_, __) => OnActiveSlotChanged();
 
             if (useLegacyStateReplication)
             {
@@ -233,6 +255,66 @@ namespace Game.Net
             sprintFill = null; sprintLabel = null; dashFill = null; dashLabel = null;
         }
         // ================================================
+// ===== Weapons: equip, switch, throw (server authoritative) =====
+
+void RequestSwitchSlot(byte slot)
+{
+    if (_inputPaused) return;
+    if (slot > 3) return;
+    RequestSwitchSlotServerRpc(slot);
+}
+
+[ServerRpc]
+void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
+{
+    if (slot > 3) return;
+
+    // Min interval
+    if (Time.time - _lastSwitchServerTime < k_MinSwitchInterval) return;
+    _lastSwitchServerTime = Time.time;
+
+    // Validate against equipped loadout: Primary/Secondary always valid; Melee always allowed; Utility only if set
+    bool allowed =
+        slot == 0 ||
+        slot == 1 ||
+        slot == 2 || // melee fixed
+        (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
+
+    if (!allowed) return;
+
+    _activeSlot.Value = slot;
+#if UNITY_EDITOR
+    Debug.Log($"[Weapons] Active slot -> {slot}");
+#endif
+    // TODO: later handle firing state teardown and equip animations.
+}
+
+void RequestThrowUtility()
+{
+    if (_inputPaused) return;
+    RequestThrowUtilityServerRpc();
+}
+
+[ServerRpc]
+void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
+{
+    if (_netLoadout.Value.util == (byte)UtilityType.None) return;
+
+    if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
+    _lastThrowServerTime = Time.time;
+
+    // For now, just log. We will implement grenade entity later.
+#if UNITY_EDITOR
+    Debug.Log($"[Weapons] Throw utility: {(UtilityType)_netLoadout.Value.util}");
+#endif
+}
+
+void OnActiveSlotChanged()
+{
+    // Hook for local effects later. No resizing or transform edits here.
+    // Example: update crosshair or HUD highlight.
+}
+// ===== end weapons =====
 
         void SetupInputAndCamera()
         {
@@ -249,9 +331,19 @@ namespace Game.Net
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
             _aDash   = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
 
-            _aDash.performed += OnDashPerformed;
-            _map.Enable();
+            // Weapon inputs
+            _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
+            _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
+            _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
+            _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
 
+            _aDash.performed += OnDashPerformed;
+            _aSlot1.performed += _ => RequestSwitchSlot(0);
+            _aSlot2.performed += _ => RequestSwitchSlot(1);
+            _aSlot3.performed += _ => RequestSwitchSlot(2);
+            _aThrow.performed += _ => RequestThrowUtility();
+
+            _map.Enable();
             TryBindCamera();
         }
 
@@ -324,6 +416,7 @@ namespace Game.Net
                 SessionContext.SetLoadout(lo);
             }
 
+            _myLoadout = lo;
             var net = NetLoadout.From(lo);
             EquipLoadoutServerRpc(net.primary, net.secondary, net.util);
         }
