@@ -9,6 +9,7 @@ using Unity.Netcode.Components;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using TMPro;
+using Game.Net.Weapons;
 
 namespace Game.Net
 {
@@ -97,6 +98,10 @@ namespace Game.Net
 
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
+        public bool IsSprinting { get; private set; }
+        public bool IsDashing  { get; private set; }
+        public event System.Action<bool> SprintChanged;
+        public event System.Action<bool> DashChanged;
         InputAction _aSlot1, _aSlot2, _aSlot3, _aThrow;
         Vector2 _inMove, _inMouse; bool _inSprint;
 
@@ -313,6 +318,16 @@ void OnActiveSlotChanged()
 {
     // Hook for local effects later. No resizing or transform edits here.
     // Example: update crosshair or HUD highlight.
+    // Equip primary visuals when slot changes to Primary.
+    if (_activeSlot.Value == 0)
+    {
+        var wp = GetComponent<WeaponPrimaryController>();
+        if (wp != null)
+        {
+            var pt = (Game.Net.PrimaryType)_netLoadout.Value.primary;
+            wp.Equip(pt, null); // server validates; stats default for now
+        }
+    }
 }
 // ===== end weapons =====
 
@@ -328,8 +343,17 @@ void OnActiveSlotChanged()
                   .With("Right","<Keyboard>/d");
 
             _aMouse  = _map.AddAction(name: "MousePos", type: InputActionType.Value, binding: "<Pointer>/position");
+            var aFire   = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
+            var aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
+
+            aFire.performed += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(true);
+            aFire.canceled  += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(false);
+            aReload.performed += _ => GetComponent<WeaponPrimaryController>()?.RequestReload();
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
             _aDash   = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
+
+            _aSprint.performed += _ => SetSprint(true);
+            _aSprint.canceled  += _ => SetSprint(false);
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
@@ -338,6 +362,7 @@ void OnActiveSlotChanged()
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
 
             _aDash.performed += OnDashPerformed;
+            // forward dash state to weapon controller via OnDashingChanged callback already patched.
             _aSlot1.performed += _ => RequestSwitchSlot(0);
             _aSlot2.performed += _ => RequestSwitchSlot(1);
             _aSlot3.performed += _ => RequestSwitchSlot(2);
@@ -568,6 +593,10 @@ void OnActiveSlotChanged()
         {
             if (IsOwner) return;
             AddStateToBuffer(_netPosition.Value, _netYaw.Value, _netVelocity.Value, newVal);
+            IsDashing = newVal;
+            DashChanged?.Invoke(newVal);
+            var wp = GetComponent<Game.Net.Weapons.WeaponPrimaryController>();
+            if (wp) wp.OnDashChanged(newVal);
         }
 
         void AddStateToBuffer(Vector3 pos, float yaw, Vector3 vel, bool dash)
@@ -784,6 +813,17 @@ void OnActiveSlotChanged()
         public void SetHealth(float health)
         {
             if (IsServer) _health.Value = health;
+        }
+
+        void SetSprint(bool on)
+        {
+            if (IsSprinting == on) return;
+            IsSprinting = on;
+            SprintChanged?.Invoke(on);
+
+            // Pause reload on sprint: forward to weapon controller if present.
+            var wp = GetComponent<WeaponPrimaryController>();
+            if (wp) wp.OnSprintChanged(on);
         }
     }
 }
