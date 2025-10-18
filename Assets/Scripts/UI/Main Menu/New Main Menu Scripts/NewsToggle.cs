@@ -1,11 +1,12 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System.Collections;
+using UI.Scripts;
 
-namespace UI.Scripts
+namespace Game.UI.MainMenu
 {
     [RequireComponent(typeof(Button))]
-    public class GameObjectToggle : MonoBehaviour
+    public class NewsToggle : MonoBehaviour
     {
         [Header("Target Settings")]
         [SerializeField] private GameObject targetGameObject;
@@ -17,17 +18,23 @@ namespace UI.Scripts
         [SerializeField] private NewsCarousel newsCarousel;
 
         private Button button;
-        private bool isExpanded = false;
+        private bool isExpanded = true; // Changed: Now starts expanded
 
         private void Start()
         {
             button = GetComponent<Button>();
             button.onClick.AddListener(ToggleTarget);
 
-            // Start collapsed (inactive)
+            // Start expanded (active) - CHANGED LOGIC
             if (targetGameObject != null)
             {
-                targetGameObject.SetActive(false);
+                targetGameObject.SetActive(true);
+            }
+
+            // Show navigation dots at start since we're expanded
+            if (newsCarousel != null)
+            {
+                newsCarousel.ShowNavigationDots();
             }
         }
 

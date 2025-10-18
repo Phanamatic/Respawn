@@ -9425,7 +9425,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: -2121424574, guid: 64dcb0facb19a964b8eb2bc562ec5ed3, type: 3}
+  m_Sprite: {fileID: -559579323, guid: c022d65fe8440134e90738533320c846, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -51761,7 +51761,7 @@ Light:
   serializedVersion: 11
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 0
+  m_Intensity: 130000
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -51804,9 +51804,9 @@ Light:
   m_LightShadowCasterMode: 2
   m_AreaSize: {x: 0.5, y: 0.5}
   m_BounceIntensity: 1
-  m_ColorTemperature: 7375
+  m_ColorTemperature: 2514
   m_UseColorTemperature: 1
-  m_BoundingSphereOverride: {x: 7.284e-42, y: 2.524355e-29, z: 0, w: 2.6216924e+20}
+  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 10.353554}
   m_UseBoundingSphereOverride: 0
   m_UseViewFrustumForShadowCasterCull: 1
   m_ForceVisible: 0
@@ -60315,6 +60315,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 244408428246183489, guid: 6ddb5aa7db43ad0429fe113755d37886, type: 3}
+    - {fileID: 662097345132827132, guid: 6ddb5aa7db43ad0429fe113755d37886, type: 3}
     m_RemovedGameObjects:
     - {fileID: 2445874026432583748, guid: 6ddb5aa7db43ad0429fe113755d37886, type: 3}
     m_AddedGameObjects: []
@@ -94665,8 +94666,8 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: -559579323, guid: c022d65fe8440134e90738533320c846, type: 3}
-  m_Type: 1
+  m_Sprite: {fileID: -2121424574, guid: 64dcb0facb19a964b8eb2bc562ec5ed3, type: 3}
+  m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
   m_FillMethod: 4
@@ -98153,7 +98154,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 6, y: -223}
+  m_AnchoredPosition: {x: -37, y: -245}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1108576242
@@ -108633,14 +108634,14 @@ RectTransform:
   m_GameObject: {fileID: 1208022691}
   m_LocalRotation: {x: 0.0011390441, y: 0.008651901, z: 0.1305212, w: 0.99140716}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.040914, y: 1.040914, z: 1.040914}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 626441522}
   m_LocalEulerAnglesHint: {x: 0, y: 1, z: 15}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -195, y: -175}
+  m_AnchoredPosition: {x: -167.7, y: -189.2}
   m_SizeDelta: {x: 251.3148, y: 83.696}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1208022693
@@ -108672,8 +108673,8 @@ MonoBehaviour:
   m_fontMaterials: []
   m_fontColor32:
     serializedVersion: 2
-    rgba: 4294967295
-  m_fontColor: {r: 1, g: 1, b: 1, a: 1}
+    rgba: 4278253055
+  m_fontColor: {r: 1, g: 0.95985556, b: 0, a: 1}
   m_enableVertexGradient: 0
   m_colorMode: 3
   m_fontColorGradient:
@@ -108690,8 +108691,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 30
-  m_fontSizeBase: 30
+  m_fontSize: 28
+  m_fontSizeBase: 28
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -119106,7 +119107,7 @@ GameObject:
   - component: {fileID: 1332121730}
   - component: {fileID: 1332121729}
   - component: {fileID: 1332121728}
-  - component: {fileID: 1332121732}
+  - component: {fileID: 1332121731}
   m_Layer: 5
   m_Name: News
   m_TagString: Untagged
@@ -119190,7 +119191,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 0.5882353}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -119215,7 +119216,7 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1332121726}
   m_CullTransparentMesh: 1
---- !u!114 &1332121732
+--- !u!114 &1332121731
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -119224,10 +119225,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 1332121726}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 17eea3f0cd7c13b498adbf8251e16f38, type: 3}
+  m_Script: {fileID: 11500000, guid: 102bb2da03bbc39498741687c4fb2805, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  targetGameObject: {fileID: 104329210}
+  targetGameObject: {fileID: 1372616537}
   targetAnimator: {fileID: 1372616541}
   openAnimationName: NewsAnim
   closeAnimationName: NewsAnim_Reverse
@@ -125262,7 +125263,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f47c6b6a18e849947a2bac33b79696d7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  rotationSpeed: 5
+  rotationSpeed: 3
   rotateX: 0
   rotateY: 1
   rotateZ: 0
@@ -150631,7 +150632,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 0.5882353}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1

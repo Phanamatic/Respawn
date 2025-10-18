@@ -12,7 +12,6 @@ GameObject:
   - component: {fileID: 2364772833689091327}
   - component: {fileID: 8975245462527077914}
   - component: {fileID: 6288571276099182482}
-  - component: {fileID: 662097345132827132}
   - component: {fileID: 244408428246183489}
   m_Layer: 5
   m_Name: Options
@@ -135,22 +134,6 @@ MonoBehaviour:
           m_StringArgument: 
           m_BoolArgument: 0
         m_CallState: 2
---- !u!114 &662097345132827132
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2303329794023324498}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6fb94ed89ff1dd349b9fac1ccf3ce088, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  squeezeAmount: 0.95
-  squeezeDuration: 0.1
-  growAmount: 1
-  growDuration: 0.2
 --- !u!114 &244408428246183489
 MonoBehaviour:
   m_ObjectHideFlags: 0
