@@ -118,9 +118,14 @@ public static class QuickBuildAndRun
     [MenuItem("Build/Quick/Run Seeds/Run All")]
     public static void RunAllSeeds() { RunLobbySeed(); Run1v1Seed(); Run2v2Seed(); }
 
-    // Relay hosting: remove direct IP flags. Add profile and region.
+    // Direct hosting: bind+port, publish region only as metadata.
     private static string ArgsForServer(string type, int max, string scene, string env, string logfile)
-        => $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -logfile .\\{logfile}";
+    {
+        var pub = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1";
+        var lan = Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0";
+        return $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -bind 0.0.0.0 -port 7777 -publicHost {pub} -lanHost {lan} -logfile .\\{logfile}";
+    }
+    // [DirectNet] Without -mpsHost NetBootstrap idles and won't create the Lobby.
 
     private static void RunServer(string args)
     {
@@ -134,15 +139,15 @@ public static class QuickBuildAndRun
     public static void RunClient() => RunClientInternal("");
 
     // optional: launch a client with a join code for targeted tests
-    [MenuItem("Build/Quick/Run Client (Prompt Join Code)")]
+    [MenuItem("Build/Quick/Run Client (Prompt Endpoint)")]
     public static void RunClientWithCode()
     {
-        var code = EditorUtility.DisplayDialogComplex("Join Code", "Enter Relay Join Code in Console and press Continue.", "Continue", "Cancel", "Paste From Clipboard");
-        if (code == 1) return;
-        string joinCode = "";
-        try { joinCode = GUIUtility.systemCopyBuffer.Trim(); } catch { }
-        if (code == 0) Debug.Log("Enter join code in Console: e.g. ABCDEF");
-        var arg = string.IsNullOrWhiteSpace(joinCode) ? "" : $"-autoJoin -mpsJoin {joinCode}";
+        var sel = EditorUtility.DisplayDialogComplex("Direct Connect", "Copy \"host:port\" to clipboard then click Continue.", "Continue", "Cancel", "Paste From Clipboard");
+        if (sel == 1) return;
+        string endpoint = "";
+        try { endpoint = GUIUtility.systemCopyBuffer.Trim(); } catch { }
+        if (sel == 0) Debug.Log("Enter endpoint in Console: e.g. 192.168.0.150:7777");
+        var arg = string.IsNullOrWhiteSpace(endpoint) ? "" : $"-autoJoin -connect {endpoint}";
         RunClientInternal(arg);
     }
 

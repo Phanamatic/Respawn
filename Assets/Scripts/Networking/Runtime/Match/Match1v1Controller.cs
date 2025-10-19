@@ -642,7 +642,9 @@ namespace Game.Net
             {
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
+                pn.ServerAutoEquipPrimary(); // force Primary on start
             }
+// Players spawn already holding Primary.
         }
 
         IEnumerator CoMonitorRound()

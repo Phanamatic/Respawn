@@ -1,6 +1,5 @@
 // Assets/Scripts/Networking/Runtime/NetBootstrap.cs
-// Unity 6 (6000.0.52f1) – Relay + Lobby host/client bootstrap with profile sanitization.
-// Requires: Assets/Scripts/Networking/Runtime/Relay/RelayUtils.cs
+// Unity 6 (6000.0.52f1) – Direct host/client bootstrap with profile sanitization.
 
 using System;
 using System.Linq;
@@ -13,11 +12,12 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
-using Unity.Services.Relay;
-using Unity.Services.Relay.Models;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
-using Unity.Networking.Transport.Relay;
+// LAN IP resolve for lobby data
+using System.Net;
+using System.Net.Sockets;
+using System.Net.NetworkInformation;
 
 namespace Game.Net
 {
@@ -72,6 +72,35 @@ namespace Game.Net
         private sealed class MpsBootstrapRunner : MonoBehaviour
         {
             bool _started;
+
+            // Returns the first site-local IPv4 that is up and not virtual/tunnel.
+            private static string ResolveLocalIPv4()
+            {
+                try
+                {
+                    foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                        if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                            ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+
+                        var ipProps = ni.GetIPProperties();
+                        foreach (var ua in ipProps.UnicastAddresses)
+                        {
+                            if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                            var ip = ua.Address;
+                            byte[] b = ip.GetAddressBytes();
+                            // 10.x.x.x or 172.16-31.x.x or 192.168.x.x
+                            bool privateA = b[0] == 10;
+                            bool privateB = b[0] == 172 && b[1] >= 16 && b[1] <= 31;
+                            bool privateC = b[0] == 192 && b[1] == 168;
+                            if (privateA || privateB || privateC) return ip.ToString();
+                        }
+                    }
+                }
+                catch { }
+                return null;
+            }
 
             public void Run(Args args)
             {
@@ -176,7 +205,6 @@ namespace Game.Net
 
                 // CLI
                 bool wantHost = args.HasFlag("-mpsHost");
-                string cliJoinCode = args.GetStr("-mpsJoin", null);
                 bool allowClientAutoJoin = args.HasFlag("-autoJoin");
 
                 string serverTypeStr = args.GetStr("-serverType", "lobby").ToLowerInvariant();
@@ -191,33 +219,13 @@ namespace Game.Net
                     string region = args.GetStr("-region", "auto");
                     try
                     {
-                        // Relay host
-                        var allocation = await RelayService.Instance.CreateAllocationAsync(max);
-                        var relayJoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+                        // Direct UTP host
+                        // Resolve bind/port from CLI or env
+                        string bind = args.GetStr("-bind", Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0");
+                        int port = args.GetInt("-port", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp) ? lp : 7777);
 
-                        // Configure UTP for Relay
-                        var rsd = RelayUtils.ToServerData(allocation, useWss: false);
-                        utp.SetRelayServerData(rsd);
-
-                        // Create Lobby and index ServerType on S1 so QuickJoin/queries work
-                        var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);
-                        var lobbyOptions = new CreateLobbyOptions
-                        {
-                            IsPrivate = false,
-                            Data = new Dictionary<string, DataObject>
-                            {
-                                ["RelayJoinCode"] = new DataObject(DataObject.VisibilityOptions.Public, relayJoinCode),
-                                ["ServerType"]    = new DataObject(DataObject.VisibilityOptions.Public, type.ToString(), DataObject.IndexOptions.S1),
-                                ["Scene"]         = new DataObject(DataObject.VisibilityOptions.Public, SceneManager.GetActiveScene().name),
-                                ["Region"]        = new DataObject(DataObject.VisibilityOptions.Public, region, DataObject.IndexOptions.S2)
-                            }
-                        };
-
-                        // Reserve one seat for the dedicated server itself.
-                        // Player caps remain: Lobby=16, 1v1=2, 2v2=4.
-                        int playerCap   = max;
-                        int lobbyCap    = ComputeLobbyCapacity(type.ToString().ToLowerInvariant(), playerCap);
-                        var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, lobbyCap, lobbyOptions);
+                        // Configure UTP to listen
+                        utp.SetConnectionData(bind, (ushort)port, bind);
 
                         if (!nm.StartServer())
                         {
@@ -225,53 +233,93 @@ namespace Game.Net
                             return;
                         }
 
-                        SessionContext.SetSession(lobby.Id, relayJoinCode);
+                        // Build lobby metadata for discovery only
+                        string publicHost = args.GetStr("-publicHost", Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
+                        int publicPort = args.GetInt("-publicPort", int.TryParse(Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var pp) ? pp : port);
+                        // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
+                        string lanHost = args.GetStr("-lanHost", Environment.GetEnvironmentVariable("LAN_HOST") ?? bind);
+                        if (lanHost == "0.0.0.0" || lanHost == "127.0.0.1")
+                        {
+                            var auto = ResolveLocalIPv4();
+                            if (!string.IsNullOrWhiteSpace(auto)) lanHost = auto;
+                        }
+                        int lanPort = args.GetInt("-lanPort", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp2) ? lp2 : port);
+
+                        var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);
+                        var lobbyOptions = new CreateLobbyOptions
+                        {
+                            IsPrivate = false,
+                            Data = new Dictionary<string, DataObject>
+                            {
+                                ["PublicHost"]  = new DataObject(DataObject.VisibilityOptions.Public, publicHost),
+                                ["PublicPort"]  = new DataObject(DataObject.VisibilityOptions.Public, publicPort.ToString()),
+                                ["LanEndpoint"] = new DataObject(DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                                ["ServerType"]  = new DataObject(DataObject.VisibilityOptions.Public, type.ToString(), DataObject.IndexOptions.S1),
+                                ["Scene"]       = new DataObject(DataObject.VisibilityOptions.Public, SceneManager.GetActiveScene().name),
+                                ["Region"]      = new DataObject(DataObject.VisibilityOptions.Public, region, DataObject.IndexOptions.S2),
+                                ["Build"]       = new DataObject(DataObject.VisibilityOptions.Public, Application.version)
+                            }
+                        };
+
+                        // Reserve one seat for the dedicated server itself.
+                        int playerCap   = max;
+                        int lobbyCap    = ComputeLobbyCapacity(type.ToString().ToLowerInvariant(), playerCap);
+                        var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, lobbyCap, lobbyOptions);
+
+                        SessionContext.SetSession(lobby.Id, "");
                         SessionContext.SetLobby(lobby);
-                        Debug.Log($"[Relay] Hosting {type}. LobbyId={lobby.Id} JoinCode={relayJoinCode} Region={region}");
+                        Debug.Log($"[DirectNet] Hosting {type}. LobbyId={lobby.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort} Region={region}");
 
                         StartCoroutine(LobbyHeartbeat(lobby.Id));
                     }
                     catch (Exception e)
                     {
-                        Debug.LogError($"[NetBootstrap] Failed to create Relay/Lobby: {e.Message}");
+                        Debug.LogError($"[NetBootstrap] Failed to create DirectNet/Lobby: {e.Message}");
                         return;
                     }
 
                     var sceneName = args.GetStr("-scene", string.Empty);
                     if (!string.IsNullOrWhiteSpace(sceneName)) StartCoroutine(CoLoadSceneNextFrame(sceneName));
                 }
-                else if (!string.IsNullOrEmpty(cliJoinCode))
+                // Optional direct connect for dev testing: -connect host:port
+                else
                 {
-                    if (!allowClientAutoJoin)
+                    var ep = args.GetStr("-connect", null);
+                    if (!string.IsNullOrWhiteSpace(ep))
                     {
-                        Debug.Log("[NetBootstrap] UI-join mode: ignoring -mpsJoin (use -autoJoin to enable CLI join).");
-                        return;
-                    }
-
-                    try
-                    {
-                        var joinAllocation = await RelayService.Instance.JoinAllocationAsync(cliJoinCode);
-                        var rsd = RelayUtils.ToServerData(joinAllocation, useWss: false);
-                        utp.SetRelayServerData(rsd);
-
-                        if (!nm.StartClient())
+                        if (!allowClientAutoJoin)
                         {
-                            Debug.LogError("[NetBootstrap] StartClient failed.");
+                            Debug.Log("[NetBootstrap] UI-join mode: ignoring -connect (use -autoJoin to enable CLI connect).");
                             return;
                         }
 
-                        Debug.Log($"[Relay] Joining with code: {cliJoinCode}");
+                        try
+                        {
+                            var parts = ep.Split(':');
+                            var host = parts[0].Trim();
+                            var cport = (parts.Length > 1 && int.TryParse(parts[1], out var pv)) ? pv : 7777;
+
+                            utp.SetConnectionData(host, (ushort)cport);
+
+                            if (!nm.StartClient())
+                            {
+                                Debug.LogError("[NetBootstrap] StartClient failed.");
+                                return;
+                            }
+
+                            Debug.Log($"[DirectNet] Connecting to {host}:{cport}");
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogError($"[NetBootstrap] Failed to direct-connect: {e.Message}");
+                        }
                     }
-                    catch (Exception e)
+                    else
                     {
-                        Debug.LogError($"[NetBootstrap] Failed to join relay: {e.Message}");
-                    }
-                }
-                else
-                {
 #if UNITY_EDITOR
-                    Debug.Log("[NetBootstrap] No -mpsHost or -mpsJoin. Idle; UI will decide.");
+                        Debug.Log("[NetBootstrap] No host flags. Idle; UI will decide.");
 #endif
+                    }
                 }
             }
 

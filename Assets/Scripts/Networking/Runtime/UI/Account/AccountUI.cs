@@ -9,6 +9,19 @@ using System.Threading;
 using Game.Services;
 using Game.Net;
 
+// + dev quick-join deps
+using System.Collections;
+using System.Collections.Generic;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
+using Unity.Services.Authentication;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
+// Reuse UgsInitializer from NetBootstrap (DontDestroy runner)
+using System.Net;
+using System.Net.Sockets;
+// IPv4 pre-resolve for direct UTP connect.
+
 namespace Game.UI.Account
 {
     /// Simple two-panel switcher and robust auth calls with validation and feedback.
@@ -49,10 +62,20 @@ namespace Game.UI.Account
         [Header("On Success")]
         [SerializeField] string nextScene = "MainMenu";
 
+        [Header("Dev Quick Test")]
+        [SerializeField] Button devSignIn1Button;
+        [SerializeField] Button devSignIn2Button;
+        [SerializeField] string dev1Email;
+        [SerializeField] string dev1Password;
+        [SerializeField] string dev2Email;
+        [SerializeField] string dev2Password;
+        // Two scene-wired buttons that use preset creds for fast test login + 1v1 quick-join.
+
         PlayFabAuthService _auth;
         const int AuthTimeoutMs = 15000;     // 15s guard for auth calls
         string _selectedIconId;              // holds chosen icon before sign-in
         bool _iconSaved;                     // avoid double saves
+        bool _devJoinInFlight;               // prevent overlapping quick-join attempts
 
         void Awake()
         {
@@ -68,6 +91,10 @@ namespace Game.UI.Account
 
             siSubmit.onClick.AddListener(() => _ = DoSignIn());
             crSubmit.onClick.AddListener(() => _ = DoCreate());
+
+            // dev quick test buttons
+            if (devSignIn1Button) devSignIn1Button.onClick.AddListener(() => _ = DevLoginAndJoin(dev1Email, dev1Password));
+            if (devSignIn2Button) devSignIn2Button.onClick.AddListener(() => _ = DevLoginAndJoin(dev2Email, dev2Password));
 
             // per-panel switchers
             if (siToCreateButton) siToCreateButton.onClick.AddListener(() => Show(false));
@@ -193,6 +220,179 @@ namespace Game.UI.Account
             if (string.IsNullOrEmpty(_selectedIconId) || _iconSaved) return;
             var ok = await PlayerProfileStore.SaveProfileIconAsync(_selectedIconId);
             _iconSaved = ok;
+        }
+
+        // ---------- Dev quick test: sign in then join first open 1v1 server ----------
+        async Task DevLoginAndJoin(string email, string password)
+        {
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+            { if (siStatus) siStatus.text = "Dev creds not set."; return; }
+
+            // UI guard
+            if (devSignIn1Button) devSignIn1Button.interactable = false;
+            if (devSignIn2Button) devSignIn2Button.interactable = false;
+
+            try
+            {
+                if (siStatus) siStatus.text = "Dev sign-in...";
+                var res = await TimeoutAfter(_auth.SignInAsync(email.Trim(), password), AuthTimeoutMs);
+                if (!res.ok) { if (siStatus) siStatus.text = res.error ?? "Sign-in failed."; return; }
+
+                if (siStatus) siStatus.text = "Signed in.";
+
+                // Save chosen icon if any, but do NOT switch scenes
+                await TrySaveSelectedIconAsync();
+
+                // Ensure UGS is ready for Lobby queries
+                if (siStatus) siStatus.text = "UGS init...";
+                while (!Game.Net.UgsInitializer.IsReady)
+                {
+                    if (!string.IsNullOrEmpty(Game.Net.UgsInitializer.LastError))
+                    { if (siStatus) siStatus.text = "UGS init failed."; return; }
+                    await Task.Yield();
+                }
+
+                if (!AuthenticationService.Instance.IsSignedIn)
+                { if (siStatus) siStatus.text = "UGS not signed in."; return; }
+
+                // Join first available 1v1 via public endpoint
+                StartCoroutine(CoJoinFirstAvailable1v1());
+            }
+            catch (Exception e)
+            {
+                if (siStatus) siStatus.text = $"Dev sign-in failed: {ShortReason(e)}";
+            }
+            finally
+            {
+                if (devSignIn1Button) devSignIn1Button.interactable = true;
+                if (devSignIn2Button) devSignIn2Button.interactable = true;
+            }
+        }
+
+        IEnumerator CoJoinFirstAvailable1v1()
+        {
+            if (_devJoinInFlight) yield break;
+            _devJoinInFlight = true;
+            try
+            {
+                if (siStatus) siStatus.text = "Finding 1v1...";
+                // Query: available > 0 and S1 == "OneVOne"
+            var queryOptions = new QueryLobbiesOptions
+            {
+                Count = 25,
+                Filters = new List<QueryFilter>
+                {
+                    new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "0", QueryFilter.OpOptions.GT),
+                    new QueryFilter(QueryFilter.FieldOptions.S1, "OneVOne", QueryFilter.OpOptions.EQ)
+                },
+                Order = new List<QueryOrder> { new QueryOrder(false, QueryOrder.FieldOptions.AvailableSlots) }
+            };
+            var task = LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            yield return new WaitUntil(() => task.IsCompleted);
+
+            if (task.Exception != null)
+            { if (siStatus) siStatus.text = "Lobby query failed."; yield break; }
+
+            var matches = task.Result.Results;
+            if (matches == null || matches.Count == 0)
+            { if (siStatus) siStatus.text = "No 1v1 open."; yield break; }
+
+            var best = matches[0];
+            if (siStatus) siStatus.text = $"Joining {best.Name}...";
+
+            var nm = NetworkManager.Singleton;
+            if (!nm) { if (siStatus) siStatus.text = "No NetworkManager."; yield break; }
+            var utp = nm.GetComponent<UnityTransport>();
+
+            if (nm.IsConnectedClient)
+            {
+                nm.Shutdown();
+                while (nm.IsConnectedClient) yield return null;
+            }
+
+            if (best.Data == null)
+            { if (siStatus) siStatus.text = "Missing endpoint data."; yield break; }
+
+            bool hasHost = best.Data.TryGetValue("PublicHost", out var publicHostData);
+            bool hasPort = best.Data.TryGetValue("PublicPort", out var publicPortData);
+            string lanEp = best.Data.TryGetValue("LanEndpoint", out var lanEpData) ? lanEpData.Value : null;
+
+            if (!hasHost || !hasPort || string.IsNullOrWhiteSpace(publicHostData.Value))
+            { if (siStatus) siStatus.text = "Invalid endpoint."; yield break; }
+
+            string publicHost = publicHostData.Value;
+            int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
+
+            IEnumerator TryConnect(string host, int prt, float seconds)
+            {
+                // Pre-resolve to IPv4. UTP is IPv4-only in this build.
+                string target = host;
+                if (!IPAddress.TryParse(host, out var ip) || ip.AddressFamily == AddressFamily.InterNetworkV6)
+                {
+                    try
+                    {
+                        var addrs = Dns.GetHostAddresses(host);
+                        foreach (var a in addrs) { if (a.AddressFamily == AddressFamily.InterNetwork) { target = a.ToString(); break; } }
+                    } catch { /* fall back to original host */ }
+                }
+
+                if (nm.IsServer || nm.IsHost || nm.IsClient || nm.IsListening) yield break;
+
+                utp.SetConnectionData(target, (ushort)prt);
+                if (!nm.StartClient()) yield break;
+
+                float t = seconds;
+                while (nm.IsClient && !nm.IsConnectedClient && t > 0f)
+                {
+                    t -= Time.deltaTime; yield return null;
+                }
+            }
+
+            // Prefer LAN if provided
+            bool connected = false;
+            if (!string.IsNullOrWhiteSpace(lanEp) && lanEp.Contains(":"))
+            {
+                var parts = lanEp.Split(':');
+                var lh = parts[0].Trim();
+                var lp = (parts.Length > 1 && int.TryParse(parts[1], out var v)) ? v : publicPort;
+
+                if (lh != "0.0.0.0" && lh != "127.0.0.1")
+                {
+                    if (siStatus) siStatus.text = $"Connecting (LAN) {lh}:{lp}";
+                    yield return StartCoroutine(TryConnect(lh, lp, 5f));
+                    connected = nm.IsConnectedClient;
+                    if (!connected)
+                    {
+                        nm.Shutdown();
+                        yield return new WaitUntil(() => !nm.IsClient && !nm.IsServer && !nm.IsHost && !nm.IsListening);
+                    }
+                }
+            }
+
+            if (!connected)
+            {
+                if (siStatus) siStatus.text = $"Connecting {publicHost}:{publicPort}";
+                yield return StartCoroutine(TryConnect(publicHost, publicPort, 10f));
+            }
+
+            if (nm.IsConnectedClient)
+            {
+                if (siStatus) siStatus.text = "Connected.";
+                SessionContext.SetSession(best.Id, "");
+                SessionContext.SetLobby(best);
+                SessionContext.SetDirectEndpoint(publicHost, publicPort, lanEp);
+                // Server scene management will pull us into the match.
+            }
+            else
+            {
+                if (siStatus) siStatus.text = "Connect failed.";
+                nm.Shutdown();
+                yield return new WaitUntil(() => !nm.IsClient && !nm.IsServer && !nm.IsHost && !nm.IsListening);
+            }
+            // --- DEV NOTE ---
+            _devJoinInFlight = false; // handled by try/finally below
+        }
+        finally { _devJoinInFlight = false; }
         }
     }
 }

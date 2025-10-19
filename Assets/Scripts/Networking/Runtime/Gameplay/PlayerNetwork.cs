@@ -316,9 +316,9 @@ void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
 
 void OnActiveSlotChanged()
 {
-    // Hook for local effects later. No resizing or transform edits here.
-    // Example: update crosshair or HUD highlight.
-    // Equip primary visuals when slot changes to Primary.
+    // Owner requests equip. Remotes wait for server fan-out.
+    if (!IsOwner) return;
+
     if (_activeSlot.Value == 0)
     {
         var wp = GetComponent<WeaponPrimaryController>();
@@ -329,6 +329,7 @@ void OnActiveSlotChanged()
         }
     }
 }
+// Fixes "Only the owner can invoke a ServerRpc…" by stopping non-owners from calling it.
 // ===== end weapons =====
 
         void SetupInputAndCamera()
@@ -813,6 +814,19 @@ void OnActiveSlotChanged()
         public void SetHealth(float health)
         {
             if (IsServer) _health.Value = health;
+        }
+
+        /// Server helper to auto-equip primary at round start.
+        public void ServerAutoEquipPrimary()
+        {
+            if (!IsServer) return;
+            _activeSlot.Value = 0; // Primary
+            var wp = GetComponent<Game.Net.Weapons.WeaponPrimaryController>();
+            if (wp != null)
+            {
+                var pt = (PrimaryType)_netLoadout.Value.primary;
+                wp.Equip(pt, null); // server path equips and rebuilds views
+            }
         }
 
         void SetSprint(bool on)
