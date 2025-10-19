@@ -194,22 +194,35 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
-            // Destroy old
             if (_view) Destroy(_view.gameObject);
 
-            // Resolve local stats by type so clients can instantiate their view.
             var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
             var localStats = LookupAssigned(primaryType) ?? GetDefaults(primaryType);
-            if (!sockets || !sockets.handMount || localStats == null || !localStats.weaponViewPrefab) return;
+
+            if (!sockets)
+            {
+                Debug.LogWarning("[Weapons] PlayerWeaponSockets missing on player. Cannot attach WeaponView.");
+                return;
+            }
+            if (!sockets.handMount)
+            {
+                Debug.LogWarning("[Weapons] sockets.handMount not assigned. Cannot attach WeaponView.");
+                return;
+            }
+            if (localStats == null || !localStats.weaponViewPrefab)
+            {
+                Debug.LogWarning($"[Weapons] No WeaponView prefab set for {primaryType}. Assign GunStats.weaponViewPrefab.");
+                return;
+            }
 
             var go = Instantiate(localStats.weaponViewPrefab);
+            go.name = $"{primaryType}_View(Local)";
             _view = go.GetComponent<WeaponView>();
-            var t = go.transform;
 
-            // Attach by aligning grip to hand mount
+            var t = go.transform;
             if (_view && _view.grip)
             {
-                t.SetParent(sockets.handMount, worldPositionStays: false);
+                t.SetParent(sockets.handMount, false);
                 t.position = sockets.handMount.position;
                 t.rotation = sockets.handMount.rotation;
             }
@@ -218,7 +231,6 @@ namespace Game.Net.Weapons
                 t.SetParent(transform, false);
             }
 
-            // Equip animation: muzzle to start then to front
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
 
@@ -261,27 +273,17 @@ namespace Game.Net.Weapons
                     g.magazineSize = 30; g.reserveSize = 30; g.automatic = true; g.fireRate = 10f; g.damage = 12f; g.bulletSpeed = 40f; g.reloadSeconds = 2.0f; break;
             }
 
-            // Temporary placeholder projectile if designer has not assigned one
+            // Do NOT create runtime network prefabs; clients won't have the hash.
+// Require a proper asset assigned and registered in NetworkManager.
             if (!g.projectilePrefab)
             {
-                var p = new GameObject("BulletProjectile");
-                p.layer = LayerMask.NameToLayer("Default");
-                var col = p.AddComponent<SphereCollider>(); col.isTrigger = true; col.radius = 0.05f;
-                var rb  = p.AddComponent<Rigidbody>(); rb.useGravity = false; rb.isKinematic = true;
-                p.AddComponent<NetworkObject>();
-                var bp = p.AddComponent<BulletProjectile>();
-                g.projectilePrefab = p;
+                Debug.LogError($"[Weapons] Missing projectile prefab for {t}. Assign a prefab asset and register it in NetworkManager → Network Prefabs.");
             }
 
-            // Temporary simple view
+            // WeaponView must be a real prefab (with meshes) assigned on the GunStats.
             if (!g.weaponViewPrefab)
             {
-                var w = new GameObject("WeaponView");
-                var v = w.AddComponent<WeaponView>();
-                v.grip = w.transform; // simple single transform
-                var muzzle = new GameObject("Muzzle").transform; muzzle.SetParent(w.transform, false); muzzle.localPosition = new Vector3(0.5f, 0f, 0f);
-                v.muzzle = muzzle;
-                g.weaponViewPrefab = w;
+                Debug.LogWarning($"[Weapons] Missing WeaponView prefab for {t}. Assign GunStats.weaponViewPrefab.");
             }
 
             _defaults[t] = g;

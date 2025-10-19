@@ -7,8 +7,10 @@ namespace Game.Net.Weapons
     public sealed class WeaponView : MonoBehaviour
     {
         [Header("Attachment Points")]
-        public Transform grip;   // attach to player's HandMount
-        public Transform muzzle; // points to sockets
+        public Transform grip;
+        public Transform muzzle;
+
+        void OnDestroy() { StopAllCoroutines(); } // avoid coroutine touching destroyed transforms
 
         public IEnumerator PlayEquipAnimation(Transform targetStart, Transform targetFront, float secs = 0.25f)
         {
