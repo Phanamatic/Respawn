@@ -283,61 +283,71 @@ namespace Game.Net
                 while (nm.IsConnectedClient) yield return null;
             }
 
-            // Do NOT join the Lobby as a client. Use public data from the query result.
-            if (bestMatch.Data == null || !bestMatch.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
+            // Do NOT join lobby. Use public endpoint advertised by server.
+            if (bestMatch.Data == null)
             {
-                Debug.LogError("[LobbyUI] No relay code on queried lobby (public data missing)");
+                Debug.LogError("[LobbyUI] Missing lobby public data");
                 SetPlayStatus("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            string relayJoinCode = relayCodeData.Value;
+            bool hasHost = bestMatch.Data.TryGetValue("PublicHost", out var publicHostData);
+            bool hasPort = bestMatch.Data.TryGetValue("PublicPort", out var publicPortData);
+            string lanEp = bestMatch.Data.TryGetValue("LanEndpoint", out var lanEpData) ? lanEpData.Value : null;
 
-            // Join the Relay allocation
-            var joinAllocTask = RelayService.Instance.JoinAllocationAsync(relayJoinCode);
-            yield return new WaitUntil(() => joinAllocTask.IsCompleted);
-
-            if (joinAllocTask.Exception != null)
+            if (!hasHost || !hasPort || string.IsNullOrWhiteSpace(publicHostData.Value))
             {
-                Debug.LogError($"[LobbyUI] Failed to join allocation: {joinAllocTask.Exception}");
-                SetPlayStatus("Failed to join match.");
+                Debug.LogError("[LobbyUI] No public endpoint on lobby");
+                SetPlayStatus("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            var joinAllocation = joinAllocTask.Result;
+            string publicHost = publicHostData.Value;
+            int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
 
-            // Configure transport for Relay
-            utp.SetRelayServerData(Game.Net.RelayUtils.ToServerData(joinAllocation, useWss: false));
-
-            // Start client
-            if (!nm.StartClient())
+            IEnumerator TryConnect(string host, int prt, float seconds)
             {
-                SetPlayStatus($"Failed to connect to {bestMatch.Name}.");
-                _busy = false;
-                SetAllButtonsInteractable(true);
-                yield break;
+                utp.SetConnectionData(host, (ushort)prt);
+                if (!nm.StartClient())
+                {
+                    yield break;
+                }
+                float t = seconds;
+                while (!nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
             }
 
-            // Wait for connection or timeout
-            float timeout = 10f;
-            while (!nm.IsConnectedClient && timeout > 0f)
+            // Prefer LAN endpoint if provided. Fallback to PublicHost.
+            bool connected = false;
+            if (!string.IsNullOrWhiteSpace(lanEp) && lanEp.Contains(":"))
             {
-                timeout -= Time.deltaTime;
-                yield return null;
+                var parts = lanEp.Split(':');
+                var lh = parts[0].Trim();
+                var lp = (parts.Length > 1 && int.TryParse(parts[1], out var v)) ? v : publicPort;
+
+                SetPlayStatus($"Connecting (LAN) {lh}:{lp}...");
+                yield return StartCoroutine(TryConnect(lh, lp, 5f));
+                connected = nm.IsConnectedClient;
+                if (!connected) { nm.Shutdown(); }
+            }
+
+            if (!connected)
+            {
+                SetPlayStatus($"Connecting {publicHost}:{publicPort}...");
+                yield return StartCoroutine(TryConnect(publicHost, publicPort, 10f));
             }
 
             if (nm.IsConnectedClient)
             {
                 SetPlayStatus($"Joined {bestMatch.Name}.");
-                SessionContext.SetSession(bestMatch.Id, relayJoinCode);
+                SessionContext.SetSession(bestMatch.Id, "");
             }
             else
             {
-                SetPlayStatus($"Connection timeout to {bestMatch.Name}.");
+                SetPlayStatus($"Connection failed to {bestMatch.Name}.");
                 nm.Shutdown();
             }
 

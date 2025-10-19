@@ -16,7 +16,12 @@ namespace Game.Net
         public static int MaxPlayers { get; private set; } = 0;
         public static int Threshold { get; private set; } = 0;
         
-        // Unity Lobby reference for relay sessions
+        // Direct endpoint cache (for UI/debug)
+        public static string PublicHost { get; private set; } = "";
+        public static int    PublicPort { get; private set; } = 0;
+        public static string LanEndpoint { get; private set; } = "";
+        
+        // Unity Lobby reference for current session
         public static Lobby CurrentLobby { get; private set; } = null;
 
         public static void Configure(ServerType type, int max, int threshold)
@@ -31,6 +36,12 @@ namespace Game.Net
             SessionId = id ?? "";
             JoinCode = code ?? "";
             Debug.Log($"[SessionContext] Session set. Type={Type} Id={SessionId} Code={JoinCode}");
+        }
+        public static void SetDirectEndpoint(string publicHost, int publicPort, string lanEp)
+        {
+            PublicHost = publicHost ?? "";
+            PublicPort = publicPort;
+            LanEndpoint = lanEp ?? "";
         }
 
         public static void SetLobby(Lobby lobby)

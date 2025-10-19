@@ -217,63 +217,61 @@ namespace Game.Net
                 yield break;
             }
 
-            // Relay join
-            if (!joinedLobby.Data.TryGetValue("RelayJoinCode", out var relayCodeData))
+            // Direct connect
+            if (joinedLobby.Data == null)
             {
-                Debug.LogError("[MainMenu] No relay code in lobby");
+                Debug.LogError("[MainMenu] Missing lobby data");
                 SetStatus("Invalid lobby");
                 Done(false);
                 yield break;
             }
 
-            var joinAllocTask = RelayService.Instance.JoinAllocationAsync(relayCodeData.Value);
-            yield return new WaitUntil(() => joinAllocTask.IsCompleted);
-            if (joinAllocTask.Exception != null)
+            bool hasHost = joinedLobby.Data.TryGetValue("PublicHost", out var publicHostData);
+            bool hasPort = joinedLobby.Data.TryGetValue("PublicPort", out var publicPortData);
+            string lanEp = joinedLobby.Data.TryGetValue("LanEndpoint", out var lanEpData) ? lanEpData.Value : null;
+
+            if (!hasHost || !hasPort || string.IsNullOrWhiteSpace(publicHostData.Value))
             {
-                Debug.LogError($"[MainMenu] Relay join failed: {joinAllocTask.Exception}");
-                SetStatus("Join failed");
+                Debug.LogError("[MainMenu] No public endpoint in lobby");
+                SetStatus("Invalid lobby");
                 Done(false);
                 yield break;
             }
+
+            string publicHost = publicHostData.Value;
+            int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
 
             var utp = nm.GetComponent<UnityTransport>();
-            var alloc = joinAllocTask.Result;
 
-            // prefer DTLS; fall back if needed
-            var ep = alloc.ServerEndpoints.FirstOrDefault(e => e.ConnectionType.Equals("dtls", StringComparison.OrdinalIgnoreCase))
-                     ?? alloc.ServerEndpoints.FirstOrDefault();
-            if (ep == null)
+            IEnumerator TryConnect(string host, int prt, float seconds)
             {
-                Debug.LogError("[MainMenu] No Relay endpoint");
-                SetStatus("Join failed");
-                Done(false);
-                yield break;
+                utp.SetConnectionData(host, (ushort)prt);
+                if (!nm.StartClient())
+                {
+                    yield break;
+                }
+                float t = seconds;
+                while (!nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
             }
 
-            var rsd = new RelayServerData(
-                ep.Host,
-                (ushort)ep.Port,
-                alloc.AllocationIdBytes,
-                alloc.ConnectionData,
-                alloc.HostConnectionData,
-                alloc.Key,
-                ep.Secure || ep.ConnectionType.Equals("dtls", StringComparison.OrdinalIgnoreCase));
-
-            utp.SetRelayServerData(rsd);
-
-            if (!nm.StartClient())
+            // Prefer LAN endpoint if provided. Fallback to PublicHost.
+            bool connected = false;
+            if (!string.IsNullOrWhiteSpace(lanEp) && lanEp.Contains(":"))
             {
-                Debug.LogError("[MainMenu] StartClient failed");
-                SetStatus("Client start failed");
-                Done(false);
-                yield break;
+                var parts = lanEp.Split(':');
+                var lh = parts[0].Trim();
+                var lp = (parts.Length > 1 && int.TryParse(parts[1], out var v)) ? v : publicPort;
+
+                SetStatus($"Connecting (LAN) {lh}:{lp}...");
+                yield return StartCoroutine(TryConnect(lh, lp, 5f));
+                connected = nm.IsConnectedClient;
+                if (!connected) { nm.Shutdown(); }
             }
 
-            float timeout = 10f;
-            while (!nm.IsConnectedClient && timeout > 0f)
+            if (!connected)
             {
-                timeout -= Time.deltaTime;
-                yield return null;
+                SetStatus($"Connecting {publicHost}:{publicPort}...");
+                yield return StartCoroutine(TryConnect(publicHost, publicPort, 10f));
             }
 
             if (nm.IsConnectedClient)
@@ -285,7 +283,7 @@ namespace Game.Net
             }
             else
             {
-                SetStatus("Connection timeout");
+                SetStatus("Connection failed");
                 nm.Shutdown();
                 Done(false);
             }
