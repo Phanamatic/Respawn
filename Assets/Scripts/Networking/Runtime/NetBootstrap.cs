@@ -14,6 +14,10 @@ using Unity.Services.Core;
 using Unity.Services.Authentication;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
+// LAN IP resolve for lobby data
+using System.Net;
+using System.Net.Sockets;
+using System.Net.NetworkInformation;
 
 namespace Game.Net
 {
@@ -68,6 +72,35 @@ namespace Game.Net
         private sealed class MpsBootstrapRunner : MonoBehaviour
         {
             bool _started;
+
+            // Returns the first site-local IPv4 that is up and not virtual/tunnel.
+            private static string ResolveLocalIPv4()
+            {
+                try
+                {
+                    foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                        if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                            ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+
+                        var ipProps = ni.GetIPProperties();
+                        foreach (var ua in ipProps.UnicastAddresses)
+                        {
+                            if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                            var ip = ua.Address;
+                            byte[] b = ip.GetAddressBytes();
+                            // 10.x.x.x or 172.16-31.x.x or 192.168.x.x
+                            bool privateA = b[0] == 10;
+                            bool privateB = b[0] == 172 && b[1] >= 16 && b[1] <= 31;
+                            bool privateC = b[0] == 192 && b[1] == 168;
+                            if (privateA || privateB || privateC) return ip.ToString();
+                        }
+                    }
+                }
+                catch { }
+                return null;
+            }
 
             public void Run(Args args)
             {
@@ -203,7 +236,13 @@ namespace Game.Net
                         // Build lobby metadata for discovery only
                         string publicHost = args.GetStr("-publicHost", Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
                         int publicPort = args.GetInt("-publicPort", int.TryParse(Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var pp) ? pp : port);
+                        // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
                         string lanHost = args.GetStr("-lanHost", Environment.GetEnvironmentVariable("LAN_HOST") ?? bind);
+                        if (lanHost == "0.0.0.0" || lanHost == "127.0.0.1")
+                        {
+                            var auto = ResolveLocalIPv4();
+                            if (!string.IsNullOrWhiteSpace(auto)) lanHost = auto;
+                        }
                         int lanPort = args.GetInt("-lanPort", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp2) ? lp2 : port);
 
                         var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);

@@ -5,6 +5,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -242,13 +244,24 @@ namespace Game.Net
 
             IEnumerator TryConnect(string host, int prt, float seconds)
             {
-                utp.SetConnectionData(host, (ushort)prt);
-                if (!nm.StartClient())
+                // IPv4 pre-resolve for UTP direct.
+                string target = host;
+                try
                 {
-                    yield break;
-                }
+                    if (!IPAddress.TryParse(host, out var ip) || ip.AddressFamily == AddressFamily.InterNetworkV6)
+                    {
+                        var addrs = Dns.GetHostAddresses(host);
+                        foreach (var a in addrs) { if (a.AddressFamily == AddressFamily.InterNetwork) { target = a.ToString(); break; } }
+                    }
+                } catch { }
+
+                if (nm.IsServer || nm.IsHost || nm.IsClient || nm.IsListening) yield break;
+
+                utp.SetConnectionData(target, (ushort)prt);
+                if (!nm.StartClient()) { yield break; }
+
                 float t = seconds;
-                while (!nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
+                while (nm.IsClient && !nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
             }
 
             // Prefer LAN endpoint if provided. Fallback to PublicHost.
@@ -262,7 +275,11 @@ namespace Game.Net
                 SetStatus($"Connecting (LAN) {lh}:{lp}...");
                 yield return StartCoroutine(TryConnect(lh, lp, 5f));
                 connected = nm.IsConnectedClient;
-                if (!connected) { nm.Shutdown(); }
+                if (!connected)
+                {
+                    nm.Shutdown();
+                    yield return new WaitUntil(() => !nm.IsClient && !nm.IsServer && !nm.IsHost && !nm.IsListening);
+                }
             }
 
             if (!connected)

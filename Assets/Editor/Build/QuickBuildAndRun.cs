@@ -120,7 +120,12 @@ public static class QuickBuildAndRun
 
     // Direct hosting: bind+port, publish region only as metadata.
     private static string ArgsForServer(string type, int max, string scene, string env, string logfile)
-        => $"-batchmode -nographics -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -bind 0.0.0.0 -port 7777 -logfile .\\{logfile}";
+    {
+        var pub = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1";
+        var lan = Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0";
+        return $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -bind 0.0.0.0 -port 7777 -publicHost {pub} -lanHost {lan} -logfile .\\{logfile}";
+    }
+    // [DirectNet] Without -mpsHost NetBootstrap idles and won't create the Lobby.
 
     private static void RunServer(string args)
     {

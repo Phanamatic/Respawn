@@ -217,7 +217,7 @@ namespace Game.Net
             SetUTPProperty(utp, "MaxPacketQueueSize", 2048);
             SetUTPProperty(utp, "MaxSendQueueSize",   2048);
             SetUTPProperty(utp, "MaxReceiveQueueSize",2048);
-            SetUTPProperty(utp, "MaxPacketSize", 1400);
+            SetUTPProperty(utp, "MaxPacketSize", 1200); // safer WAN MTU for UDP
 
             // Keep mixed reliability; do not force ReliableSequenced for all traffic.
             // (Intentionally no SetUTPReliabilityMode here)

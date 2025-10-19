@@ -154,13 +154,24 @@ namespace Game.Net.Weapons
                 var pos = GetMuzzleWorld();
                 var rot = Quaternion.LookRotation(dir, Vector3.up);
 
+                // Nudge forward to avoid self-collision, then ignore shooter colliders.
+                pos += dir * 0.3f;
                 var go = Instantiate(_stats.projectilePrefab, pos, rot);
+                var projCol = go.GetComponent<Collider>();
+                if (projCol)
+                {
+                    var myCols = GetComponentsInParent<Collider>(true);
+                    for (int c = 0; c < myCols.Length; c++)
+                        if (myCols[c]) Physics.IgnoreCollision(projCol, myCols[c], true);
+                }
+
                 var nob = go.GetComponent<NetworkObject>();
                 var proj = go.GetComponent<BulletProjectile>();
                 proj.speed = _stats.bulletSpeed;
                 proj.lifetime = _stats.bulletLifetime;
                 proj.damage = _stats.damage;
                 nob.Spawn(true);
+// Prevents immediate despawn-on-self-hit and makes bullets visibly travel.
             }
         }
 

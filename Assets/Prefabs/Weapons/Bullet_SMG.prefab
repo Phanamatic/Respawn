@@ -150,7 +150,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 200236690
+  GlobalObjectIdHash: 1170765430
   InScenePlacedSourceGlobalObjectIdHash: 2917956527
   DeferredDespawnTick: 0
   Ownership: 1
@@ -176,6 +176,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
-  speed: 0
-  lifetime: 0
-  damage: 0
+  speed: 38
+  lifetime: 1
+  damage: 9

@@ -2084,6 +2084,12 @@ MonoBehaviour:
   - {fileID: 21300000, guid: f76b4ab88c93d8941a6f7560bb824360, type: 3}
   selectedIconPreview: {fileID: 241170592}
   nextScene: MainMenu
+  devSignIn1Button: {fileID: 654391651}
+  devSignIn2Button: {fileID: 35937008}
+  dev1Email: devemail@gmail.com
+  dev1Password: Devpassword123
+  dev2Email: devemail2@gmail.com
+  dev2Password: Devpassword123
 --- !u!1 &654391649
 GameObject:
   m_ObjectHideFlags: 0
