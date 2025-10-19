@@ -1,5 +1,5 @@
 // Assets/Scripts/Networking/Runtime/SessionContext.cs
-// Updated to hold Unity Lobby reference for relay-based sessions
+// Tracks Unity Lobby references and direct endpoints for dedicated sessions
 
 using UnityEngine;
 using Unity.Services.Lobbies.Models;

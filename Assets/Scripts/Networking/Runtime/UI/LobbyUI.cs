@@ -1,6 +1,6 @@
 // Assets/Scripts/Networking/Runtime/UI/LobbyUI.cs
 // Attaches to: Lobby UI canvas GameObject (as NetworkBehaviour)
-// Updated to use Unity Lobby/Relay for global 1v1/2v2 matchmaking
+// Updated to use Unity Lobby for global 1v1/2v2 matchmaking with direct endpoints
 
 using System;
 using System.Collections;
@@ -14,9 +14,6 @@ using Unity.Netcode.Transports.UTP;
 using Unity.Services.Authentication;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
-using Unity.Services.Relay;
-using Unity.Services.Relay.Models;
-using Unity.Networking.Transport.Relay;
 
 namespace Game.Net
 {
@@ -209,7 +206,7 @@ namespace Game.Net
             _armouryLastCloseAt = Time.unscaledTime; _armouryLeftSinceClose = false;
         }
 
-        // ---------- Play actions (Unity Relay/Lobby matchmaking) ----------
+        // ---------- Play actions (Unity Lobby matchmaking with direct endpoints) ----------
         private void QueueFor1v1() => StartCoroutine(JoinMatch("OneVOne"));
         private void QueueFor2v2() => StartCoroutine(JoinMatch("TwoVTwo"));
 

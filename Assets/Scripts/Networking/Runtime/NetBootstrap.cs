@@ -1,6 +1,5 @@
 // Assets/Scripts/Networking/Runtime/NetBootstrap.cs
-// Unity 6 (6000.0.52f1) – Relay + Lobby host/client bootstrap with profile sanitization.
-// Requires: Assets/Scripts/Networking/Runtime/Relay/RelayUtils.cs
+// Unity 6 (6000.0.52f1) – Direct host/client bootstrap with profile sanitization.
 
 using System;
 using System.Linq;
@@ -13,11 +12,8 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
-using Unity.Services.Relay;
-using Unity.Services.Relay.Models;
 using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
-using Unity.Networking.Transport.Relay;
 
 namespace Game.Net
 {
@@ -176,7 +172,6 @@ namespace Game.Net
 
                 // CLI
                 bool wantHost = args.HasFlag("-mpsHost");
-                string cliJoinCode = args.GetStr("-mpsJoin", null);
                 bool allowClientAutoJoin = args.HasFlag("-autoJoin");
 
                 string serverTypeStr = args.GetStr("-serverType", "lobby").ToLowerInvariant();
