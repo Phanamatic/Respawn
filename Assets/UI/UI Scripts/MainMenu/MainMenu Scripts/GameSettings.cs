@@ -1,13 +1,24 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
+using DG.Tweening;
 
 namespace UI.Scripts
 {
     public class GameSettings : MonoBehaviour
     {
         [Header("Video Settings")]
-        [SerializeField] private Toggle fullscreenToggle;
-        [SerializeField] private Toggle vsyncToggle;
+        [SerializeField] private Slider fullscreenSlider;
+        [SerializeField] private Image fullscreenHandle; // Handle image for color change
+        [SerializeField] private TextMeshProUGUI fullscreenText; // Shows "Fullscreen" or "Windowed"
+        [SerializeField] private TextMeshProUGUI resolutionText; // Shows current resolution (e.g., "1920 x 1080")
+
+        [SerializeField] private Slider vsyncSlider;
+        [SerializeField] private Image vsyncHandle; // Handle image for color change
+
+        [Header("Slider Colors")]
+        [SerializeField] private Color sliderOffColor = new Color(0f, 0.58f, 0.59f); // #009398
+        [SerializeField] private Color sliderOnColor = new Color(0.42f, 0.89f, 0.93f); // #6AE4EC
 
         [Header("Sound Settings")]
         [SerializeField] private Slider masterVolumeSlider;
@@ -31,21 +42,42 @@ namespace UI.Scripts
         {
             SetupListeners();
             LoadSettings();
+            UpdateResolutionText();
+        }
+
+        private void Update()
+        {
+            // Continuously update resolution text in case screen resolution changes
+            UpdateResolutionText();
+        }
+
+        private void UpdateResolutionText()
+        {
+            if (resolutionText != null)
+            {
+                resolutionText.text = $"{Screen.width} x {Screen.height}";
+            }
         }
 
         private void LoadSettings()
         {
-            // Video
-            if (fullscreenToggle != null)
+            // Video - Fullscreen Slider
+            if (fullscreenSlider != null)
             {
-                fullscreenToggle.isOn = PlayerPrefs.GetInt(FULLSCREEN_KEY, Screen.fullScreen ? 1 : 0) == 1;
-                Screen.fullScreen = fullscreenToggle.isOn;
+                bool isFullscreen = PlayerPrefs.GetInt(FULLSCREEN_KEY, Screen.fullScreen ? 1 : 0) == 1;
+                fullscreenSlider.SetValueWithoutNotify(isFullscreen ? 1 : 0);
+                Screen.fullScreen = isFullscreen;
+                UpdateFullscreenText(isFullscreen);
+                UpdateHandleColor(fullscreenHandle, isFullscreen);
             }
 
-            if (vsyncToggle != null)
+            // Video - VSync Slider
+            if (vsyncSlider != null)
             {
-                vsyncToggle.isOn = PlayerPrefs.GetInt(VSYNC_KEY, QualitySettings.vSyncCount > 0 ? 1 : 0) == 1;
-                QualitySettings.vSyncCount = vsyncToggle.isOn ? 1 : 0;
+                bool vsyncEnabled = PlayerPrefs.GetInt(VSYNC_KEY, QualitySettings.vSyncCount > 0 ? 1 : 0) == 1;
+                vsyncSlider.SetValueWithoutNotify(vsyncEnabled ? 1 : 0);
+                QualitySettings.vSyncCount = vsyncEnabled ? 1 : 0;
+                UpdateHandleColor(vsyncHandle, vsyncEnabled);
             }
 
             // Sound - Load from AudioManager (set without triggering listeners)
@@ -78,12 +110,12 @@ namespace UI.Scripts
 
         private void SetupListeners()
         {
-            // Video
-            if (fullscreenToggle != null)
-                fullscreenToggle.onValueChanged.AddListener(SetFullscreen);
+            // Video - Sliders with smooth snapping
+            if (fullscreenSlider != null)
+                fullscreenSlider.onValueChanged.AddListener(OnFullscreenSliderChanged);
 
-            if (vsyncToggle != null)
-                vsyncToggle.onValueChanged.AddListener(SetVSync);
+            if (vsyncSlider != null)
+                vsyncSlider.onValueChanged.AddListener(OnVSyncSliderChanged);
 
             // Sound - Setup listeners first
             if (masterVolumeSlider != null)
@@ -103,12 +135,43 @@ namespace UI.Scripts
                 invertYAxisToggle.onValueChanged.AddListener(SetInvertY);
         }
 
-        // Video Methods
+        // Video Methods - Slider Handlers
+        private void OnFullscreenSliderChanged(float value)
+        {
+            // Smooth snap to 0 or 1
+            float targetValue = value >= 0.5f ? 1f : 0f;
+
+            if (fullscreenSlider != null)
+            {
+                fullscreenSlider.DOValue(targetValue, 0.15f).SetEase(Ease.OutCubic);
+            }
+
+            bool isFullscreen = targetValue == 1f;
+            SetFullscreen(isFullscreen);
+        }
+
+        private void OnVSyncSliderChanged(float value)
+        {
+            // Smooth snap to 0 or 1
+            float targetValue = value >= 0.5f ? 1f : 0f;
+
+            if (vsyncSlider != null)
+            {
+                vsyncSlider.DOValue(targetValue, 0.15f).SetEase(Ease.OutCubic);
+            }
+
+            bool enabled = targetValue == 1f;
+            SetVSync(enabled);
+        }
+
         public void SetFullscreen(bool isFullscreen)
         {
             Screen.fullScreen = isFullscreen;
             PlayerPrefs.SetInt(FULLSCREEN_KEY, isFullscreen ? 1 : 0);
             PlayerPrefs.Save();
+
+            UpdateFullscreenText(isFullscreen);
+            UpdateHandleColor(fullscreenHandle, isFullscreen);
         }
 
         public void SetVSync(bool enabled)
@@ -116,6 +179,25 @@ namespace UI.Scripts
             QualitySettings.vSyncCount = enabled ? 1 : 0;
             PlayerPrefs.SetInt(VSYNC_KEY, enabled ? 1 : 0);
             PlayerPrefs.Save();
+
+            UpdateHandleColor(vsyncHandle, enabled);
+        }
+
+        private void UpdateFullscreenText(bool isFullscreen)
+        {
+            if (fullscreenText != null)
+            {
+                fullscreenText.text = isFullscreen ? "Fullscreen" : "Windowed";
+            }
+        }
+
+        private void UpdateHandleColor(Image handleImage, bool isOn)
+        {
+            if (handleImage != null)
+            {
+                Color targetColor = isOn ? sliderOnColor : sliderOffColor;
+                handleImage.DOColor(targetColor, 0.2f).SetEase(Ease.OutCubic);
+            }
         }
 
         // Sound Methods
@@ -176,11 +258,11 @@ namespace UI.Scripts
         private void OnDestroy()
         {
             // Remove listeners
-            if (fullscreenToggle != null)
-                fullscreenToggle.onValueChanged.RemoveListener(SetFullscreen);
+            if (fullscreenSlider != null)
+                fullscreenSlider.onValueChanged.RemoveListener(OnFullscreenSliderChanged);
 
-            if (vsyncToggle != null)
-                vsyncToggle.onValueChanged.RemoveListener(SetVSync);
+            if (vsyncSlider != null)
+                vsyncSlider.onValueChanged.RemoveListener(OnVSyncSliderChanged);
 
             if (masterVolumeSlider != null)
                 masterVolumeSlider.onValueChanged.RemoveListener(SetMasterVolume);
