@@ -4,6 +4,14 @@ using DG.Tweening;
 
 namespace UI.Scripts
 {
+    public enum PanelSlideDirection
+    {
+        Left,
+        Right,
+        Top,
+        Bottom
+    }
+
     public class SlidingPanel : MonoBehaviour
     {
         [Header("Panel Settings")]
@@ -14,14 +22,20 @@ namespace UI.Scripts
         [SerializeField] private RectTransform linkedPanel;
 
         [Header("Animation Settings")]
-        [SerializeField] private float slideDownDuration = 0.5f;
-        [SerializeField] private float slideUpDuration = 0.4f;
-        [SerializeField] private Ease slideDownEase = Ease.OutFlash;
-        [SerializeField] private Ease slideUpEase = Ease.InQuad;
+        [SerializeField] private float scanInDuration = 0.3f;
+        [SerializeField] private float scanOutDuration = 0.3f;
+        [SerializeField] private Ease scanInEase = Ease.OutCubic;
+        [SerializeField] private Ease scanOutEase = Ease.InCubic;
 
-        private Vector2 hiddenPosition;
+        [Header("Slide Direction")]
+        [SerializeField] private PanelSlideDirection slideInDirection = PanelSlideDirection.Left;
+        [SerializeField] private PanelSlideDirection slideOutDirection = PanelSlideDirection.Right;
+
+        private Vector2 hiddenInPosition;
+        private Vector2 hiddenOutPosition;
         private Vector2 visiblePosition;
-        private Vector2 linkedHiddenPosition;
+        private Vector2 linkedHiddenInPosition;
+        private Vector2 linkedHiddenOutPosition;
         private Vector2 linkedVisiblePosition;
         private bool isOpen = false;
         private Sequence currentSequence;
@@ -33,26 +47,45 @@ namespace UI.Scripts
                 panelRectTransform = GetComponent<RectTransform>();
             }
 
-            // Calculate positions for main panel
+            // Calculate positions for main panel based on slide directions
             visiblePosition = panelRectTransform.anchoredPosition;
-            hiddenPosition = new Vector2(visiblePosition.x, Screen.height + panelRectTransform.rect.height);
+            hiddenInPosition = CalculateHiddenPosition(visiblePosition, panelRectTransform.rect, slideInDirection);
+            hiddenOutPosition = CalculateHiddenPosition(visiblePosition, panelRectTransform.rect, slideOutDirection);
 
             // Calculate positions for linked panel
             if (linkedPanel != null)
             {
                 linkedVisiblePosition = linkedPanel.anchoredPosition;
-                linkedHiddenPosition = new Vector2(linkedVisiblePosition.x, Screen.height + linkedPanel.rect.height);
-                linkedPanel.anchoredPosition = linkedHiddenPosition;
+                linkedHiddenInPosition = CalculateHiddenPosition(linkedVisiblePosition, linkedPanel.rect, slideInDirection);
+                linkedHiddenOutPosition = CalculateHiddenPosition(linkedVisiblePosition, linkedPanel.rect, slideOutDirection);
+                linkedPanel.anchoredPosition = linkedHiddenInPosition;
             }
 
             // Start hidden
-            panelRectTransform.anchoredPosition = hiddenPosition;
+            panelRectTransform.anchoredPosition = hiddenInPosition;
             gameObject.SetActive(false);
 
             // Setup close button
             if (closeButton != null)
             {
                 closeButton.onClick.AddListener(ClosePanel);
+            }
+        }
+
+        private Vector2 CalculateHiddenPosition(Vector2 visiblePos, Rect rect, PanelSlideDirection direction)
+        {
+            switch (direction)
+            {
+                case PanelSlideDirection.Left:
+                    return new Vector2(-Screen.width - rect.width, visiblePos.y);
+                case PanelSlideDirection.Right:
+                    return new Vector2(Screen.width + rect.width, visiblePos.y);
+                case PanelSlideDirection.Top:
+                    return new Vector2(visiblePos.x, Screen.height + rect.height);
+                case PanelSlideDirection.Bottom:
+                    return new Vector2(visiblePos.x, -Screen.height - rect.height);
+                default:
+                    return visiblePos;
             }
         }
 
@@ -66,6 +99,7 @@ namespace UI.Scripts
 
         private void CheckClickOutside()
         {
+            // Use RectTransform bounds to check if click is outside panel
             Vector2 mousePosition = Input.mousePosition;
             if (!RectTransformUtility.RectangleContainsScreenPoint(panelRectTransform, mousePosition, null))
             {
@@ -80,16 +114,16 @@ namespace UI.Scripts
             gameObject.SetActive(true);
             isOpen = true;
 
-            // Animate main panel sliding down
+            // Slide in based on configured direction
             KillCurrentAnimation();
-            panelRectTransform.anchoredPosition = hiddenPosition;
-            panelRectTransform.DOAnchorPos(visiblePosition, slideDownDuration).SetEase(slideDownEase);
+            panelRectTransform.anchoredPosition = hiddenInPosition;
+            panelRectTransform.DOAnchorPos(visiblePosition, scanInDuration).SetEase(scanInEase);
 
-            // Animate linked panel sliding down
+            // Animate linked panel sliding in
             if (linkedPanel != null)
             {
-                linkedPanel.anchoredPosition = linkedHiddenPosition;
-                linkedPanel.DOAnchorPos(linkedVisiblePosition, slideDownDuration).SetEase(slideDownEase);
+                linkedPanel.anchoredPosition = linkedHiddenInPosition;
+                linkedPanel.DOAnchorPos(linkedVisiblePosition, scanInDuration).SetEase(scanInEase);
             }
         }
 
@@ -99,16 +133,16 @@ namespace UI.Scripts
 
             isOpen = false;
 
-            // Animate main panel sliding up
+            // Slide out based on configured direction
             KillCurrentAnimation();
             currentSequence = DOTween.Sequence();
-            currentSequence.Append(panelRectTransform.DOAnchorPos(hiddenPosition, slideUpDuration).SetEase(slideUpEase));
+            currentSequence.Append(panelRectTransform.DOAnchorPos(hiddenOutPosition, scanOutDuration).SetEase(scanOutEase));
             currentSequence.OnComplete(() => gameObject.SetActive(false));
 
-            // Animate linked panel sliding up
+            // Animate linked panel sliding out
             if (linkedPanel != null)
             {
-                linkedPanel.DOAnchorPos(linkedHiddenPosition, slideUpDuration).SetEase(slideUpEase);
+                linkedPanel.DOAnchorPos(linkedHiddenOutPosition, scanOutDuration).SetEase(scanOutEase);
             }
         }
 
