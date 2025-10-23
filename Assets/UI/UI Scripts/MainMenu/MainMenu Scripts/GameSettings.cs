@@ -3,6 +3,7 @@ using UnityEngine.UI;
 using TMPro;
 using DG.Tweening;
 using System.Collections;
+using Game.Services;
 
 namespace UI.Scripts
 {
@@ -33,45 +34,24 @@ namespace UI.Scripts
         [SerializeField] private Slider mouseSensitivitySlider;
         [SerializeField] private Image mouseSensitivityHandle;
 
-        [Header("Keybinds Panel Transition")]
-        [SerializeField] private Button editKeybindsButton;
-        [SerializeField] private Button backFromKeybindsButton;
-        [SerializeField] private RectTransform settingsPanel; // The main settings panel
-        [SerializeField] private RectTransform keybindsPanel; // The keybinds edit panel
-        [SerializeField] private float panelSlideDuration = 0.3f;
-        [SerializeField] private Ease slideInEase = Ease.OutCubic;
-        [SerializeField] private Ease slideOutEase = Ease.InCubic;
-
         [Header("Reset Settings")]
         [SerializeField] private Button resetSettingsButton;
         [SerializeField] private Image resetRadialFill; // Radial fill image for hold indicator
         [SerializeField] private TextMeshProUGUI resetButtonText;
         [SerializeField] private float resetHoldDuration = 3f;
+        [SerializeField] private float freezeDuration = 0.1f; // Freeze effect duration
+        [SerializeField] private float successMessageDuration = 2f; // How long to show success message
 
         private bool isHoldingReset = false;
         private float resetHoldTime = 0f;
         private Coroutine resetCoroutine;
-
-        private Vector2 settingsVisiblePos;
-        private Vector2 settingsHiddenLeftPos;
-        private Vector2 keybindsVisiblePos;
-        private Vector2 keybindsHiddenRightPos;
-        private bool keybindsPanelIsOpen = false;
-
-        // PlayerPrefs keys
-        private const string FULLSCREEN_KEY = "Fullscreen";
-        private const string VSYNC_KEY = "VSync";
-        private const string MASTER_VOLUME_KEY = "MasterVolume";
-        private const string MUSIC_VOLUME_KEY = "MusicVolume";
-        private const string SFX_VOLUME_KEY = "SFXVolume";
-        private const string MOUSE_SENSITIVITY_KEY = "MouseSensitivity";
+        private bool isResetting = false; // Prevents interruption once reset starts
 
         private void Start()
         {
             SetupListeners();
             LoadSettings();
             UpdateResolutionText();
-            SetupKeybindsButtons();
             SetupResetButton();
         }
 
@@ -91,64 +71,70 @@ namespace UI.Scripts
 
         private void LoadSettings()
         {
+            // Load settings from JSON file
+            var settings = SettingsSaveManager.LoadSettings();
+
             // Video - Fullscreen Slider
             if (fullscreenSlider != null)
             {
-                bool isFullscreen = PlayerPrefs.GetInt(FULLSCREEN_KEY, Screen.fullScreen ? 1 : 0) == 1;
-                fullscreenSlider.SetValueWithoutNotify(isFullscreen ? 1 : 0);
-                Screen.fullScreen = isFullscreen;
-                UpdateFullscreenText(isFullscreen);
-                UpdateHandleColor(fullscreenHandle, isFullscreen);
+                fullscreenSlider.SetValueWithoutNotify(settings.fullscreen ? 1 : 0);
+                Screen.fullScreen = settings.fullscreen;
+                UpdateFullscreenText(settings.fullscreen);
+                UpdateHandleColor(fullscreenHandle, settings.fullscreen);
             }
 
             // Video - VSync Slider
             if (vsyncSlider != null)
             {
-                bool vsyncEnabled = PlayerPrefs.GetInt(VSYNC_KEY, QualitySettings.vSyncCount > 0 ? 1 : 0) == 1;
-                vsyncSlider.SetValueWithoutNotify(vsyncEnabled ? 1 : 0);
-                QualitySettings.vSyncCount = vsyncEnabled ? 1 : 0;
-                UpdateHandleColor(vsyncHandle, vsyncEnabled);
+                vsyncSlider.SetValueWithoutNotify(settings.vsync ? 1 : 0);
+                QualitySettings.vSyncCount = settings.vsync ? 1 : 0;
+                UpdateHandleColor(vsyncHandle, settings.vsync);
             }
 
-            // Sound - Load from AudioManager (set without triggering listeners)
+            // Sound - Set AudioManager volumes from saved settings
             if (masterVolumeSlider != null)
             {
-                float masterVolume = AudioManager.Instance.MasterVolume;
-                masterVolumeSlider.SetValueWithoutNotify(masterVolume);
-                UpdateSliderHandleColor(masterVolumeHandle, masterVolume);
+                AudioManager.Instance.SetMasterVolume(settings.masterVolume);
+                masterVolumeSlider.SetValueWithoutNotify(settings.masterVolume);
+                UpdateSliderHandleColor(masterVolumeHandle, settings.masterVolume);
             }
 
             if (musicVolumeSlider != null)
             {
-                float musicVolume = AudioManager.Instance.MusicVolume;
-                musicVolumeSlider.SetValueWithoutNotify(musicVolume);
-                UpdateSliderHandleColor(musicVolumeHandle, musicVolume);
+                AudioManager.Instance.SetMusicVolume(settings.musicVolume);
+                musicVolumeSlider.SetValueWithoutNotify(settings.musicVolume);
+                UpdateSliderHandleColor(musicVolumeHandle, settings.musicVolume);
             }
 
             if (sfxVolumeSlider != null)
             {
-                float sfxVolume = AudioManager.Instance.SFXVolume;
-                sfxVolumeSlider.SetValueWithoutNotify(sfxVolume);
-                UpdateSliderHandleColor(sfxVolumeHandle, sfxVolume);
+                AudioManager.Instance.SetSFXVolume(settings.sfxVolume);
+                sfxVolumeSlider.SetValueWithoutNotify(settings.sfxVolume);
+                UpdateSliderHandleColor(sfxVolumeHandle, settings.sfxVolume);
             }
 
             // Accessibility
             if (mouseSensitivitySlider != null)
             {
-                float sensitivity = PlayerPrefs.GetFloat(MOUSE_SENSITIVITY_KEY, 1f);
-                mouseSensitivitySlider.value = sensitivity;
-                UpdateSliderHandleColor(mouseSensitivityHandle, sensitivity);
+                mouseSensitivitySlider.SetValueWithoutNotify(settings.mouseSensitivity);
+                UpdateSliderHandleColor(mouseSensitivityHandle, settings.mouseSensitivity);
             }
         }
 
         private void SetupListeners()
         {
-            // Video - Sliders with smooth snapping
+            // Video - Sliders with smooth snapping and click-to-toggle
             if (fullscreenSlider != null)
+            {
                 fullscreenSlider.onValueChanged.AddListener(OnFullscreenSliderChanged);
+                AddClickToggleToSlider(fullscreenSlider);
+            }
 
             if (vsyncSlider != null)
+            {
                 vsyncSlider.onValueChanged.AddListener(OnVSyncSliderChanged);
+                AddClickToggleToSlider(vsyncSlider);
+            }
 
             // Sound - Setup listeners with handle color updates
             if (masterVolumeSlider != null)
@@ -213,20 +199,16 @@ namespace UI.Scripts
         public void SetFullscreen(bool isFullscreen)
         {
             Screen.fullScreen = isFullscreen;
-            PlayerPrefs.SetInt(FULLSCREEN_KEY, isFullscreen ? 1 : 0);
-            PlayerPrefs.Save();
-
             UpdateFullscreenText(isFullscreen);
             UpdateHandleColor(fullscreenHandle, isFullscreen);
+            SaveCurrentSettings();
         }
 
         public void SetVSync(bool enabled)
         {
             QualitySettings.vSyncCount = enabled ? 1 : 0;
-            PlayerPrefs.SetInt(VSYNC_KEY, enabled ? 1 : 0);
-            PlayerPrefs.Save();
-
             UpdateHandleColor(vsyncHandle, enabled);
+            SaveCurrentSettings();
         }
 
         private void UpdateFullscreenText(bool isFullscreen)
@@ -260,129 +242,96 @@ namespace UI.Scripts
         public void SetMasterVolume(float volume)
         {
             AudioManager.Instance.SetMasterVolume(volume);
+            SaveCurrentSettings();
         }
 
         public void SetMusicVolume(float volume)
         {
             AudioManager.Instance.SetMusicVolume(volume);
+            SaveCurrentSettings();
         }
 
         public void SetSFXVolume(float volume)
         {
             AudioManager.Instance.SetSFXVolume(volume);
+            SaveCurrentSettings();
         }
 
         // Accessibility Methods
         public void SetMouseSensitivity(float sensitivity)
         {
-            PlayerPrefs.SetFloat(MOUSE_SENSITIVITY_KEY, sensitivity);
-            PlayerPrefs.Save();
+            SaveCurrentSettings();
+        }
+
+        // Helper to save all current settings to JSON
+        private void SaveCurrentSettings()
+        {
+            var settings = new SettingsSaveManager.PlayerSettings
+            {
+                fullscreen = Screen.fullScreen,
+                vsync = QualitySettings.vSyncCount > 0,
+                masterVolume = AudioManager.Instance.MasterVolume,
+                musicVolume = AudioManager.Instance.MusicVolume,
+                sfxVolume = AudioManager.Instance.SFXVolume,
+                mouseSensitivity = mouseSensitivitySlider != null ? mouseSensitivitySlider.value : 1f
+            };
+
+            SettingsSaveManager.SaveSettings(settings);
         }
 
         // Public getters for other scripts to use
         public static float GetMasterVolume()
         {
-            return AudioManager.Instance.MasterVolume;
+            return AudioManager.Instance != null ? AudioManager.Instance.MasterVolume : SettingsSaveManager.LoadSettings().masterVolume;
         }
 
         public static float GetMusicVolume()
         {
-            return AudioManager.Instance.MusicVolume;
+            return AudioManager.Instance != null ? AudioManager.Instance.MusicVolume : SettingsSaveManager.LoadSettings().musicVolume;
         }
 
         public static float GetSFXVolume()
         {
-            return AudioManager.Instance.SFXVolume;
+            return AudioManager.Instance != null ? AudioManager.Instance.SFXVolume : SettingsSaveManager.LoadSettings().sfxVolume;
         }
 
         public static float GetMouseSensitivity()
         {
-            return PlayerPrefs.GetFloat(MOUSE_SENSITIVITY_KEY, 1f);
+            return SettingsSaveManager.LoadSettings().mouseSensitivity;
         }
 
-        // ===== KEYBINDS PANEL TRANSITION =====
-        private void SetupKeybindsButtons()
+        // ===== CLICK-TO-TOGGLE FOR SLIDERS =====
+        private void AddClickToggleToSlider(Slider slider)
         {
-            if (editKeybindsButton != null)
+            // Toggle logic that will be shared
+            UnityEngine.Events.UnityAction toggleAction = () =>
             {
-                editKeybindsButton.onClick.AddListener(OpenKeybindsPanel);
+                // Toggle between 0 and 1
+                float newValue = slider.value >= 0.5f ? 0f : 1f;
+                slider.value = newValue;
+            };
+
+            // Add a button component to make the entire slider background clickable
+            var sliderButton = slider.gameObject.GetComponent<Button>();
+            if (sliderButton == null)
+            {
+                sliderButton = slider.gameObject.AddComponent<Button>();
             }
+            sliderButton.transition = UnityEngine.UI.Selectable.Transition.None;
+            sliderButton.onClick.RemoveAllListeners();
+            sliderButton.onClick.AddListener(toggleAction);
 
-            if (backFromKeybindsButton != null)
+            // Find and add button to the handle so it's also clickable
+            if (slider.handleRect != null)
             {
-                backFromKeybindsButton.onClick.AddListener(CloseKeybindsPanel);
-            }
-
-            // Calculate positions based on SlidingPanel logic
-            if (settingsPanel != null)
-            {
-                // Capture the visible position (assuming settings panel starts visible)
-                settingsVisiblePos = settingsPanel.anchoredPosition;
-                // Hidden position to the left
-                settingsHiddenLeftPos = new Vector2(-Screen.width - settingsPanel.rect.width, settingsVisiblePos.y);
-            }
-
-            if (keybindsPanel != null)
-            {
-                // Keybinds should have the SAME visible position as settings (they occupy the same space)
-                keybindsVisiblePos = settingsPanel != null ? settingsPanel.anchoredPosition : keybindsPanel.anchoredPosition;
-                // Hidden position to the right
-                keybindsHiddenRightPos = new Vector2(Screen.width + keybindsPanel.rect.width, keybindsVisiblePos.y);
-
-                // Start keybinds panel off-screen to the right
-                keybindsPanel.anchoredPosition = keybindsHiddenRightPos;
-                keybindsPanel.gameObject.SetActive(true); // Keep active but off-screen
-            }
-        }
-
-        public void OpenKeybindsPanel()
-        {
-            // Prevent opening if already open
-            if (keybindsPanelIsOpen) return;
-
-            keybindsPanelIsOpen = true;
-
-            // Kill any active animations
-            if (settingsPanel != null) settingsPanel.DOKill();
-            if (keybindsPanel != null) keybindsPanel.DOKill();
-
-            // Settings panel slides OUT to the left (using slideOutEase)
-            if (settingsPanel != null)
-            {
-                settingsPanel.DOAnchorPos(settingsHiddenLeftPos, panelSlideDuration).SetEase(slideOutEase);
-            }
-
-            // Keybinds panel slides IN from the right (using slideInEase)
-            if (keybindsPanel != null)
-            {
-                keybindsPanel.gameObject.SetActive(true);
-                keybindsPanel.anchoredPosition = keybindsHiddenRightPos; // Start off-screen right
-                keybindsPanel.DOAnchorPos(keybindsVisiblePos, panelSlideDuration).SetEase(slideInEase);
-            }
-        }
-
-        public void CloseKeybindsPanel()
-        {
-            // Prevent closing if not open
-            if (!keybindsPanelIsOpen) return;
-
-            keybindsPanelIsOpen = false;
-
-            // Kill any active animations
-            if (settingsPanel != null) settingsPanel.DOKill();
-            if (keybindsPanel != null) keybindsPanel.DOKill();
-
-            // Keybinds panel slides OUT to the right (using slideOutEase)
-            if (keybindsPanel != null)
-            {
-                keybindsPanel.DOAnchorPos(keybindsHiddenRightPos, panelSlideDuration).SetEase(slideOutEase);
-            }
-
-            // Settings panel slides IN from the left (using slideInEase)
-            if (settingsPanel != null)
-            {
-                settingsPanel.anchoredPosition = settingsHiddenLeftPos; // Start off-screen left
-                settingsPanel.DOAnchorPos(settingsVisiblePos, panelSlideDuration).SetEase(slideInEase);
+                var handleButton = slider.handleRect.GetComponent<Button>();
+                if (handleButton == null)
+                {
+                    handleButton = slider.handleRect.gameObject.AddComponent<Button>();
+                }
+                handleButton.transition = UnityEngine.UI.Selectable.Transition.None;
+                handleButton.onClick.RemoveAllListeners();
+                handleButton.onClick.AddListener(toggleAction);
             }
         }
 
@@ -391,10 +340,8 @@ namespace UI.Scripts
         {
             if (resetRadialFill != null)
             {
+                // Only reset fill amount, let Unity Inspector handle fill type/method/direction
                 resetRadialFill.fillAmount = 0f;
-                resetRadialFill.type = Image.Type.Filled;
-                resetRadialFill.fillMethod = Image.FillMethod.Radial360;
-                resetRadialFill.fillClockwise = true;
             }
 
             if (resetSettingsButton != null)
@@ -406,28 +353,55 @@ namespace UI.Scripts
                     eventTrigger = resetSettingsButton.gameObject.AddComponent<UnityEngine.EventSystems.EventTrigger>();
                 }
 
+                // Clear existing triggers to avoid duplicates
+                eventTrigger.triggers.Clear();
+
                 // Pointer Down - Start holding
                 var pointerDown = new UnityEngine.EventSystems.EventTrigger.Entry();
                 pointerDown.eventID = UnityEngine.EventSystems.EventTriggerType.PointerDown;
-                pointerDown.callback.AddListener((data) => { StartResetHold(); });
+                pointerDown.callback.AddListener((data) => {
+                    Debug.Log("Reset button PRESSED - starting hold");
+                    StartResetHold();
+                });
                 eventTrigger.triggers.Add(pointerDown);
 
                 // Pointer Up - Stop holding
                 var pointerUp = new UnityEngine.EventSystems.EventTrigger.Entry();
                 pointerUp.eventID = UnityEngine.EventSystems.EventTriggerType.PointerUp;
-                pointerUp.callback.AddListener((data) => { StopResetHold(); });
+                pointerUp.callback.AddListener((data) => {
+                    Debug.Log("Reset button RELEASED - stopping hold");
+                    StopResetHold();
+                });
                 eventTrigger.triggers.Add(pointerUp);
 
                 // Pointer Exit - Stop holding (if they drag off)
                 var pointerExit = new UnityEngine.EventSystems.EventTrigger.Entry();
                 pointerExit.eventID = UnityEngine.EventSystems.EventTriggerType.PointerExit;
-                pointerExit.callback.AddListener((data) => { StopResetHold(); });
+                pointerExit.callback.AddListener((data) => {
+                    Debug.Log("Reset button EXITED - stopping hold");
+                    StopResetHold();
+                });
                 eventTrigger.triggers.Add(pointerExit);
+            }
+            else
+            {
+                Debug.LogError("GameSettings: Reset Settings Button is not assigned!");
+            }
+
+            if (resetRadialFill == null)
+            {
+                Debug.LogError("GameSettings: Reset Radial Fill Image is not assigned!");
+            }
+
+            if (resetButtonText == null)
+            {
+                Debug.LogError("GameSettings: Reset Button Text is not assigned!");
             }
         }
 
         private void StartResetHold()
         {
+            Debug.Log("StartResetHold called");
             if (resetCoroutine != null)
             {
                 StopCoroutine(resetCoroutine);
@@ -437,6 +411,15 @@ namespace UI.Scripts
 
         private void StopResetHold()
         {
+            Debug.Log("StopResetHold called");
+
+            // Don't interrupt if we're already resetting!
+            if (isResetting)
+            {
+                Debug.Log("Reset in progress - cannot interrupt!");
+                return;
+            }
+
             if (resetCoroutine != null)
             {
                 StopCoroutine(resetCoroutine);
@@ -455,9 +438,11 @@ namespace UI.Scripts
 
         private IEnumerator ResetHoldCoroutine()
         {
+            Debug.Log("ResetHoldCoroutine started");
             isHoldingReset = true;
             resetHoldTime = 0f;
 
+            // This part CAN be cancelled by releasing the button
             while (resetHoldTime < resetHoldDuration)
             {
                 resetHoldTime += Time.deltaTime;
@@ -471,37 +456,39 @@ namespace UI.Scripts
                 yield return null;
             }
 
-            // Hold complete - reset settings
+            // Hold complete - NOW lock it and start the actual reset (cannot be cancelled)
+            Debug.Log("Hold complete! Starting reset...");
+            isResetting = true; // Lock BEFORE starting reset
             yield return StartCoroutine(ResetAllSettings());
         }
 
         private IEnumerator ResetAllSettings()
         {
+            Debug.Log("ResetAllSettings started");
+            // isResetting is already set to true in ResetHoldCoroutine - no need to set it again
+
             // Blink white effect
             if (resetRadialFill != null)
             {
                 Color originalColor = resetRadialFill.color;
                 resetRadialFill.DOColor(Color.white, 0.1f).SetLoops(4, LoopType.Yoyo);
+                Debug.Log("Blink effect started");
             }
 
-            yield return new WaitForSeconds(0.4f);
+            yield return new WaitForSecondsRealtime(0.4f);
 
-            // Change text
-            if (resetButtonText != null)
-            {
-                resetButtonText.text = "All Settings Reset";
-            }
-
-            // Freeze effect (Time.timeScale)
+            // Freeze effect (customizable duration)
+            Debug.Log($"Freezing for {freezeDuration} seconds");
             Time.timeScale = 0f;
-            yield return new WaitForSecondsRealtime(1f);
-            Time.timeScale = 1f;
+            yield return new WaitForSecondsRealtime(freezeDuration);
+            Time.timeScale = 1f; // ALWAYS unfreeze
+            Debug.Log("Unfrozen");
 
-            // Actually reset all settings
-            PlayerPrefs.DeleteAll();
-            PlayerPrefs.Save();
+            // Actually reset all settings - delete JSON file and load defaults
+            Debug.Log("Resetting settings to defaults");
+            SettingsSaveManager.ResetSettings();
 
-            // Reload settings
+            // Reload settings from the newly created defaults
             LoadSettings();
 
             // Reset radial
@@ -510,15 +497,32 @@ namespace UI.Scripts
                 resetRadialFill.fillAmount = 0f;
             }
 
-            // Reset text after delay
-            yield return new WaitForSeconds(2f);
+            // Change text to success message
+            if (resetButtonText != null)
+            {
+                resetButtonText.text = "All Settings Reset";
+                Debug.Log("Text changed to: All Settings Reset");
+            }
+
+            // Show success message for customizable duration
+            Debug.Log($"Showing success message for {successMessageDuration} seconds");
+            yield return new WaitForSecondsRealtime(successMessageDuration);
+
+            // Reset text back to default (ready to be pressed again)
             if (resetButtonText != null)
             {
                 resetButtonText.text = "Reset Settings";
+                Debug.Log("Text changed back to: Reset Settings");
             }
 
+            // Reset flags to allow reset again
             isHoldingReset = false;
             resetHoldTime = 0f;
+            isResetting = false; // Unlock - reset is complete
+            Debug.Log("Reset complete - button ready for next use");
+
+            // Extra safety: ensure time is unfrozen
+            Time.timeScale = 1f;
         }
 
         private void OnDestroy()
@@ -530,12 +534,6 @@ namespace UI.Scripts
             if (vsyncSlider != null)
                 vsyncSlider.onValueChanged.RemoveListener(OnVSyncSliderChanged);
 
-            if (editKeybindsButton != null)
-                editKeybindsButton.onClick.RemoveListener(OpenKeybindsPanel);
-
-            if (backFromKeybindsButton != null)
-                backFromKeybindsButton.onClick.RemoveListener(CloseKeybindsPanel);
-
             // Stop any running reset coroutine
             if (resetCoroutine != null)
             {
@@ -544,13 +542,6 @@ namespace UI.Scripts
 
             // Ensure time scale is reset
             Time.timeScale = 1f;
-
-            // Kill any active panel animations
-            if (settingsPanel != null)
-                settingsPanel.DOKill();
-
-            if (keybindsPanel != null)
-                keybindsPanel.DOKill();
 
             // Note: Sound and accessibility sliders use lambda listeners,
             // they're automatically cleaned up by Unity
