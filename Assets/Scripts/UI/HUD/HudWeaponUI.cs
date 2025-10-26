@@ -17,12 +17,20 @@ namespace Game.UI.HUD
 
         void Start()
         {
+            if (reloadFill) reloadFill.enabled = false;
+            if (ammoText) { ammoText.enabled = false; ammoText.text = ""; }
+            if (weaponName) { weaponName.enabled = false; weaponName.text = ""; }
             FindController();
         }
 
         void Update()
         {
             if (!_wp) { FindController(); return; }
+
+            // Show only when a weapon is actually equipped
+            bool equipped = _wp.magazineAmmo.Value > 0 || _wp.reserveAmmo.Value > 0;
+            if (weaponName) weaponName.enabled = equipped;
+            if (ammoText)   ammoText.enabled   = equipped;
 
             if (reloadFill)
             {
@@ -35,6 +43,7 @@ namespace Game.UI.HUD
                 ammoText.text = $"{_wp.magazineAmmo.Value}/{_wp.reserveAmmo.Value}";
             }
         }
+// Hides equip texts unless equipped; reload image only when reloading.
 
         void FindController()
         {
