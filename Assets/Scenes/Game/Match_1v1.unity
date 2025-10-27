@@ -44277,6 +44277,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2839d38b03eea6f40bd29e604f960bdd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  playModeOnly: 1
+  allowParentRendererLookup: 0
+  minOccluderAlpha: 0.3
+  useCircularCutout: 1
+  cutoutRadius: 0.12
+  cutoutFeather: 0.06
+  cutoutAlpha: 0.3
   target: {fileID: 0}
   targetRenderersOverride: []
   occluderLayers:
@@ -81779,6 +81786,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 1963756502144431419, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: d2836604d0fa11341aa1115b2fc568d9, type: 2}
     - target: {fileID: 1974221869586649074, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
       value: 

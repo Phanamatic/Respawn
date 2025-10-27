@@ -41,7 +41,30 @@ public sealed class IsometricCamera : MonoBehaviour
     void LateUpdate()
     {
         if (!follow) return;
-        if (losOccluder && losOccluder.target != follow) losOccluder.target = follow;
+
+        if (losOccluder)
+        {
+            if (losOccluder.target != follow) losOccluder.target = follow;
+
+            // Keep override list synced once after follow is set.
+            if (losOccluder.targetRenderersOverride == null || losOccluder.targetRenderersOverride.Length == 0)
+            {
+                var pn = follow.GetComponent<Game.Net.PlayerNetwork>();
+                if (pn)
+                {
+                    var span = pn.GetModelRenderersSpan();
+                    var arr = new Renderer[span.Length];
+                    for (int i = 0; i < span.Length; i++) arr[i] = span[i];
+                    losOccluder.targetRenderersOverride = arr;
+                }
+                else
+                {
+                    losOccluder.targetRenderersOverride = follow.GetComponentsInChildren<Renderer>(true);
+                }
+            }
+        }
+
+        // Auto-provisions target renderers if prefab left blank.
 
         var yawQ = Quaternion.Euler(0f, yaw, 0f);
         var pitchQ = Quaternion.Euler(pitch, 0f, 0f);

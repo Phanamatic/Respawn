@@ -268,7 +268,10 @@ namespace Game.Net
 
                         SessionContext.SetSession(lobby.Id, "");
                         SessionContext.SetLobby(lobby);
+                        Debug.Log("[Bootstrap] FixedUpdate=" + Time.fixedDeltaTime + " vSyncCount=" + QualitySettings.vSyncCount);
                         Debug.Log($"[DirectNet] Hosting {type}. LobbyId={lobby.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort} Region={region}");
+
+                        // Adds [Bootstrap] tag and reports timing.
 
                         StartCoroutine(LobbyHeartbeat(lobby.Id));
                     }

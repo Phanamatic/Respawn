@@ -13,6 +13,28 @@ using UnityEngine.Rendering;
 [RequireComponent(typeof(Camera))]
 public sealed class LineOfSightOccluder : MonoBehaviour
 {
+    [Tooltip("Do not run outside Play Mode. Restores all fades when disabled.")]
+    public bool playModeOnly = true;
+
+    [Tooltip("If true, try GetComponentInParent<Renderer>(). If false, require Renderer on the hit collider GO.")]
+    public bool allowParentRendererLookup = false;
+
+    [Tooltip("Do not let occluders go below this alpha.")]
+    [Range(0.1f, 1f)] public float minOccluderAlpha = 0.30f;
+
+    [Header("Mode")]
+    public bool useCircularCutout = true;     // enable per-pixel circle instead of whole-mesh fade
+
+    [Header("Cutout (viewport units 0..1)")]
+    [Range(0.02f, 0.5f)] public float cutoutRadius = 0.12f;
+    [Range(0.005f, 0.3f)] public float cutoutFeather = 0.06f; // soft edge
+    [Range(0.1f, 1f)] public float cutoutAlpha = 0.30f;       // 0.30 = ~70% transparent inside circle
+
+    // Shader property ids
+    static readonly int _LosCenterId = Shader.PropertyToID("_LosCenter");
+    static readonly int _LosRadiusId = Shader.PropertyToID("_LosRadius");
+    static readonly int _LosFeatherId = Shader.PropertyToID("_LosFeather");
+    static readonly int _CutAlphaId  = Shader.PropertyToID("_CutAlpha");
 [Header("Targets")]
 public Transform target; // usually the local Player root
 [Tooltip("If set, these renderers will be faded when occluded or too close.")]
@@ -41,6 +63,9 @@ public bool debugDraw;
 
 Camera _cam;
 
+    // Pooled raycast buffer to avoid per-frame allocations.
+    RaycastHit[] _hitsArr;
+
 struct Faded
 {
     public Renderer r;
@@ -58,18 +83,61 @@ struct Faded
 
 readonly Dictionary<Renderer, Faded> _current = new Dictionary<Renderer, Faded>(64);
 readonly HashSet<Renderer> _thisFrame = new HashSet<Renderer>();
-readonly List<RaycastHit> _hits = new List<RaycastHit>(16);
 
 void Awake()
 {
     _cam = GetComponent<Camera>();
+    if (_hitsArr == null || _hitsArr.Length != Mathf.Max(8, maxHits))
+        _hitsArr = new RaycastHit[Mathf.Max(8, maxHits)];
+
+    Debug.Log($"[LOS] mask={occluderLayers.value} probe={probeRadius} maxHits={maxHits}");
 }
+
+void OnDisable() => _RestoreAllToOpaque();
+void OnDestroy() => _RestoreAllToOpaque();
+
+void _RestoreAllToOpaque()
+{
+    if (_current.Count == 0) return;
+    var tmp = new List<Renderer>(_current.Keys);
+    for (int i = 0; i < tmp.Count; i++)
+    {
+        var r = tmp[i];
+        if (!_current.TryGetValue(r, out var f)) continue;
+
+        if (useCircularCutout)
+        {
+            if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
+            f.mpb.SetFloat(_LosRadiusId, 0f);
+            f.mpb.SetFloat(_LosFeatherId, 0f);
+            f.mpb.SetFloat(_CutAlphaId, 1f);
+            r.SetPropertyBlock(f.mpb);
+        }
+        else
+        {
+            f.t = 1f; f.toA = 1f; WriteAlpha(ref f, 1f);
+        }
+    }
+    _current.Clear();
+}
+
+// Prevents SceneView artifacts and restores after Play Mode stops.
 
 void LateUpdate()
 {
+    if (playModeOnly && !Application.isPlaying)
+    {
+        _RestoreAllToOpaque();
+        return;
+    }
+
     if (!_cam || !target) return;
 
-    // 1) Collect occluders along a spherecast from camera to target center.
+    // 0) Compute screen-space center for cutout
+    var vp = _cam.WorldToViewportPoint(target.position);
+    var vpCenter = new Vector2(Mathf.Clamp01(vp.x), Mathf.Clamp01(vp.y));
+
+    // 1) Collect occluders strictly between camera and player.
     _thisFrame.Clear();
     var origin = _cam.transform.position;
     var dest = target.position;
@@ -79,14 +147,32 @@ void LateUpdate()
     dir /= dist;
 
     // Use SphereCast for stability with thin geometry.
-    int count = Physics.SphereCastNonAlloc(origin, probeRadius, dir, GetBuffer(), dist, occluderLayers, QueryTriggerInteraction.Ignore);
+    // Ensure buffer capacity if inspector value changed at runtime.
+    if (_hitsArr == null || _hitsArr.Length < maxHits) _hitsArr = new RaycastHit[Mathf.Max(8, maxHits)];
+
+    int count = Physics.SphereCastNonAlloc(origin, probeRadius, dir, _hitsArr, dist, occluderLayers, QueryTriggerInteraction.Ignore);
     for (int i = 0; i < count && i < maxHits; i++)
     {
-        var h = _hits[i];
-        var rend = h.collider ? h.collider.GetComponentInParent<Renderer>() : null;
+        var h = _hitsArr[i];
+        if (!h.collider) continue;
+
+        // Narrow: prefer Renderer on the hit GO. Optional parent lookup.
+        var rend = h.collider.GetComponent<Renderer>();
+        if (!rend && allowParentRendererLookup) rend = h.collider.GetComponentInParent<Renderer>();
         if (!rend) continue;
+
         _thisFrame.Add(rend);
-        FadeTo(rend, occluderAlpha, fadeOutSeconds);
+
+        if (useCircularCutout)
+        {
+            ApplyCutout(rend, vpCenter, cutoutRadius, cutoutFeather, cutoutAlpha);
+        }
+        else
+        {
+            var targetA = Mathf.Max(minOccluderAlpha, occluderAlpha);
+            FadeTo(rend, targetA, fadeOutSeconds);
+        }
+
         if (debugDraw) Debug.DrawLine(origin, h.point, Color.red);
     }
 
@@ -110,17 +196,22 @@ void LateUpdate()
 }
 
 // --- Internals ---
-RaycastHit[] GetBuffer()
+void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, float alphaInside)
 {
-    // Keep a resizable backing list to avoid allocs
-    if (_hits.Capacity < maxHits) _hits.Capacity = maxHits;
-    if (_hits.Count < maxHits)
-    {
-        int need = maxHits - _hits.Count;
-        for (int i = 0; i < need; i++) _hits.Add(default);
-    }
-    return _hits.ToArray(); // NonAlloc API requires array; this single ToArray is cached size-wise above
+    if (!_current.TryGetValue(r, out var f)) { f = new Faded { r = r, mpb = new MaterialPropertyBlock(), active = true }; }
+    if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
+
+    r.GetPropertyBlock(f.mpb);
+    f.mpb.SetVector(_LosCenterId, new Vector4(vpCenter.x, vpCenter.y, 0, 0));
+    f.mpb.SetFloat(_LosRadiusId, radius);
+    f.mpb.SetFloat(_LosFeatherId, feather);
+    f.mpb.SetFloat(_CutAlphaId, Mathf.Clamp01(alphaInside));
+    r.SetPropertyBlock(f.mpb);
+
+    _current[r] = f;
 }
+
+// Adds a screen-space circular cutout path. Whole-mesh fade remains available via useCircularCutout=false.
 
 Renderer[] ResolveTargetRenderers()
 {
@@ -190,6 +281,8 @@ float ReadCurrentAlpha(ref Faded f)
 
 void _TickFades()
 {
+    // Safety clamp for occluders each tick.
+    // If a fade is heading to < minOccluderAlpha and it's an occluder (not the target), keep it clamped.
     var tmp = new List<Renderer>(_current.Keys);
     for (int i = 0; i < tmp.Count; i++)
     {
@@ -214,18 +307,28 @@ void _TickFades()
 
 void _RestoreMissing()
 {
-    if (_thisFrame.Count == 0) return;
     var tmp = new List<Renderer>(_current.Keys);
     for (int i = 0; i < tmp.Count; i++)
     {
         var r = tmp[i];
-        if (!_thisFrame.Contains(r) && _current.TryGetValue(r, out var f))
+        if (_thisFrame.Contains(r)) continue;
+
+        if (useCircularCutout)
         {
-            f.fromA = ReadCurrentAlpha(ref f);
-            f.toA = 1f;
-            f.t = 0f;
-            f.dur = Mathf.Max(0.0001f, fadeInSeconds);
-            _current[r] = f;
+            // Clear cutout on renderers not hit this frame
+            var f = _current[r];
+            if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
+            f.mpb.SetFloat(_LosRadiusId, 0f);
+            f.mpb.SetFloat(_LosFeatherId, 0f);
+            f.mpb.SetFloat(_CutAlphaId, 1f);
+            r.SetPropertyBlock(f.mpb);
+            _current.Remove(r);
+        }
+        else if (_current.TryGetValue(r, out var f2))
+        {
+            f2.fromA = ReadCurrentAlpha(ref f2);
+            f2.toA = 1f; f2.t = 0f; f2.dur = Mathf.Max(0.0001f, fadeInSeconds);
+            _current[r] = f2;
         }
     }
 }
