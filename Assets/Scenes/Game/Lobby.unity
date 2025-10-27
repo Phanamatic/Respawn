@@ -48078,6 +48078,7 @@ GameObject:
   - component: {fileID: 712823781}
   - component: {fileID: 712823785}
   - component: {fileID: 712823784}
+  - component: {fileID: 712823786}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -48179,6 +48180,7 @@ MonoBehaviour:
   orthographicSize: 23
   perspectiveFov: 50
   follow: {fileID: 0}
+  losOccluder: {fileID: 712823786}
 --- !u!114 &712823785
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -48318,6 +48320,33 @@ MonoBehaviour:
       enableFptlForForwardOpaque: 0
       enableBigTilePrepass: 0
       isFptlEnabled: 0
+--- !u!114 &712823786
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 712823780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2839d38b03eea6f40bd29e604f960bdd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  target: {fileID: 0}
+  targetRenderersOverride: []
+  occluderLayers:
+    serializedVersion: 2
+    m_Bits: 1024
+  probeRadius: 0.25
+  maxHits: 12
+  maxDistance: 200
+  occluderAlpha: 0.25
+  targetAlphaWhenOccluded: 0.6
+  fadeInSeconds: 0.15
+  fadeOutSeconds: 0.25
+  targetProximityMeters: 1.2
+  fadeTargetWhenOccluded: 1
+  debugDraw: 0
 --- !u!1 &714445808
 GameObject:
   m_ObjectHideFlags: 0

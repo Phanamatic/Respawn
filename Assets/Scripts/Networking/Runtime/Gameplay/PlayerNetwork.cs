@@ -77,6 +77,14 @@ namespace Game.Net
         [Header("Visual Root (optional)")]
         [SerializeField] Transform modelRoot;
 
+        // Expose model renderers for LOS fading
+        public System.ReadOnlySpan<Renderer> GetModelRenderersSpan()
+        {
+            return _renderers != null ? new System.ReadOnlySpan<Renderer>(_renderers) : System.ReadOnlySpan<Renderer>.Empty;
+        }
+
+        // Small accessor so the camera can fade the local player's renderers without allocating.
+
         Rigidbody _rb;
         CapsuleCollider _capsule;
 

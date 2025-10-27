@@ -21,14 +21,27 @@ public sealed class IsometricCamera : MonoBehaviour
     [Header("Follow Target (optional)")]
     public Transform follow;
 
+    [Header("Line-of-Sight")]
+    [Tooltip("Optional. If absent, a LineOfSightOccluder is auto-added at runtime.")]
+    public LineOfSightOccluder losOccluder;
+
     Camera _cam;
 
-    void OnEnable() { _cam = GetComponent<Camera>(); if (!_cam) _cam = gameObject.AddComponent<Camera>(); }
+    void OnEnable()
+    {
+        _cam = GetComponent<Camera>(); if (!_cam) _cam = gameObject.AddComponent<Camera>();
+        // Ensure LOS occluder exists
+        losOccluder = losOccluder ? losOccluder : GetComponent<LineOfSightOccluder>();
+        if (!losOccluder) losOccluder = gameObject.AddComponent<LineOfSightOccluder>();
+        losOccluder.enabled = true;
+        if (follow) losOccluder.target = follow;
+    }
     void OnValidate() { ApplyProjection(); }
     void Update() { ApplyProjection(); }
     void LateUpdate()
     {
         if (!follow) return;
+        if (losOccluder && losOccluder.target != follow) losOccluder.target = follow;
 
         var yawQ = Quaternion.Euler(0f, yaw, 0f);
         var pitchQ = Quaternion.Euler(pitch, 0f, 0f);
@@ -51,6 +64,8 @@ public sealed class IsometricCamera : MonoBehaviour
             transform.rotation = Quaternion.Slerp(transform.rotation, desiredRot, t);
         }
     }
+
+    // Auto-wires LOS component to the same follow target.
 
     void ApplyProjection()
     {
