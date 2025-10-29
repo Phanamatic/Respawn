@@ -439,10 +439,12 @@ namespace Game.Net
             _myAreaBlocked = blocked;
             _selecting = true;
 
-            // Make sure highlight state is set immediately for round 1, with carved holes.
+            // Highlight with carved holes from overlapping "No Spawn" triggers.
             List<Bounds> holes = null;
             if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
+            // Paint green with per-hole red overlays (even if area is globally unblocked).
             SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
+// [Match1v1] Client sees green area with red "holes" subtracted.
 
             // Run the intro pan once, then open the spawn UI.
             if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
@@ -565,7 +567,7 @@ namespace Game.Net
                         }
                         else
                         {
-                            // brief invalid feedback
+                            // brief invalid feedback already handled by UI coroutine in this class
                             if (spawnHintText)
                             {
                                 StopCoroutineSafe(ref _uiCo);
@@ -573,6 +575,7 @@ namespace Game.Net
                             }
                         }
                     }
+// [Match1v1] Client click respects red holes.
                 }
                 else if (_spawnCursor)
                 {
@@ -606,11 +609,14 @@ namespace Game.Net
             var b = collider.bounds;
             if (!ContainsXZ(b, point)) return;
 
-            // reject points that fall inside any "No Spawn" trigger within this team's area
+            if (areas.IsAreaBlocked(team)) return;
+
+            // Fine-grained validation: refuse points inside any "No Spawn" trigger.
             if (areas.IsPointBlockedForTeam(team, point)) return;
 
             // Store the exact XZ and let server snap Y to Ground on spawn.
             _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
+// [Match1v1] Server authority validates chosen point against blockers.
 
             if (_chosenSpawns.Count >= 2)
                 SpawnAllAndStartRound();
@@ -653,9 +659,10 @@ namespace Game.Net
                 }
                 else if (!areaBlocked)
                 {
-                    // Only sample from green (spawnable) sub-areas
+                    // Random pick must avoid any "No Spawn" trigger volumes.
                     point = areas.GetRandomUnblockedPoint(team, 128);
                 }
+// [Match1v1] Random/timeout spawns come only from carved green space.
                 else
                 {
                     point = areas.GetFallbackSpawn(team);
@@ -876,13 +883,22 @@ namespace Game.Net
                 _spawnCursor = null;
             }
 
-            // Restore camera follow to prevent stuck camera bug.
+            // Restore or (re)acquire the correct follow target and ensure iso cam is enabled.
             if (_isoCam)
             {
-                _isoCam.follow = _originalFollow;
+                Transform target = _originalFollow;
+
+                // Prefer the currently spawned local player if available.
+                var nm = Unity.Netcode.NetworkManager.Singleton;
+                var po = nm ? nm.LocalClient?.PlayerObject : null;
+                if (po && po.GetComponent<PlayerNetwork>())
+                    target = po.transform;
+
+                _isoCam.follow = target;    // may be new spawn or the previous follow
                 _isoCam.enabled = true;
             }
         }
+// Now we always reattach the iso camera to the current local PlayerObject (covers late spawn/random cases).
 
         void OnReturnToLobby()
         {

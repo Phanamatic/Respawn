@@ -413,6 +413,7 @@ void OnActiveSlotChanged()
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
                 _isoCam.follow = transform;
+                _isoCam.enabled = true; // ensure camera is active after (re)spawn — avoids staying on spawn-select view
 
                 var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
                 los.target = transform;

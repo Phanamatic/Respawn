@@ -18,8 +18,9 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     static Mode s_Mode = Mode.Hidden;
     static Bounds s_Target;
     static bool s_TargetBlocked;
-    // NEW: per-area carved holes (in world-space XZ bounds)
+    // Carved "holes" from blockers (world-space XZ AABBs)
     static readonly List<Bounds> s_Holes = new();
+// [Highlighter] Store per-area carved rectangles.
 
     BoxCollider _col;
     MeshRenderer _mr;
@@ -91,6 +92,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
         for (int i = 0; i < s_All.Count; i++) s_All[i].Apply();
     }
+// [Highlighter] New holes argument from controller.
 
     void Apply()
     {
@@ -109,9 +111,10 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
         mat.color = (isMine && s_TargetBlocked) ? blockedColor : (isMine ? activeColor : inactiveColor);
 
-        // Draw per-area hole quads (red) only for the active player's area
+        // Carved red "holes" only for the active player's area
         if (isMine) BuildHoleVisuals(myWorld);
         else ClearHoleVisuals();
+// [Highlighter] Paint red quads in the carved regions.
     }
 
     // Creates/updates child quads that visualize red "holes" carved by blockers.
@@ -206,6 +209,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         var center = new Vector3(min.x + size.x * 0.5f, 0f, min.z + size.z * 0.5f);
         return new Bounds(center, size);
     }
+// [Highlighter] Adds hole quads and intersection helper.
 
     static Bounds ToWorldBounds(BoxCollider c)
     {

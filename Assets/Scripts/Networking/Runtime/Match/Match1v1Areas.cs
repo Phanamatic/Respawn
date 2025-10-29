@@ -16,7 +16,7 @@ namespace Game.Net
         [SerializeField] private BoxCollider neutralArea;
         [Header("Spawn Blocking")]
         [SerializeField] private string noSpawnTag = "No Spawn";
-        // Match required Tag casing exactly.
+// Tag must exactly match the scene objects' Tag; fixes missed blockers due to casing/spacing.
 
         public bool HasAll => teamAArea && teamBArea && neutralArea;
 
@@ -97,11 +97,14 @@ namespace Game.Net
             if (into == null) into = new List<Bounds>(8);
             into.Clear();
 
-            var hits = Physics.OverlapBox(area.center, area.extents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
+            // Ignore Y. Treat blockers as columns over the area.
+            var tallCenter  = new Vector3(area.center.x, 0f, area.center.z);
+            var tallExtents = new Vector3(area.extents.x, 5000f, area.extents.z);
+            var hits = Physics.OverlapBox(tallCenter, tallExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
             for (int i = 0; i < hits.Length; i++)
             {
                 var col = hits[i];
-                if (!col || col.tag != noSpawnTag) continue;
+                if (!col || !col.CompareTag(noSpawnTag)) continue;
 
                 var inter = IntersectXZ(area, col.bounds);
                 if (inter.size.x > 0.001f && inter.size.z > 0.001f)
@@ -110,6 +113,7 @@ namespace Game.Net
                     into.Add(inter);
                 }
             }
+// XZ-only carve-outs so red holes always appear even if Y doesn’t overlap.
             return into;
         }
 
@@ -126,19 +130,23 @@ namespace Game.Net
 
         static bool IsPointInAnyBlocker(Vector3 p, Bounds searchArea, string tag)
         {
-            var overlaps = Physics.OverlapBox(searchArea.center, searchArea.extents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
+            // XZ-only test. Very tall overlap, then horizontal containment.
+            var tallCenter  = new Vector3(searchArea.center.x, 0f, searchArea.center.z);
+            var tallExtents = new Vector3(searchArea.extents.x, 5000f, searchArea.extents.z);
+            var overlaps = Physics.OverlapBox(tallCenter, tallExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
             for (int i = 0; i < overlaps.Length; i++)
             {
                 var col = overlaps[i];
-                if (!col || col.tag != tag) continue;
-                if (!col.bounds.Contains(p)) continue;
-                // ClosestPoint returns p when point lies inside a trigger volume
-                var cp = col.ClosestPoint(p);
-                if ((cp - p).sqrMagnitude <= 1e-6f)
+                if (!col || !col.CompareTag(tag)) continue;
+
+                var b = col.bounds;
+                if (p.x >= b.min.x && p.x <= b.max.x &&
+                    p.z >= b.min.z && p.z <= b.max.z)
                     return true;
             }
             return false;
         }
+// Prevents green where a blocker exists at different Y. Stops invalid clicks.
 
         public Vector3 GetFallbackSpawn(TeamId team)
         {
@@ -155,12 +163,15 @@ namespace Game.Net
 
         static bool BoundsContainsTag(Bounds bounds, string tag, Collider ignore)
         {
-            var hits = Physics.OverlapBox(bounds.center, bounds.extents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
+            // Area considered blocked if any blocker overlaps in XZ regardless of Y.
+            var tallCenter  = new Vector3(bounds.center.x, 0f, bounds.center.z);
+            var tallExtents = new Vector3(bounds.extents.x, 5000f, bounds.extents.z);
+            var hits = Physics.OverlapBox(tallCenter, tallExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
             for (int i = 0; i < hits.Length; i++)
             {
                 var col = hits[i];
                 if (!col || col == ignore) continue;
-                if (col.tag == tag) return true;
+                if (col.CompareTag(tag)) return true;
             }
             return false;
         }

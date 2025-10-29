@@ -19,6 +19,7 @@ TagManager:
   - Train Car Middle 2 Map 1
   - Train Map 1
   - No Spawn
+  - No spawn
   layers:
   - Default
   - TransparentFX
