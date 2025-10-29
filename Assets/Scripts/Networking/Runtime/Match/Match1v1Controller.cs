@@ -116,7 +116,8 @@ namespace Game.Net
 
         // Client state
         private bool _selecting;
-        private Bounds _myAreaBounds;
+    private Bounds _myAreaBounds;
+    private bool _myAreaBlocked;
         private float _spawnDeadlineLocal;
         private Coroutine _flyCo, _selectCo, _uiCo;
         private GameObject _spawnCursor;
@@ -284,8 +285,23 @@ namespace Game.Net
             foreach (var kv in _teams)
             {
                 var cid = kv.Key;
-                var b = areas.GetTeamCollider(kv.Value).bounds;
-                BeginSpawnSelectClientRpc(b.center, b.size, spawnSelectSeconds, ToClient(cid));
+                var team = kv.Value;
+                if (!areas)
+                {
+                    Debug.LogError("[Match1v1] Areas reference missing; cannot determine spawn zone.");
+                    continue;
+                }
+
+                var collider = areas.GetTeamCollider(team);
+                if (!collider)
+                {
+                    Debug.LogWarning($"[Match1v1] No collider defined for team {team}; skipping spawn select for client {cid}.");
+                    continue;
+                }
+
+                var bounds = collider.bounds;
+                bool blocked = areas.IsAreaBlocked(team);
+                BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, blocked, ToClient(cid));
             }
 
             StartCoroutine(CoWatchSpawnDeadline());
@@ -414,16 +430,19 @@ namespace Game.Net
         }
 
         [ClientRpc]
-        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, ClientRpcParams p = default)
+        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, bool blocked, ClientRpcParams p = default)
         {
             if (!IsClient) return;
 
             _myAreaBounds = new Bounds(areaCenter, areaSize);
             _spawnDeadlineLocal = Time.unscaledTime + seconds;
+            _myAreaBlocked = blocked;
             _selecting = true;
 
-            // Make sure highlight state is set immediately for round 1.
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
+            // Make sure highlight state is set immediately for round 1, with carved holes.
+            List<Bounds> holes = null;
+            if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
+            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
 
             // Run the intro pan once, then open the spawn UI.
             if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
@@ -438,7 +457,10 @@ namespace Game.Net
             // No pan path: frame camera from bounds and open UI now.
             FrameSpawnCamera(_myAreaBounds);
             ShowCanvas(spawnCanvas, true);
-            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
+            if (spawnHintText)
+            {
+                spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
+            }
 
             if (!_spawnCursor)
             {
@@ -456,8 +478,10 @@ namespace Game.Net
                         rend.material.color = new Color(1f, 1f, 0f, 0.7f);
                     }
                 }
-                _spawnCursor.SetActive(false);
             }
+
+            if (_spawnCursor)
+                _spawnCursor.SetActive(false);
 
             if (_isoCam)
             {
@@ -522,6 +546,8 @@ namespace Game.Net
                     }
                 }
 
+                // Carved blocking check moved to click handler for feedback
+
                 if (valid)
                 {
                     if (_spawnCursor)
@@ -532,8 +558,20 @@ namespace Game.Net
 
                     if (Input.GetMouseButtonDown(0))
                     {
-                        ChooseSpawnServerRpc(point);
-                        EndSpawnSelect();
+                        if (areas && !areas.IsPointBlockedInBounds(_myAreaBounds, point))
+                        {
+                            ChooseSpawnServerRpc(point);
+                            EndSpawnSelect();
+                        }
+                        else
+                        {
+                            // brief invalid feedback
+                            if (spawnHintText)
+                            {
+                                StopCoroutineSafe(ref _uiCo);
+                                _uiCo = StartCoroutine(CoFlashInvalid(spawnHintText));
+                            }
+                        }
                     }
                 }
                 else if (_spawnCursor)
@@ -560,8 +598,16 @@ namespace Game.Net
             ulong cid = rpc.Receive.SenderClientId;
             if (!_teams.TryGetValue(cid, out var team)) return;
 
-            var b = areas.GetTeamCollider(team).bounds;
+            if (!areas) return;
+
+            var collider = areas.GetTeamCollider(team);
+            if (!collider) return;
+
+            var b = collider.bounds;
             if (!ContainsXZ(b, point)) return;
+
+            // reject points that fall inside any "No Spawn" trigger within this team's area
+            if (areas.IsPointBlockedForTeam(team, point)) return;
 
             // Store the exact XZ and let server snap Y to Ground on spawn.
             _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
@@ -592,9 +638,29 @@ namespace Game.Net
                 if (cid == NetworkManager.ServerClientId) continue;
                 if (!_teams.TryGetValue(cid, out var team)) continue;
 
-                Vector3 point = _chosenSpawns.TryGetValue(cid, out var chosen)
-                    ? chosen
-                    : areas.GetRandomPoint(team);
+                if (!areas)
+                {
+                    Debug.LogError("[Match1v1] Areas reference missing during spawn; defaulting to controller position.");
+                    SpawnFreshPlayerForClient(cid, transform.position, team);
+                    continue;
+                }
+
+                bool areaBlocked = areas.IsAreaBlocked(team);
+                Vector3 point;
+                if (!areaBlocked && _chosenSpawns.TryGetValue(cid, out var chosen))
+                {
+                    point = chosen;
+                }
+                else if (!areaBlocked)
+                {
+                    // Only sample from green (spawnable) sub-areas
+                    point = areas.GetRandomUnblockedPoint(team, 128);
+                }
+                else
+                {
+                    point = areas.GetFallbackSpawn(team);
+                    Debug.LogWarning($"[Match1v1] Spawn area for team {team} blocked by tag '{areas.BlockingTag}'. Using fallback position {point}.");
+                }
 
                 SpawnFreshPlayerForClient(cid, point, team);
             }
@@ -791,14 +857,18 @@ namespace Game.Net
         [ClientRpc]
         void EndSpawnSelectForAllClientRpc()
         {
-            if (_selecting) EndSpawnSelect();
+            // Force camera/UI cleanup even if this client never entered selection (random assignment / late join).
+            EndSpawnSelect(force: true);
         }
 
-        void EndSpawnSelect()
+        void EndSpawnSelect(bool force = false)
         {
+            if (!force && !_selecting) return;
+
             _selecting = false;
+            _myAreaBlocked = false;
             ShowCanvas(spawnCanvas, false);
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, new Bounds());
+            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, new Bounds(), false);
 
             if (_spawnCursor)
             {
@@ -806,6 +876,7 @@ namespace Game.Net
                 _spawnCursor = null;
             }
 
+            // Restore camera follow to prevent stuck camera bug.
             if (_isoCam)
             {
                 _isoCam.follow = _originalFollow;
@@ -964,15 +1035,18 @@ namespace Game.Net
                 yield return null;
             }
 
-            // cut to spawn-select framing
-            // clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
-            ClearCinematicShip();
-            FrameSpawnCamera(_myAreaBounds);
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
-            _panCo = null; // mark pan done
-
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
+// cut to spawn-select framing
+// clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
+ClearCinematicShip();
+FrameSpawnCamera(_myAreaBounds);
+{
+    List<Bounds> holes = null;
+    if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
+    SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
+}
+_panCo = null; // mark pan done            ShowCanvas(spawnCanvas, true);
+            if (spawnHintText)
+                spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
         }
 
         // Ensure a SeatMount exists under the ship and return it.
@@ -1204,6 +1278,25 @@ namespace Game.Net
             if (player == null) return;
             float newHealth = Mathf.Clamp(player.GetHealth() + healthDelta, 0f, 100f);
             player.SetHealth(newHealth);
+        }
+
+        void StopCoroutineSafe(ref Coroutine co)
+        {
+            if (co != null) { StopCoroutine(co); co = null; }
+        }
+
+        IEnumerator CoFlashInvalid(TMP_Text t)
+        {
+            if (!t) yield break;
+            string prev = t.text;
+            t.text = "Invalid location";
+            float dur = 0.5f, e = 0f;
+            while (e < dur)
+            {
+                e += Time.unscaledDeltaTime;
+                yield return null;
+            }
+            t.text = prev;
         }
     }
 }

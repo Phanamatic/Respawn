@@ -29,6 +29,7 @@ public sealed class LineOfSightOccluder : MonoBehaviour
     [Range(0.02f, 0.5f)] public float cutoutRadius = 0.12f;
     [Range(0.005f, 0.3f)] public float cutoutFeather = 0.06f; // soft edge
     [Range(0.1f, 1f)] public float cutoutAlpha = 0.30f;       // 0.30 = ~70% transparent inside circle
+    [Min(0f)] public float cutoutReleaseDelay = 0.1f;
 
     // Shader property ids
     static readonly int _LosCenterId = Shader.PropertyToID("_LosCenter");
@@ -74,6 +75,8 @@ struct Faded
     public float t;          // 0..1
     public float dur;        // seconds
     public bool active;      // true while under management
+    public bool isCutout;    // true when managed via per-pixel cutout
+    public float holdUntil;  // timestamp to keep cutout alive when not hit this frame
     public MaterialPropertyBlock mpb;
     public int colorId;
     public int baseColorId;
@@ -112,6 +115,7 @@ void _RestoreAllToOpaque()
             f.mpb.SetFloat(_LosFeatherId, 0f);
             f.mpb.SetFloat(_CutAlphaId, 1f);
             r.SetPropertyBlock(f.mpb);
+            f.isCutout = false;
         }
         else
         {
@@ -146,34 +150,35 @@ void LateUpdate()
     if (dist < 0.001f) return;
     dir /= dist;
 
-    // Use SphereCast for stability with thin geometry.
-    // Ensure buffer capacity if inspector value changed at runtime.
-    if (_hitsArr == null || _hitsArr.Length < maxHits) _hitsArr = new RaycastHit[Mathf.Max(8, maxHits)];
-
-    int count = Physics.SphereCastNonAlloc(origin, probeRadius, dir, _hitsArr, dist, occluderLayers, QueryTriggerInteraction.Ignore);
-    for (int i = 0; i < count && i < maxHits; i++)
+    if (useCircularCutout)
     {
-        var h = _hitsArr[i];
-        if (!h.collider) continue;
+        CollectCutoutOccluders(origin, dist, vpCenter);
+    }
+    else
+    {
+        // Use SphereCast for stability with thin geometry.
+        // Ensure buffer capacity if inspector value changed at runtime.
+        if (_hitsArr == null || _hitsArr.Length < maxHits) _hitsArr = new RaycastHit[Mathf.Max(8, maxHits)];
 
-        // Narrow: prefer Renderer on the hit GO. Optional parent lookup.
-        var rend = h.collider.GetComponent<Renderer>();
-        if (!rend && allowParentRendererLookup) rend = h.collider.GetComponentInParent<Renderer>();
-        if (!rend) continue;
-
-        _thisFrame.Add(rend);
-
-        if (useCircularCutout)
+        int count = Physics.SphereCastNonAlloc(origin, probeRadius, dir, _hitsArr, dist, occluderLayers, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count && i < maxHits; i++)
         {
-            ApplyCutout(rend, vpCenter, cutoutRadius, cutoutFeather, cutoutAlpha);
-        }
-        else
-        {
+            var h = _hitsArr[i];
+            if (!h.collider) continue;
+            if (target && h.collider.transform.IsChildOf(target)) continue;
+
+            // Narrow: prefer Renderer on the hit GO. Optional parent lookup.
+            var rend = h.collider.GetComponent<Renderer>();
+            if (!rend && allowParentRendererLookup) rend = h.collider.GetComponentInParent<Renderer>();
+            if (!rend) continue;
+
+            if (!_thisFrame.Add(rend)) continue;
+
             var targetA = Mathf.Max(minOccluderAlpha, occluderAlpha);
             FadeTo(rend, targetA, fadeOutSeconds);
-        }
 
-        if (debugDraw) Debug.DrawLine(origin, h.point, Color.red);
+            if (debugDraw) Debug.DrawLine(origin, h.point, Color.red);
+        }
     }
 
     // 2) Any previously faded renderer not hit this frame should restore.
@@ -198,7 +203,15 @@ void LateUpdate()
 // --- Internals ---
 void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, float alphaInside)
 {
-    if (!_current.TryGetValue(r, out var f)) { f = new Faded { r = r, mpb = new MaterialPropertyBlock(), active = true }; }
+    if (!_current.TryGetValue(r, out var f))
+    {
+        f = new Faded { r = r, mpb = new MaterialPropertyBlock(), active = false, isCutout = true };
+    }
+    else
+    {
+        f.active = false;
+        f.isCutout = true;
+    }
     if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
 
     r.GetPropertyBlock(f.mpb);
@@ -208,7 +221,50 @@ void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, floa
     f.mpb.SetFloat(_CutAlphaId, Mathf.Clamp01(alphaInside));
     r.SetPropertyBlock(f.mpb);
 
+    // Ensure the fade system keeps this renderer opaque outside the cutout.
+    f.fromA = 1f;
+    f.toA = 1f;
+    f.t = 0f;
+    f.dur = 0f;
+    f.holdUntil = Time.unscaledTime + cutoutReleaseDelay;
+
     _current[r] = f;
+}
+
+void CollectCutoutOccluders(Vector3 origin, float dist, Vector2 vpCenter)
+{
+    // Center ray directly toward target
+    SampleCutoutRay(vpCenter, dist, vpCenter);
+
+    // Radial samples around the cutout circle to catch edges
+    const int ringSamples = 6;
+    float sampleRadius = Mathf.Min(0.95f, cutoutRadius * 0.75f);
+    for (int i = 0; i < ringSamples; i++)
+    {
+        float angle = (Mathf.PI * 2f * i) / ringSamples;
+        var offset = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * sampleRadius;
+        var sample = vpCenter + offset;
+        sample.x = Mathf.Clamp01(sample.x);
+        sample.y = Mathf.Clamp01(sample.y);
+        SampleCutoutRay(sample, dist, vpCenter);
+    }
+}
+
+void SampleCutoutRay(Vector2 sample, float dist, Vector2 vpCenter)
+{
+    var ray = _cam.ViewportPointToRay(new Vector3(sample.x, sample.y, 0f));
+    if (!Physics.Raycast(ray, out var hit, dist, occluderLayers, QueryTriggerInteraction.Ignore)) return;
+    if (!hit.collider || (target && hit.collider.transform.IsChildOf(target))) return;
+    if (hit.distance > dist + 0.01f) return;
+
+    var rend = hit.collider.GetComponent<Renderer>();
+    if (!rend && allowParentRendererLookup) rend = hit.collider.GetComponentInParent<Renderer>();
+    if (!rend) return;
+
+    _thisFrame.Add(rend);
+    ApplyCutout(rend, vpCenter, cutoutRadius, cutoutFeather, cutoutAlpha);
+
+    if (debugDraw) Debug.DrawLine(ray.origin, hit.point, Color.cyan);
 }
 
 // Adds a screen-space circular cutout path. Whole-mesh fade remains available via useCircularCutout=false.
@@ -246,7 +302,9 @@ void FadeTo(Renderer r, float targetA, float duration)
             tintId = Shader.PropertyToID("_TintColor"),
             t = 0f,
             dur = Mathf.Max(0.0001f, duration),
-            active = true
+            active = true,
+            isCutout = false,
+            holdUntil = 0f
         };
         r.GetPropertyBlock(f.mpb);
         // Read any of the common color properties. Default to white if none exist.
@@ -265,6 +323,8 @@ void FadeTo(Renderer r, float targetA, float duration)
         f.t = 0f;
         f.dur = Mathf.Max(0.0001f, duration);
         f.active = true;
+        f.isCutout = false;
+        f.holdUntil = 0f;
     }
 
     _current[r] = f;
@@ -317,6 +377,11 @@ void _RestoreMissing()
         {
             // Clear cutout on renderers not hit this frame
             var f = _current[r];
+            if (f.isCutout && Time.unscaledTime < f.holdUntil)
+            {
+                _current[r] = f;
+                continue;
+            }
             if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
             f.mpb.SetFloat(_LosRadiusId, 0f);
             f.mpb.SetFloat(_LosFeatherId, 0f);

@@ -403,30 +403,27 @@ void OnActiveSlotChanged()
 
         void TryBindCamera()
         {
-            var cam = FindFirstObjectByType<IsometricCamera>();
-            if (!cam) return;
-
-            cam.follow = transform;
-
-            // Provide precise renderers to the occluder to skip VFX or non-visual roots.
-            if (cam.losOccluder)
+            _cam = Camera.main;
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            if (_cam == null) _cam = FindFirstObjectByType<Camera>();
+#else
+            if (_cam == null) _cam = FindObjectOfType<Camera>();
+#endif
+            if (_cam != null)
             {
-                if (modelRoot)
-                    cam.losOccluder.targetRenderersOverride = modelRoot.GetComponentsInChildren<Renderer>(true);
-                else
-                    cam.losOccluder.targetRenderersOverride = GetComponentsInChildren<Renderer>(true);
+                _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
+                _isoCam.follow = transform;
 
-                cam.losOccluder.target = transform;
+                var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                los.target = transform;
             }
         }
-
-        // Ensure camera follow and LOS target are bound by the owner at runtime.
 
         void LateUpdate()
         {
             if (!IsOwner) return;
-            if (_inputPaused) { UpdateUI(); return; }
             if (_isoCam == null && _camBindTries < 60) { _camBindTries++; TryBindCamera(); }
+            if (_inputPaused) { UpdateUI(); return; }
         }
 
         void Update()

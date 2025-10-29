@@ -1,7 +1,6 @@
 // Assets/Scripts/Camera/IsometricCamera.cs
 // Defaults set to match the screenshot: Yaw=45, Pitch=35, Distance=(100.2, -3.6), Lerp=12, Ortho=on, OrthoSize=23, FOV=50.
 using UnityEngine;
-
 [DisallowMultipleComponent]
 [ExecuteAlways]
 public sealed class IsometricCamera : MonoBehaviour
@@ -21,50 +20,14 @@ public sealed class IsometricCamera : MonoBehaviour
     [Header("Follow Target (optional)")]
     public Transform follow;
 
-    [Header("Line-of-Sight")]
-    [Tooltip("Optional. If absent, a LineOfSightOccluder is auto-added at runtime.")]
-    public LineOfSightOccluder losOccluder;
-
     Camera _cam;
 
-    void OnEnable()
-    {
-        _cam = GetComponent<Camera>(); if (!_cam) _cam = gameObject.AddComponent<Camera>();
-        // Ensure LOS occluder exists
-        losOccluder = losOccluder ? losOccluder : GetComponent<LineOfSightOccluder>();
-        if (!losOccluder) losOccluder = gameObject.AddComponent<LineOfSightOccluder>();
-        losOccluder.enabled = true;
-        if (follow) losOccluder.target = follow;
-    }
+    void OnEnable() { _cam = GetComponent<Camera>(); if (!_cam) _cam = gameObject.AddComponent<Camera>(); }
     void OnValidate() { ApplyProjection(); }
     void Update() { ApplyProjection(); }
     void LateUpdate()
     {
         if (!follow) return;
-
-        if (losOccluder)
-        {
-            if (losOccluder.target != follow) losOccluder.target = follow;
-
-            // Keep override list synced once after follow is set.
-            if (losOccluder.targetRenderersOverride == null || losOccluder.targetRenderersOverride.Length == 0)
-            {
-                var pn = follow.GetComponent<Game.Net.PlayerNetwork>();
-                if (pn)
-                {
-                    var span = pn.GetModelRenderersSpan();
-                    var arr = new Renderer[span.Length];
-                    for (int i = 0; i < span.Length; i++) arr[i] = span[i];
-                    losOccluder.targetRenderersOverride = arr;
-                }
-                else
-                {
-                    losOccluder.targetRenderersOverride = follow.GetComponentsInChildren<Renderer>(true);
-                }
-            }
-        }
-
-        // Auto-provisions target renderers if prefab left blank.
 
         var yawQ = Quaternion.Euler(0f, yaw, 0f);
         var pitchQ = Quaternion.Euler(pitch, 0f, 0f);
@@ -87,8 +50,6 @@ public sealed class IsometricCamera : MonoBehaviour
             transform.rotation = Quaternion.Slerp(transform.rotation, desiredRot, t);
         }
     }
-
-    // Auto-wires LOS component to the same follow target.
 
     void ApplyProjection()
     {

@@ -11,11 +11,15 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     [Header("Visual")]
     [SerializeField] Color activeColor = new Color(0.2f, 0.8f, 0.2f, 0.28f);
     [SerializeField] Color inactiveColor = new Color(0.8f, 0.2f, 0.2f, 0.14f);
+    [SerializeField] Color blockedColor = new Color(0.8f, 0.2f, 0.2f, 0.35f);
     [SerializeField, Min(0f)] float yOffset = 0.02f;
 
     static readonly List<SpawnAreaHighlighter> s_All = new();
     static Mode s_Mode = Mode.Hidden;
     static Bounds s_Target;
+    static bool s_TargetBlocked;
+    // NEW: per-area carved holes (in world-space XZ bounds)
+    static readonly List<Bounds> s_Holes = new();
 
     BoxCollider _col;
     MeshRenderer _mr;
@@ -76,10 +80,15 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         }
     }
 
-    public static void SetMode(Mode mode, Bounds target)
+    public static void SetMode(Mode mode, Bounds target, bool targetBlocked = false, List<Bounds> holes = null)
     {
         s_Mode = mode;
         s_Target = target;
+        s_TargetBlocked = targetBlocked;
+
+        s_Holes.Clear();
+        if (holes != null) s_Holes.AddRange(holes);
+
         for (int i = 0; i < s_All.Count; i++) s_All[i].Apply();
     }
 
@@ -87,16 +96,89 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     {
         if (_mr == null || _col == null) return;
         _mr.transform.localPosition = _col.center + Vector3.up * yOffset;
-        _mr.transform.localScale = new Vector3(_col.size.x, 1f, _col.size.z);
+        _mr.transform.localScale   = new Vector3(_col.size.x, 1f, _col.size.z);
 
-        if (s_Mode == Mode.Hidden) { _mr.enabled = false; return; }
+        if (s_Mode == Mode.Hidden) { _mr.enabled = false; ClearHoleVisuals(); return; }
 
         _mr.enabled = true;
-        var myWorld = ToWorldBounds(_col);                 // true world AABB
-        bool isMine = ContainsXZ(myWorld, s_Target.center) // center falls inside
+        var myWorld = ToWorldBounds(_col);                 // world AABB
+        bool isMine = ContainsXZ(myWorld, s_Target.center)
                    && SizesRoughlyMatchXZ(myWorld.size, s_Target.size);
         var mat = _mr.sharedMaterial;
-        if (mat) mat.color = isMine ? activeColor : inactiveColor;
+        if (!mat) return;
+
+        mat.color = (isMine && s_TargetBlocked) ? blockedColor : (isMine ? activeColor : inactiveColor);
+
+        // Draw per-area hole quads (red) only for the active player's area
+        if (isMine) BuildHoleVisuals(myWorld);
+        else ClearHoleVisuals();
+    }
+
+    // Creates/updates child quads that visualize red "holes" carved by blockers.
+    void BuildHoleVisuals(Bounds myWorld)
+    {
+        var parent = _mr.transform;
+        var holesRoot = parent.Find("Holes");
+        if (!holesRoot)
+        {
+            var go = new GameObject("Holes");
+            holesRoot = go.transform;
+            holesRoot.SetParent(parent, false);
+            holesRoot.localPosition = Vector3.zero;
+            holesRoot.localRotation = Quaternion.identity;
+            holesRoot.localScale = Vector3.one;
+        }
+
+        int alive = 0;
+        for (int i = 0; i < s_Holes.Count; i++)
+        {
+            var inter = IntersectXZ(myWorld, s_Holes[i]);
+            if (inter.size.x <= 0.001f || inter.size.z <= 0.001f) continue;
+
+            var child = (alive < holesRoot.childCount) ? holesRoot.GetChild(alive) : null;
+            if (child == null)
+            {
+                var go = new GameObject($"Hole_{alive}");
+                child = go.transform;
+                child.SetParent(holesRoot, false);
+                var mf = go.AddComponent<MeshFilter>();
+                var mr = go.AddComponent<MeshRenderer>();
+                if (!mf.sharedMesh) mf.sharedMesh = CreateQuadXZ();
+                if (!mr.sharedMaterial)
+                {
+                    var shader = Shader.Find("Unlit/Color");
+                    var mat = new Material(shader); mat.SetInt("_ZWrite", 0); mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                    mr.sharedMaterial = mat;
+                }
+            }
+
+            child.localPosition = new Vector3(inter.center.x - myWorld.center.x, 0f, inter.center.z - myWorld.center.z);
+            child.localScale    = new Vector3(inter.size.x, 1f, inter.size.z);
+
+            var mrExisting = child.GetComponent<MeshRenderer>();
+            if (mrExisting && mrExisting.sharedMaterial) mrExisting.sharedMaterial.color = blockedColor;
+
+            alive++;
+        }
+
+        // Remove extras
+        for (int i = holesRoot.childCount - 1; i >= alive; i--)
+        {
+            var t = holesRoot.GetChild(i);
+            if (t) DestroyImmediate(t.gameObject);
+        }
+    }
+
+    void ClearHoleVisuals()
+    {
+        if (_mr == null) return;
+        var holesRoot = _mr.transform.Find("Holes");
+        if (!holesRoot) return;
+        for (int i = holesRoot.childCount - 1; i >= 0; i--)
+        {
+            var t = holesRoot.GetChild(i);
+            if (t) DestroyImmediate(t.gameObject);
+        }
     }
 
     static Mesh CreateQuadXZ()
@@ -113,6 +195,16 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         m.triangles = new[] { 0, 1, 2, 0, 2, 3 };
         m.RecalculateNormals();
         return m;
+    }
+
+    static Bounds IntersectXZ(Bounds a, Bounds b)
+    {
+        var min = new Vector3(Mathf.Max(a.min.x, b.min.x), 0f, Mathf.Max(a.min.z, b.min.z));
+        var max = new Vector3(Mathf.Min(a.max.x, b.max.x), 0f, Mathf.Min(a.max.z, b.max.z));
+        if (max.x < min.x || max.z < min.z) return new Bounds(Vector3.zero, Vector3.zero);
+        var size = new Vector3(max.x - min.x, 0f, max.z - min.z);
+        var center = new Vector3(min.x + size.x * 0.5f, 0f, min.z + size.z * 0.5f);
+        return new Bounds(center, size);
     }
 
     static Bounds ToWorldBounds(BoxCollider c)
