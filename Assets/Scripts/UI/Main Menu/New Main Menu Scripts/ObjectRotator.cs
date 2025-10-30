@@ -3,98 +3,188 @@ using UnityEngine;
 namespace Game.UI.MainMenu
 {
     /// <summary>
-    /// Rotates any GameObject continuously around a specified axis
-    /// Useful for rotating 3D models, props, or any object in the scene
+    /// Smoothly moves camera between 4 random position points on X and Z axis
+    /// Creates a cinematic background effect for main menu with easing and pauses
     /// </summary>
     public class ObjectRotator : MonoBehaviour
     {
-        [Header("Rotation Settings")]
-        [Tooltip("Speed of rotation in degrees per second")]
-        [SerializeField] private float rotationSpeed = 50f;
+        [Header("Position Points")]
+        [Tooltip("Array of 4 Transform positions the camera will move between")]
+        [SerializeField] private Transform[] positionPoints = new Transform[4];
 
-        [Header("Rotation Axis")]
-        [Tooltip("Rotate around X axis")]
-        [SerializeField] private bool rotateX = false;
+        [Header("Movement Settings")]
+        [Tooltip("Movement speed in units per second")]
+        [SerializeField] private float moveSpeed = 3f;
 
-        [Tooltip("Rotate around Y axis")]
-        [SerializeField] private bool rotateY = true;
+        [Tooltip("How long to pause at each point (in seconds)")]
+        [SerializeField] private float pauseDuration = 1f;
 
-        [Tooltip("Rotate around Z axis")]
-        [SerializeField] private bool rotateZ = false;
+        [Header("Smoothing")]
+        [Tooltip("Enable smooth ease-in and ease-out transitions")]
+        [SerializeField] private bool useEasing = true;
+
+        [Tooltip("Curve for smooth speed transitions (0 to 1)")]
+        [SerializeField] private AnimationCurve easingCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
 
         [Header("Advanced Options")]
-        [Tooltip("Use local space instead of world space")]
-        [SerializeField] private bool useLocalSpace = true;
+        [Tooltip("Enable movement (uncheck to pause)")]
+        [SerializeField] private bool enableMovement = true;
 
-        [Tooltip("Reverse rotation direction")]
-        [SerializeField] private bool reverseDirection = false;
+        // Private state variables
+        private Vector3 startPosition;
+        private Vector3 targetPosition;
+        private Quaternion lockedRotation;
+        private int currentPointIndex = -1;
+        private int previousPointIndex = -1;
+        private float journeyLength;
+        private float journeyTravelled;
+        private bool isPaused = false;
+        private float pauseTimer = 0f;
 
-        [Tooltip("Enable rotation (uncheck to pause)")]
-        [SerializeField] private bool enableRotation = true;
+        private void Start()
+        {
+            // Validate position points
+            if (positionPoints == null || positionPoints.Length != 4)
+            {
+                Debug.LogError("ObjectRotator requires exactly 4 position points!");
+                enabled = false;
+                return;
+            }
+
+            // Check for null points
+            for (int i = 0; i < positionPoints.Length; i++)
+            {
+                if (positionPoints[i] == null)
+                {
+                    Debug.LogError($"Position point {i} is null! Please assign all 4 points.");
+                    enabled = false;
+                    return;
+                }
+            }
+
+            // Lock the rotation at start
+            lockedRotation = transform.rotation;
+
+            // Select first random point
+            SelectNewTarget();
+        }
 
         private void Update()
         {
-            if (!enableRotation) return;
+            if (!enableMovement) return;
 
-            // Calculate rotation amount for this frame
-            float rotationAmount = rotationSpeed * Time.deltaTime;
+            // Always enforce locked rotation
+            transform.rotation = lockedRotation;
 
-            // Apply reverse direction if enabled
-            if (reverseDirection)
+            // Handle pause state
+            if (isPaused)
             {
-                rotationAmount = -rotationAmount;
+                pauseTimer += Time.deltaTime;
+                if (pauseTimer >= pauseDuration)
+                {
+                    isPaused = false;
+                    pauseTimer = 0f;
+                    SelectNewTarget();
+                }
+                return;
             }
 
-            // Build rotation vector based on selected axes
-            Vector3 rotationVector = Vector3.zero;
+            // Move towards target
+            MoveTowardsTarget();
+        }
 
-            if (rotateX) rotationVector.x = rotationAmount;
-            if (rotateY) rotationVector.y = rotationAmount;
-            if (rotateZ) rotationVector.z = rotationAmount;
+        private void MoveTowardsTarget()
+        {
+            // Calculate distance to travel this frame
+            float distanceThisFrame = moveSpeed * Time.deltaTime;
+            journeyTravelled += distanceThisFrame;
 
-            // Apply rotation
-            if (useLocalSpace)
+            // Calculate progress (0 to 1)
+            float progress = Mathf.Clamp01(journeyTravelled / journeyLength);
+
+            // Apply easing if enabled
+            float easedProgress = useEasing ? easingCurve.Evaluate(progress) : progress;
+
+            // Move to new position
+            transform.position = Vector3.Lerp(startPosition, targetPosition, easedProgress);
+
+            // Check if we've reached the target
+            if (progress >= 1f)
             {
-                transform.Rotate(rotationVector, Space.Self);
-            }
-            else
-            {
-                transform.Rotate(rotationVector, Space.World);
+                // Snap to exact target position
+                transform.position = targetPosition;
+
+                // Start pause
+                isPaused = true;
             }
         }
 
+        private void SelectNewTarget()
+        {
+            // Store current point as previous
+            previousPointIndex = currentPointIndex;
+
+            // Select a random point that's NOT the previous point
+            int newPointIndex;
+            do
+            {
+                newPointIndex = Random.Range(0, positionPoints.Length);
+            }
+            while (newPointIndex == previousPointIndex && positionPoints.Length > 1);
+
+            currentPointIndex = newPointIndex;
+
+            // Set up journey
+            startPosition = transform.position;
+            targetPosition = positionPoints[currentPointIndex].position;
+            journeyLength = Vector3.Distance(startPosition, targetPosition);
+            journeyTravelled = 0f;
+        }
+
         /// <summary>
-        /// Set rotation speed at runtime
+        /// Set movement speed at runtime
         /// </summary>
         public void SetSpeed(float speed)
         {
-            rotationSpeed = speed;
+            moveSpeed = Mathf.Max(0.1f, speed);
         }
 
         /// <summary>
-        /// Enable or disable rotation
+        /// Enable or disable movement
         /// </summary>
         public void SetEnabled(bool enabled)
         {
-            enableRotation = enabled;
+            enableMovement = enabled;
         }
 
         /// <summary>
-        /// Set rotation axis at runtime
+        /// Set pause duration at each point
         /// </summary>
-        public void SetRotationAxis(bool x, bool y, bool z)
+        public void SetPauseDuration(float duration)
         {
-            rotateX = x;
-            rotateY = y;
-            rotateZ = z;
+            pauseDuration = Mathf.Max(0f, duration);
         }
 
         /// <summary>
-        /// Toggle reverse direction
+        /// Toggle easing on/off
         /// </summary>
-        public void SetReverse(bool reverse)
+        public void SetEasing(bool enabled)
         {
-            reverseDirection = reverse;
+            useEasing = enabled;
+        }
+
+        /// <summary>
+        /// Immediately jump to a specific point index
+        /// </summary>
+        public void JumpToPoint(int pointIndex)
+        {
+            if (pointIndex >= 0 && pointIndex < positionPoints.Length)
+            {
+                transform.position = positionPoints[pointIndex].position;
+                currentPointIndex = pointIndex;
+                isPaused = true;
+                pauseTimer = 0f;
+            }
         }
     }
 }
