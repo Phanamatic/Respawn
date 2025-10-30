@@ -72,9 +72,9 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         if (_mr == null) { Debug.LogError("MeshRenderer is null after adding."); return; }
         if (_mr.sharedMaterial == null)
         {
-            var shader = Shader.Find("Unlit/Color");
-            if (shader == null) { Debug.LogError("Unlit/Color shader not found."); return; }
-            var mat = new Material(shader);
+            // Prefer stencil-culling material (cuts out holes). Fallback to plain Unlit/Color.
+            var cutout = Shader.Find("Unlit/SpawnAreaStencilCull");
+            var mat = cutout ? new Material(cutout) : new Material(Shader.Find("Unlit/Color"));
             mat.SetInt("_ZWrite", 0);
             mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
             _mr.sharedMaterial = mat;
@@ -98,6 +98,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     {
         if (_mr == null || _col == null) return;
         _mr.transform.localPosition = _col.center + Vector3.up * yOffset;
+        // Parent scaled to area size; children use normalized units in BuildHoleVisuals.
         _mr.transform.localScale   = new Vector3(_col.size.x, 1f, _col.size.z);
 
         if (s_Mode == Mode.Hidden) { _mr.enabled = false; ClearHoleVisuals(); return; }
@@ -111,68 +112,69 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 
         mat.color = (isMine && s_TargetBlocked) ? blockedColor : (isMine ? activeColor : inactiveColor);
 
-        // Carved red "holes" only for the active player's area
-        if (isMine) BuildHoleVisuals(myWorld);
+        // Build **stencil masks** (no color) so the green overlay is cut out over holes.
+        if (isMine) BuildHoleMasks(myWorld);
         else ClearHoleVisuals();
-// [Highlighter] Paint red quads in the carved regions.
+// [Highlighter] Holes are real cut-outs via stencil – no red overlay.
     }
 
-    // Creates/updates child quads that visualize red "holes" carved by blockers.
-    void BuildHoleVisuals(Bounds myWorld)
+// Build child quads that write **stencil only** (no color), so the area material can cull them.
+void BuildHoleMasks(Bounds myWorld)
+{
+    if (myWorld.size.x <= 0.001f || myWorld.size.z <= 0.001f) { ClearHoleVisuals(); return; }
+
+    var parent = _mr.transform;
+    var holesRoot = parent.Find("Holes");
+    if (!holesRoot)
     {
-        var parent = _mr.transform;
-        var holesRoot = parent.Find("Holes");
-        if (!holesRoot)
-        {
-            var go = new GameObject("Holes");
-            holesRoot = go.transform;
-            holesRoot.SetParent(parent, false);
-            holesRoot.localPosition = Vector3.zero;
-            holesRoot.localRotation = Quaternion.identity;
-            holesRoot.localScale = Vector3.one;
-        }
-
-        int alive = 0;
-        for (int i = 0; i < s_Holes.Count; i++)
-        {
-            var inter = IntersectXZ(myWorld, s_Holes[i]);
-            if (inter.size.x <= 0.001f || inter.size.z <= 0.001f) continue;
-
-            var child = (alive < holesRoot.childCount) ? holesRoot.GetChild(alive) : null;
-            if (child == null)
-            {
-                var go = new GameObject($"Hole_{alive}");
-                child = go.transform;
-                child.SetParent(holesRoot, false);
-                var mf = go.AddComponent<MeshFilter>();
-                var mr = go.AddComponent<MeshRenderer>();
-                if (!mf.sharedMesh) mf.sharedMesh = CreateQuadXZ();
-                if (!mr.sharedMaterial)
-                {
-                    var shader = Shader.Find("Unlit/Color");
-                    var mat = new Material(shader); mat.SetInt("_ZWrite", 0); mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
-                    mr.sharedMaterial = mat;
-                }
-            }
-
-            child.localPosition = new Vector3(inter.center.x - myWorld.center.x, 0f, inter.center.z - myWorld.center.z);
-            child.localScale    = new Vector3(inter.size.x, 1f, inter.size.z);
-
-            var mrExisting = child.GetComponent<MeshRenderer>();
-            if (mrExisting && mrExisting.sharedMaterial) mrExisting.sharedMaterial.color = blockedColor;
-
-            alive++;
-        }
-
-        // Remove extras
-        for (int i = holesRoot.childCount - 1; i >= alive; i--)
-        {
-            var t = holesRoot.GetChild(i);
-            if (t) DestroyImmediate(t.gameObject);
-        }
+        var go = new GameObject("Holes");
+        holesRoot = go.transform;
+        holesRoot.SetParent(parent, false);
+        holesRoot.localPosition = new Vector3(0f, 0.01f, 0f); // slight lift, no z-fight
+        holesRoot.localRotation = Quaternion.identity;
+        holesRoot.localScale    = Vector3.one;
     }
 
-    void ClearHoleVisuals()
+    int alive = 0;
+    for (int i = 0; i < s_Holes.Count; i++)
+    {
+        var inter = IntersectXZ(myWorld, s_Holes[i]);
+        if (inter.size.x <= 0.001f || inter.size.z <= 0.001f) continue;
+
+        var child = (alive < holesRoot.childCount) ? holesRoot.GetChild(alive) : null;
+        if (child == null)
+        {
+            var go = new GameObject($"Hole_{alive}");
+            child = go.transform;
+            child.SetParent(holesRoot, false);
+            var mf = go.AddComponent<MeshFilter>();
+            var mr = go.AddComponent<MeshRenderer>();
+            if (!mf.sharedMesh) mf.sharedMesh = CreateQuadXZ();
+
+            // Hole = stencil writer (no color)
+            var maskShader = Shader.Find("Hidden/SpawnHoleMask");
+            mr.sharedMaterial = maskShader ? new Material(maskShader) : new Material(Shader.Find("Unlit/Color"));
+            mr.sharedMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        // Normalize to parent space
+        float nx = inter.size.x / myWorld.size.x;
+        float nz = inter.size.z / myWorld.size.z;
+        float px = (inter.center.x - myWorld.center.x) / myWorld.size.x;
+        float pz = (inter.center.z - myWorld.center.z) / myWorld.size.z;
+
+        child.localPosition = new Vector3(px, 0f, pz);
+        child.localScale    = new Vector3(nx, 1f, nz);
+
+        alive++;
+    }
+
+    for (int i = holesRoot.childCount - 1; i >= alive; i--)
+    {
+        var t = holesRoot.GetChild(i);
+        if (t) Destroy(t.gameObject);
+    }
+}    void ClearHoleVisuals()
     {
         if (_mr == null) return;
         var holesRoot = _mr.transform.Find("Holes");
@@ -180,7 +182,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         for (int i = holesRoot.childCount - 1; i >= 0; i--)
         {
             var t = holesRoot.GetChild(i);
-            if (t) DestroyImmediate(t.gameObject);
+            if (t) Destroy(t.gameObject);
         }
     }
 

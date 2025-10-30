@@ -548,7 +548,9 @@ namespace Game.Net
                     }
                 }
 
-                // Carved blocking check moved to click handler for feedback
+                // Cursor should show on green only: hide over carved holes.
+                if (valid && areas && areas.IsPointBlockedInBounds(_myAreaBounds, point))
+                    valid = false;
 
                 if (valid)
                 {
@@ -609,9 +611,7 @@ namespace Game.Net
             var b = collider.bounds;
             if (!ContainsXZ(b, point)) return;
 
-            if (areas.IsAreaBlocked(team)) return;
-
-            // Fine-grained validation: refuse points inside any "No Spawn" trigger.
+            // Fine-grained validation only: allow click if it's inside the area and not inside a blocker.
             if (areas.IsPointBlockedForTeam(team, point)) return;
 
             // Store the exact XZ and let server snap Y to Ground on spawn.
@@ -651,22 +651,15 @@ namespace Game.Net
                     continue;
                 }
 
-                bool areaBlocked = areas.IsAreaBlocked(team);
                 Vector3 point;
-                if (!areaBlocked && _chosenSpawns.TryGetValue(cid, out var chosen))
+                if (_chosenSpawns.TryGetValue(cid, out var chosen))
                 {
                     point = chosen;
                 }
-                else if (!areaBlocked)
-                {
-                    // Random pick must avoid any "No Spawn" trigger volumes.
-                    point = areas.GetRandomUnblockedPoint(team, 128);
-                }
-// [Match1v1] Random/timeout spawns come only from carved green space.
                 else
                 {
-                    point = areas.GetFallbackSpawn(team);
-                    Debug.LogWarning($"[Match1v1] Spawn area for team {team} blocked by tag '{areas.BlockingTag}'. Using fallback position {point}.");
+                    // Only sample from **unblocked** sub-areas (respects carved holes)
+                    point = areas.GetRandomUnblockedPoint(team, 128);
                 }
 
                 SpawnFreshPlayerForClient(cid, point, team);
