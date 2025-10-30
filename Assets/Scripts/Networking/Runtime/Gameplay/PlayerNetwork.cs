@@ -155,6 +155,9 @@ namespace Game.Net
                 TrySnapToGroundImmediate();
                 ResolveInitialPenetration();
 
+                // Lock physics rotation on all axes; mouse aim will set yaw explicitly.
+                if (_rb) _rb.constraints |= RigidbodyConstraints.FreezeRotationY;
+
                 SetPhase(initialPhase);
                 if (initialPhase == PlayerPhase.Match)
                 {
@@ -211,7 +214,8 @@ namespace Game.Net
             _rb.useGravity = true;
             _rb.interpolation = RigidbodyInterpolation.None;
             _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+            // Prevent physics-induced yaw. Mouse aim drives rotation.
+            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationY | RigidbodyConstraints.FreezeRotationZ;
 
             var root = modelRoot ? modelRoot : transform;
             _renderers = root.GetComponentsInChildren<Renderer>(true);
@@ -470,6 +474,7 @@ void OnActiveSlotChanged()
             if (_inputPaused)
             {
                 var v0 = _rb.linearVelocity; v0.x = 0f; v0.z = 0f; _rb.linearVelocity = v0;
+                _rb.angularVelocity = Vector3.zero;
                 return;
             }
 

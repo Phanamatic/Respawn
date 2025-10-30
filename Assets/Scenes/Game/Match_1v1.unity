@@ -66517,6 +66517,16 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!23 &852818403 stripped
+MeshRenderer:
+  m_CorrespondingSourceObject: {fileID: 4448067503355318295, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+  m_PrefabInstance: {fileID: 1910055251}
+  m_PrefabAsset: {fileID: 0}
+--- !u!23 &852818404 stripped
+MeshRenderer:
+  m_CorrespondingSourceObject: {fileID: 4044290992781194864, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+  m_PrefabInstance: {fileID: 1910055251}
+  m_PrefabAsset: {fileID: 0}
 --- !u!43 &860122560
 Mesh:
   m_ObjectHideFlags: 0
@@ -74181,6 +74191,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 210679990}
+  - {fileID: 1298708463}
   - {fileID: 415427205}
   - {fileID: 561899673}
   m_Father: {fileID: 0}
@@ -74200,6 +74211,10 @@ MonoBehaviour:
   teamAArea: {fileID: 210679991}
   teamBArea: {fileID: 561899674}
   neutralArea: {fileID: 415427206}
+  mapArea: {fileID: 1298708461}
+  splitAxis: 0
+  teamPercent: 0.45
+  neutralPercent: 0.1
   noSpawnTag: No spawn
 --- !u!43 &972708942
 Mesh:
@@ -102087,6 +102102,76 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &1298708460
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1298708463}
+  - component: {fileID: 1298708461}
+  - component: {fileID: 1298708462}
+  m_Layer: 0
+  m_Name: Map_Area
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!65 &1298708461
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1298708460}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 2.2989006, y: 1, z: 0.6688261}
+  m_Center: {x: -0.8807338, y: 0, z: -0.1584925}
+--- !u!114 &1298708462
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1298708460}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  activeColor: {r: 0.2, g: 0.8, b: 0.2, a: 0.28}
+  inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
+  blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
+  yOffset: 0.02
+--- !u!4 &1298708463
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1298708460}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 181}
+  m_LocalScale: {x: 25, y: 1, z: 85}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 971889931}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1299123245
 GameObject:
   m_ObjectHideFlags: 0
@@ -142477,6 +142562,10 @@ MonoBehaviour:
   mapPanEnd: {fileID: 600182007}
   mapPanSeconds: 3
   spawnSelectLookTarget: {fileID: 550800117}
+  fadeDuringSelect:
+  - {fileID: 852818404}
+  - {fileID: 852818403}
+  selectFadeAlpha: 0.3
   spawnCamBackMultiplier: 1.8
   spawnCamMinBack: 22
   spawnCamHeightMin: 35

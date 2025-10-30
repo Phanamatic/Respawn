@@ -10,47 +10,90 @@ namespace Game.Net
     [DisallowMultipleComponent]
     public sealed class Match1v1Areas : MonoBehaviour
     {
-        [Header("Assign BoxColliders (isTrigger=true is fine)")]
+        [Header("Assign BoxColliders (legacy 3-collider mode)")]
         [SerializeField] private BoxCollider teamAArea;
         [SerializeField] private BoxCollider teamBArea;
         [SerializeField] private BoxCollider neutralArea;
+
+        [Header("Unified map area (new)")]
+        [SerializeField, Tooltip("Single BoxCollider covering the whole playable map. If set, the script splits it 45/10/45 into TeamA/Neutral/TeamB.")]
+        private BoxCollider mapArea;
+        public enum SplitAxis { X, Z }
+        [SerializeField] private SplitAxis splitAxis = SplitAxis.X;
+        [SerializeField, Range(0.05f, 0.9f)] private float teamPercent = 0.45f;
+        [SerializeField, Range(0.0f, 0.9f)] private float neutralPercent = 0.10f;
+
         [Header("Spawn Blocking")]
         [SerializeField] private string noSpawnTag = "No Spawn";
 // Tag must exactly match the scene objects' Tag; fixes missed blockers due to casing/spacing.
 
-        public bool HasAll => teamAArea && teamBArea && neutralArea;
+        bool UseUnified => mapArea != null;
+        bool _swapSides; // set by controller at halftime
+
+        public bool HasAll => UseUnified ? mapArea : (teamAArea && teamBArea && neutralArea);
 
         public string BlockingTag => noSpawnTag;
 
+        // Halftime swap control (called by controller)
+        public void SetSwapSides(bool swap) { _swapSides = swap; }
+
+        // Public bounds accessors that abstract legacy vs unified modes
+        public Bounds GetMapBounds()
+        {
+            if (UseUnified) return mapArea.bounds;
+            // compose from legacy A+B+Neutral combined
+            var b = teamAArea ? teamAArea.bounds : new Bounds(transform.position, Vector3.zero);
+            if (teamBArea) b.Encapsulate(teamBArea.bounds);
+            if (neutralArea) b.Encapsulate(neutralArea.bounds);
+            return b;
+        }
+
+        public Bounds GetTeamBounds(TeamId team)
+        {
+            if (!UseUnified)
+                return (team == TeamId.A ? teamAArea : teamBArea)?.bounds ?? new Bounds(transform.position, Vector3.zero);
+
+            var (a, n, b) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
+            return team == TeamId.A ? a : b;
+        }
+
+        public Bounds GetNeutralBounds()
+        {
+            if (!UseUnified) return neutralArea ? neutralArea.bounds : new Bounds(transform.position, Vector3.zero);
+            var (_, n, _) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
+            return n;
+        }
+
         public bool Contains(TeamId team, Vector3 worldPoint)
         {
-            var c = team == TeamId.A ? teamAArea : teamBArea;
-            return c && c.bounds.Contains(worldPoint);
+            return GetTeamBounds(team).Contains(worldPoint);
         }
 
         public Vector3 GetRandomPoint(TeamId team)
         {
-            var c = team == TeamId.A ? teamAArea : teamBArea;
-            return c ? RandomPointInBounds(c.bounds) : transform.position;
+            var b = GetTeamBounds(team);
+            return b.size.sqrMagnitude > 0f ? RandomPointInBounds(b) : transform.position;
         }
 
         public bool IsAreaBlocked(TeamId team)
         {
-            var c = GetTeamCollider(team);
-            if (!c || string.IsNullOrEmpty(noSpawnTag)) return false;
-            return BoundsContainsTag(c.bounds, noSpawnTag, c);
+            if (string.IsNullOrEmpty(noSpawnTag)) return false;
+            var b = GetTeamBounds(team);
+            return BoundsContainsTag(b, noSpawnTag, null);
         }
 
-        public Vector3 GetNeutralCenter() => neutralArea ? neutralArea.bounds.center : transform.position;
+        public Vector3 GetNeutralCenter()
+        {
+            var b = GetNeutralBounds();
+            return b.size.sqrMagnitude > 0f ? b.center : transform.position;
+        }
 
         public BoxCollider GetTeamCollider(TeamId team) => team == TeamId.A ? teamAArea : teamBArea;
 
         // NEW: fine-grained spawn blocking helpers + random sampler that avoids "No Spawn" triggers.
         public bool IsPointBlockedForTeam(TeamId team, Vector3 worldPoint)
         {
-            var area = GetTeamCollider(team);
-            if (!area) return true;
-            var b = area.bounds;
+            var b = GetTeamBounds(team);
             if (!b.Contains(worldPoint)) return true;
             return IsPointInAnyBlocker(worldPoint, b, noSpawnTag);
         }
@@ -62,10 +105,9 @@ namespace Game.Net
 
         public Vector3 GetRandomUnblockedPoint(TeamId team, int maxTries = 128)
         {
-            var area = GetTeamCollider(team);
-            if (!area) return transform.position;
+            var b = GetTeamBounds(team);
+            if (b.size.sqrMagnitude <= 0f) return transform.position;
 
-            var b = area.bounds;
             int tries = Mathf.Max(8, maxTries);
             for (int i = 0; i < tries; i++)
             {
@@ -73,8 +115,7 @@ namespace Game.Net
                 if (!IsPointInAnyBlocker(p, b, noSpawnTag))
                     return p;
             }
-
-            // Deterministic fallback ring samples around center
+            // Deterministic rings around center...
             Vector3 c = b.center;
             float rx = Mathf.Max(1f, b.extents.x * 0.25f);
             float rz = Mathf.Max(1f, b.extents.z * 0.25f);
@@ -86,7 +127,6 @@ namespace Game.Net
                     return p;
                 rx *= 1.08f; rz *= 1.08f;
             }
-
             return GetFallbackSpawn(team);
         }
 
@@ -118,6 +158,53 @@ namespace Game.Net
         }
 
         // ---------- Internals ----------
+        static (Bounds teamA, Bounds neutral, Bounds teamB) ComputeSplitBounds(Bounds map, SplitAxis axis, float teamPct, float neutralPct, bool swap)
+        {
+            teamPct = Mathf.Clamp01(teamPct);
+            neutralPct = Mathf.Clamp01(neutralPct);
+            float totalTeam = teamPct * 2f + neutralPct;
+            if (totalTeam <= 0f) totalTeam = 1f;
+
+            // Normalize to exactly 45/10/45 if values not summing to 1
+            float L = axis == SplitAxis.X ? map.size.x : map.size.z;
+            float teamLen = L * (teamPct / (teamPct * 2f + neutralPct));
+            float neutralLen = L * (neutralPct / (teamPct * 2f + neutralPct));
+
+            // Left-to-right or bottom-to-top depending on axis
+            Vector3 min = map.min;
+            Vector3 max = map.max;
+
+            Bounds a = map, n = map, b = map;
+
+            if (axis == SplitAxis.X)
+            {
+                float x0 = min.x;
+                float x1 = x0 + teamLen;
+                float x2 = x1 + neutralLen;
+                float x3 = max.x;
+
+                // A | Neutral | B in world, then swap if needed
+                a.SetMinMax(new Vector3(x0, min.y, min.z), new Vector3(x1, max.y, max.z));
+                n.SetMinMax(new Vector3(x1, min.y, min.z), new Vector3(x2, max.y, max.z));
+                b.SetMinMax(new Vector3(x2, min.y, min.z), new Vector3(x3, max.y, max.z));
+            }
+            else
+            {
+                float z0 = min.z;
+                float z1 = z0 + teamLen;
+                float z2 = z1 + neutralLen;
+                float z3 = max.z;
+
+                a.SetMinMax(new Vector3(min.x, min.y, z0), new Vector3(max.x, max.y, z1));
+                n.SetMinMax(new Vector3(min.x, min.y, z1), new Vector3(max.x, max.y, z2));
+                b.SetMinMax(new Vector3(min.x, min.y, z2), new Vector3(max.x, max.y, z3));
+            }
+
+            if (swap)
+                return (b, n, a);
+            return (a, n, b);
+        }
+
         static Bounds IntersectXZ(Bounds a, Bounds b)
         {
             var min = new Vector3(Mathf.Max(a.min.x, b.min.x), 0f, Mathf.Max(a.min.z, b.min.z));

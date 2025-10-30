@@ -91,6 +91,12 @@ namespace Game.Net
         [Header("Spawn Select Camera Target")]
         [SerializeField] Transform spawnSelectLookTarget;
 
+        [Header("Fade During Selection")]
+        [Tooltip("These renderers fade to 30% opacity while players choose spawns.")]
+        [SerializeField] Renderer[] fadeDuringSelect;
+        [Range(0f,1f)] [SerializeField] float selectFadeAlpha = 0.3f;
+        Dictionary<Renderer, Color[]> _origFadeColors = new Dictionary<Renderer, Color[]>();
+
         [Header("Spawn Camera Framing")]
         [SerializeField, Min(0.5f)] float spawnCamBackMultiplier = 1.8f;
         [SerializeField, Min(0f)]   float spawnCamMinBack        = 22f;
@@ -273,6 +279,13 @@ namespace Game.Net
                 SetAllPlayersVisibleClientRpc(false);
             }
 
+            // Halftime side swap: from round > ceil(winsNeeded/2) we flip Team A/B spawn sides.
+            if (areas)
+            {
+                bool swap = _roundNumber.Value > Mathf.CeilToInt(winsNeeded / 2f);
+                areas.SetSwapSides(swap);
+            }
+
             StartSpawnSelect();
         }
 
@@ -292,14 +305,7 @@ namespace Game.Net
                     continue;
                 }
 
-                var collider = areas.GetTeamCollider(team);
-                if (!collider)
-                {
-                    Debug.LogWarning($"[Match1v1] No collider defined for team {team}; skipping spawn select for client {cid}.");
-                    continue;
-                }
-
-                var bounds = collider.bounds;
+                var bounds = areas.GetTeamBounds(team);
                 bool blocked = areas.IsAreaBlocked(team);
                 BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, blocked, ToClient(cid));
             }
@@ -480,10 +486,19 @@ namespace Game.Net
                         rend.material.color = new Color(1f, 1f, 0f, 0.7f);
                     }
                 }
+
+                // Ensure cursor never blocks ground raycasts
+                foreach (var col in _spawnCursor.GetComponentsInChildren<Collider>(true))
+                    if (col) col.enabled = false;
+                int ignoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
+                if (ignoreRaycast >= 0) _spawnCursor.layer = ignoreRaycast;
             }
 
             if (_spawnCursor)
                 _spawnCursor.SetActive(false);
+
+            // Fade configured objects during selection
+            ApplySelectTransparency(true);
 
             if (_isoCam)
             {
@@ -605,10 +620,7 @@ namespace Game.Net
 
             if (!areas) return;
 
-            var collider = areas.GetTeamCollider(team);
-            if (!collider) return;
-
-            var b = collider.bounds;
+            var b = areas.GetTeamBounds(team);
             if (!ContainsXZ(b, point)) return;
 
             // Fine-grained validation only: allow click if it's inside the area and not inside a blocker.
@@ -686,7 +698,7 @@ namespace Game.Net
             var t = inst.transform;
 
             // Face neutral center.
-            Vector3 look = areas.GetNeutralCenter() - point;
+            Vector3 look = areas.GetNeutralCenter() - point; // neutral center now from unified split if enabled
             look.y = 0f;
             var rot = look.sqrMagnitude > 0.001f
                 ? Quaternion.LookRotation(look.normalized, Vector3.up)
@@ -694,9 +706,24 @@ namespace Game.Net
 
             t.SetPositionAndRotation(point, rot);
 
-            // Snap to Ground layer before spawning.
+            // Snap to Ground and, if obstructed by geometry, slide to nearest clear ground beside it.
             var capsule = inst.GetComponent<CapsuleCollider>();
-            GroundClampServer.SnapToGround(t, EffectiveGroundMask(), 0.02f, capsule, 10f, 50f);
+            var gmask = EffectiveGroundMask();
+            GroundClampServer.SnapToGround(t, gmask, 0.02f, capsule, 10f, 50f);
+
+            // If still intersecting, try nearest clear on ground
+            if (!GroundClampServer.TryFindNearestClearGround(t.position, out var clear, gmask, capsule, 0.02f, 10f, 50f, 4f, 6, 24))
+            {
+                // keep snapped position even if blocked; depenetration will resolve
+            }
+            else
+            {
+                t.position = clear;
+            }
+
+            // Ensure GroundClampServer exists on server to maintain clamp
+            if (!inst.GetComponent<GroundClampServer>())
+                inst.gameObject.AddComponent<GroundClampServer>();
 
             // Ensure prefab is registered then spawn.
             try { NetworkManager.AddNetworkPrefab(inst.gameObject); } catch { }
@@ -870,6 +897,9 @@ namespace Game.Net
             ShowCanvas(spawnCanvas, false);
             SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, new Bounds(), false);
 
+            // Restore transparency
+            ApplySelectTransparency(false);
+
             if (_spawnCursor)
             {
                 Destroy(_spawnCursor);
@@ -892,6 +922,64 @@ namespace Game.Net
             }
         }
 // Now we always reattach the iso camera to the current local PlayerObject (covers late spawn/random cases).
+
+        // Apply or restore transparency on configured objects
+        void ApplySelectTransparency(bool on)
+        {
+            if (fadeDuringSelect == null) return;
+            for (int i = 0; i < fadeDuringSelect.Length; i++)
+            {
+                var r = fadeDuringSelect[i];
+                if (!r) continue;
+
+                if (on)
+                {
+                    if (!_origFadeColors.ContainsKey(r))
+                    {
+                        var mats = r.materials;
+                        var colors = new Color[mats.Length];
+                        for (int m = 0; m < mats.Length; m++)
+                        {
+                            var mat = mats[m];
+                            Color c = Color.white;
+                            if (mat.HasProperty("_BaseColor")) c = mat.GetColor("_BaseColor");
+                            else if (mat.HasProperty("_Color")) c = mat.GetColor("_Color");
+                            colors[m] = c;
+                        }
+                        _origFadeColors[r] = colors;
+                    }
+
+                    var matsNow = r.materials;
+                    for (int m = 0; m < matsNow.Length; m++)
+                    {
+                        var mat = matsNow[m];
+                        if (mat.HasProperty("_BaseColor"))
+                        {
+                            var c = mat.GetColor("_BaseColor"); c.a = selectFadeAlpha; mat.SetColor("_BaseColor", c);
+                        }
+                        else if (mat.HasProperty("_Color"))
+                        {
+                            var c = mat.GetColor("_Color"); c.a = selectFadeAlpha; mat.SetColor("_Color", c);
+                        }
+                    }
+                }
+                else
+                {
+                    if (_origFadeColors.TryGetValue(r, out var colors))
+                    {
+                        var mats = r.materials;
+                        for (int m = 0; m < mats.Length && m < colors.Length; m++)
+                        {
+                            var mat = mats[m];
+                            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", colors[m]);
+                            else if (mat.HasProperty("_Color")) mat.SetColor("_Color", colors[m]);
+                        }
+                    }
+                }
+            }
+
+            if (!on) _origFadeColors.Clear();
+        }
 
         void OnReturnToLobby()
         {

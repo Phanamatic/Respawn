@@ -356,7 +356,7 @@ MonoBehaviour:
   extrapolationLimit: 15
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 8
   groundSnapUp: 2
   groundSnapDown: 6
   groundSkin: 0.02
