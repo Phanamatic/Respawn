@@ -97,12 +97,10 @@ namespace Game.Net
         [Range(0f,1f)] [SerializeField] float selectFadeAlpha = 0.3f;
         Dictionary<Renderer, Color[]> _origFadeColors = new Dictionary<Renderer, Color[]>();
 
-        [Header("Spawn Camera Framing")]
-        [SerializeField, Min(0.5f)] float spawnCamBackMultiplier = 1.8f;
-        [SerializeField, Min(0f)]   float spawnCamMinBack        = 22f;
-        [SerializeField, Min(0f)]   float spawnCamHeightMin      = 35f;
-        [SerializeField, Min(0.1f)] float spawnCamHeightMultiplier = 3.0f;
-        [SerializeField] Transform  spawnCamBackRef; // Optional: use this transform’s forward for “behind” direction
+        [Header("Spawn Camera Framing (Top-Down)")]
+        [SerializeField, Min(1f)] float spawnCamMargin = 1.08f;  // % margin around map
+        [SerializeField, Min(10f)] float spawnCamHeight = 80f;   // just needs to clear scenery when orthographic=false
+        [SerializeField] bool spawnCamUseOrthographic = true;
 
         bool _didIntroPanThisRound;
         private readonly NetworkVariable<MatchState> _state = new();
@@ -463,7 +461,7 @@ namespace Game.Net
             }
 
             // No pan path: frame camera from bounds and open UI now.
-            FrameSpawnCamera(_myAreaBounds);
+            FrameSpawnCameraFullMap();
             ShowCanvas(spawnCanvas, true);
             if (spawnHintText)
             {
@@ -530,7 +528,7 @@ namespace Game.Net
                 if (spawnHintText)
                 {
                     float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-                    spawnHintText.text = $"Click to choose spawn ({remain:0}s)";
+                    spawnHintText.text = _myAreaBlocked ? $"Spawn blocked in this area ({remain:0}s)" : $"Click to choose spawn ({remain:0}s)";
                 }
                 yield return null;
             }
@@ -945,6 +943,9 @@ namespace Game.Net
                             if (mat.HasProperty("_BaseColor")) c = mat.GetColor("_BaseColor");
                             else if (mat.HasProperty("_Color")) c = mat.GetColor("_Color");
                             colors[m] = c;
+
+                            // Switch URP Lit to Transparent if currently Opaque.
+                            TryMakeTransparent(mat, true);
                         }
                         _origFadeColors[r] = colors;
                     }
@@ -961,6 +962,7 @@ namespace Game.Net
                         {
                             var c = mat.GetColor("_Color"); c.a = selectFadeAlpha; mat.SetColor("_Color", c);
                         }
+                        TryMakeTransparent(mat, true);
                     }
                 }
                 else
@@ -973,12 +975,43 @@ namespace Game.Net
                             var mat = mats[m];
                             if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", colors[m]);
                             else if (mat.HasProperty("_Color")) mat.SetColor("_Color", colors[m]);
+
+                            // Restore to Opaque if we flipped it.
+                            TryMakeTransparent(mat, false);
                         }
                     }
                 }
             }
 
             if (!on) _origFadeColors.Clear();
+        }
+
+        // Minimal URP Lit toggle: Opaque<->Transparent
+        static void TryMakeTransparent(Material mat, bool on)
+        {
+            if (!mat) return;
+
+            // URP Lit: _Surface 0=Opaque, 1=Transparent
+            if (mat.HasProperty("_Surface"))
+                mat.SetFloat("_Surface", on ? 1f : 0f);
+
+            // Common blending toggles
+            if (on)
+            {
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            }
+            else
+            {
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+                mat.SetInt("_ZWrite", 1);
+                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = -1; // let shader decide
+            }
         }
 
         void OnReturnToLobby()
@@ -1000,33 +1033,58 @@ namespace Game.Net
             return null;
         }
 
-        // Camera framing from spawn area bounds.
-        // Places camera higher and centered behind the look target. Less side bias.
-        void FrameSpawnCamera(Bounds b)
+        // Top-down orthographic/perspective frame of the full map bounds with a margin.
+        void FrameSpawnCameraFullMap()
         {
             if (!AcquireCameraSafe()) return;
+            var map = areas ? areas.GetMapBounds() : new Bounds(Vector3.zero, new Vector3(60, 0, 60));
+            var center = map.center;
+            float halfW = map.extents.x * spawnCamMargin;
+            float halfH = map.extents.z * spawnCamMargin;
 
-            Vector3 lookPos = spawnSelectLookTarget ? spawnSelectLookTarget.position : b.center;
+            // Top-down position & rotation
+            var pos = new Vector3(center.x, spawnCamHeight, center.z);
+            var rot = Quaternion.Euler(90f, 0f, 0f);
 
-            // Back distance scales with area size
-            float maxExtent = Mathf.Max(b.extents.x, b.extents.z);
-            float back = Mathf.Max(spawnCamMinBack, maxExtent * spawnCamBackMultiplier);
+            if (spawnCamUseOrthographic)
+            {
+                _cam.orthographic = true;
+                _cam.orthographicSize = Mathf.Max(halfW, halfH);
+            }
+            else
+            {
+                _cam.orthographic = false;
+                // Rough FOV fit (keep simple): move up until both half sizes fit
+                float fovRad = Mathf.Deg2Rad * Mathf.Max(1f, _cam.fieldOfView);
+                float need = Mathf.Max(halfW, halfH) / Mathf.Tan(fovRad * 0.5f);
+                pos.y = Mathf.Max(spawnCamHeight, need);
+            }
 
-            // Height scales with area size; ensure a higher vantage
-            float height = Mathf.Max(spawnCamHeightMin, maxExtent * spawnCamHeightMultiplier);
+            _cam.transform.SetPositionAndRotation(pos, rot);
+        }
 
-            // Choose a consistent "behind" direction:
-            // 1) Use explicit reference’s forward if provided
-            // 2) Else use spawnSelectLookTarget.forward
-            // 3) Else fall back to pan path direction or world +Z
-            Vector3 behindDir =
-                (spawnCamBackRef ? spawnCamBackRef.forward :
-                (spawnSelectLookTarget ? spawnSelectLookTarget.forward :
-                (mapPanEnd && mapPanStart ? (mapPanEnd.position - mapPanStart.position).normalized : Vector3.forward)));
 
-            // Place camera behind the look target, elevated
-            Vector3 pos = lookPos - behindDir.normalized * back + Vector3.up * height;
-            _cam.transform.SetPositionAndRotation(pos, Quaternion.LookRotation((lookPos - pos).normalized, Vector3.up));
+
+        // Ensure spawn cursor exists and starts hidden.
+        void EnsureSpawnCursor()
+        {
+            if (!_spawnCursor)
+            {
+                if (spawnCursorPrefab) _spawnCursor = Instantiate(spawnCursorPrefab);
+                else
+                {
+                    _spawnCursor = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    _spawnCursor.transform.localScale = new Vector3(1f, 0.2f, 1f);
+                    Destroy(_spawnCursor.GetComponent<Collider>());
+                    var rend = _spawnCursor.GetComponent<Renderer>();
+                    if (rend) rend.material.color = Color.green;
+                }
+                foreach (var col in _spawnCursor.GetComponentsInChildren<Collider>(true))
+                    Destroy(col);
+                int ignoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
+                if (ignoreRaycast >= 0) _spawnCursor.layer = ignoreRaycast;
+            }
+            if (_spawnCursor) _spawnCursor.SetActive(false);
         }
 
         // Remove any ship/stand-in leftovers and hide real player visuals until actual spawn.
@@ -1135,15 +1193,24 @@ namespace Game.Net
 // cut to spawn-select framing
 // clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
 ClearCinematicShip();
-FrameSpawnCamera(_myAreaBounds);
+FrameSpawnCameraFullMap();
+// Re-send carved holes (guard against blockers changing during pan)
 {
     List<Bounds> holes = null;
     if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
     SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
 }
-_panCo = null; // mark pan done            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText)
-                spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
+// Ensure cursor exists and starts hidden
+EnsureSpawnCursor();
+// Fade configured objects during selection
+ApplySelectTransparency(true);
+_panCo = null;
+ShowCanvas(spawnCanvas, true);
+if (spawnHintText)
+    spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
+// Start the timer now that UI is open
+if (_selectCo != null) StopCoroutine(_selectCo);
+_selectCo = StartCoroutine(CoSpawnSelectTimer());
         }
 
         // Ensure a SeatMount exists under the ship and return it.

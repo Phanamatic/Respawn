@@ -8,6 +8,10 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 {
     public enum Mode { Hidden, Choosing }
 
+    [Header("Behavior")]
+    [Tooltip("When true, ignore this object's BoxCollider during Choosing and render exactly the target Bounds sent from the controller.")]
+    [SerializeField] bool followTargetBounds = true;
+
     [Header("Visual")]
     [SerializeField] Color activeColor = new Color(0.2f, 0.8f, 0.2f, 0.28f);
     [SerializeField] Color inactiveColor = new Color(0.8f, 0.2f, 0.2f, 0.14f);
@@ -97,25 +101,23 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     void Apply()
     {
         if (_mr == null || _col == null) return;
-        _mr.transform.localPosition = _col.center + Vector3.up * yOffset;
-        // Parent scaled to area size; children use normalized units in BuildHoleVisuals.
-        _mr.transform.localScale   = new Vector3(_col.size.x, 1f, _col.size.z);
 
         if (s_Mode == Mode.Hidden) { _mr.enabled = false; ClearHoleVisuals(); return; }
-
         _mr.enabled = true;
-        var myWorld = ToWorldBounds(_col);                 // world AABB
-        bool isMine = ContainsXZ(myWorld, s_Target.center)
-                   && SizesRoughlyMatchXZ(myWorld.size, s_Target.size);
-        var mat = _mr.sharedMaterial;
-        if (!mat) return;
 
-        mat.color = (isMine && s_TargetBlocked) ? blockedColor : (isMine ? activeColor : inactiveColor);
+        // Either render our own collider (legacy) or exactly the controller's target bounds.
+        Bounds renderWorld = followTargetBounds ? s_Target : ToWorldBounds(_col);
 
-        // Build **stencil masks** (no color) so the green overlay is cut out over holes.
-        if (isMine) BuildHoleMasks(myWorld);
-        else ClearHoleVisuals();
-// [Highlighter] Holes are real cut-outs via stencil – no red overlay.
+        // Place/scale visual quad directly from the render bounds.
+        _mr.transform.position = new Vector3(renderWorld.center.x, _col.bounds.center.y + yOffset, renderWorld.center.z);
+        _mr.transform.localRotation = Quaternion.identity;
+        _mr.transform.localScale = new Vector3(renderWorld.size.x, 1f, renderWorld.size.z);
+
+        var mat = _mr.sharedMaterial; if (!mat) return;
+        mat.color = followTargetBounds ? (s_TargetBlocked ? blockedColor : activeColor) : inactiveColor;
+
+        // Carve holes relative to what we're rendering.
+        if (followTargetBounds) BuildHoleMasks(renderWorld); else ClearHoleVisuals();
     }
 
 // Build child quads that write **stencil only** (no color), so the area material can cull them.
