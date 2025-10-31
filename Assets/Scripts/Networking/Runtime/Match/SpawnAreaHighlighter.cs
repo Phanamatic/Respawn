@@ -8,6 +8,14 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
 {
     public enum Mode { Hidden, Choosing }
 
+    public enum AreaRole
+    {
+        Friendly,
+        Enemy,
+        Neutral,
+        MapBounds
+    }
+
     [Header("Behavior")]
     [Tooltip("When true, ignore this object's BoxCollider during Choosing and render exactly the target Bounds sent from the controller.")]
     [SerializeField] bool followTargetBounds = true;
@@ -18,10 +26,17 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     [SerializeField] Color blockedColor = new Color(0.8f, 0.2f, 0.2f, 0.35f);
     [SerializeField, Min(0f)] float yOffset = 0.02f;
 
+    [Header("Role")]
+    [SerializeField] AreaRole areaRole = AreaRole.Friendly;
+    [SerializeField] bool autoDetectRole = true;
+
     static readonly List<SpawnAreaHighlighter> s_All = new();
     static Mode s_Mode = Mode.Hidden;
-    static Bounds s_Target;
-    static bool s_TargetBlocked;
+    static Bounds s_FriendlyBounds;
+    static Bounds s_EnemyBounds;
+    static Bounds s_NeutralBounds;
+    static Bounds s_MapBounds;
+    static bool s_FriendlyBlocked;
     // Carved "holes" from blockers (world-space XZ AABBs)
     static readonly List<Bounds> s_Holes = new();
 // [Highlighter] Store per-area carved rectangles.
@@ -29,12 +44,14 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
     BoxCollider _col;
     MeshRenderer _mr;
     MeshFilter _mf;
+    bool _roleResolved;
 
     void OnEnable()
     {
         _col = GetComponent<BoxCollider>();
         Build();
         if (!s_All.Contains(this)) s_All.Add(this);
+        _roleResolved = false;
         Apply();
     }
 
@@ -85,18 +102,27 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         }
     }
 
-    public static void SetMode(Mode mode, Bounds target, bool targetBlocked = false, List<Bounds> holes = null)
+    public static void SetLayout(Mode mode, Bounds friendly, Bounds enemy, Bounds neutral, Bounds map,
+        bool friendlyBlocked = false, List<Bounds> holes = null)
     {
         s_Mode = mode;
-        s_Target = target;
-        s_TargetBlocked = targetBlocked;
+        s_FriendlyBounds = friendly;
+        s_EnemyBounds = enemy;
+        s_NeutralBounds = neutral;
+        s_MapBounds = map;
+        s_FriendlyBlocked = friendlyBlocked;
 
         s_Holes.Clear();
         if (holes != null) s_Holes.AddRange(holes);
 
-        for (int i = 0; i < s_All.Count; i++) s_All[i].Apply();
+        for (int i = 0; i < s_All.Count; i++)
+        {
+            var h = s_All[i];
+            if (!h) continue;
+            h._roleResolved = false;
+            h.Apply();
+        }
     }
-// [Highlighter] New holes argument from controller.
 
     void Apply()
     {
@@ -105,8 +131,27 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         if (s_Mode == Mode.Hidden) { _mr.enabled = false; ClearHoleVisuals(); return; }
         _mr.enabled = true;
 
-        // Either render our own collider (legacy) or exactly the controller's target bounds.
-        Bounds renderWorld = followTargetBounds ? s_Target : ToWorldBounds(_col);
+        if (!_roleResolved && autoDetectRole)
+        {
+            areaRole = GuessRoleFromCollider(areaRole);
+            _roleResolved = true;
+        }
+
+        if (!TryGetBoundsForRole(out var target))
+        {
+            _mr.enabled = false;
+            ClearHoleVisuals();
+            return;
+        }
+
+        // Either render our own collider (legacy) or the layout's bounds for our role.
+        Bounds renderWorld = followTargetBounds ? target : ToWorldBounds(_col);
+        if (renderWorld.size.x <= 0.001f || renderWorld.size.z <= 0.001f)
+        {
+            _mr.enabled = false;
+            ClearHoleVisuals();
+            return;
+        }
 
         // Place/scale visual quad directly from the render bounds.
         _mr.transform.position = new Vector3(renderWorld.center.x, _col.bounds.center.y + yOffset, renderWorld.center.z);
@@ -114,10 +159,13 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         _mr.transform.localScale = new Vector3(renderWorld.size.x, 1f, renderWorld.size.z);
 
         var mat = _mr.sharedMaterial; if (!mat) return;
-        mat.color = followTargetBounds ? (s_TargetBlocked ? blockedColor : activeColor) : inactiveColor;
+        mat.color = ResolveColorForRole(followTargetBounds);
 
-        // Carve holes relative to what we're rendering.
-        if (followTargetBounds) BuildHoleMasks(renderWorld); else ClearHoleVisuals();
+        // Carve holes relative to what we're rendering when highlighting the friendly area.
+        if (followTargetBounds && areaRole == AreaRole.Friendly)
+            BuildHoleMasks(renderWorld);
+        else
+            ClearHoleVisuals();
     }
 
 // Build child quads that write **stencil only** (no color), so the area material can cull them.
@@ -176,7 +224,9 @@ void BuildHoleMasks(Bounds myWorld)
         var t = holesRoot.GetChild(i);
         if (t) Destroy(t.gameObject);
     }
-}    void ClearHoleVisuals()
+}
+
+    void ClearHoleVisuals()
     {
         if (_mr == null) return;
         var holesRoot = _mr.transform.Find("Holes");
@@ -215,6 +265,78 @@ void BuildHoleMasks(Bounds myWorld)
     }
 // [Highlighter] Adds hole quads and intersection helper.
 
+    bool TryGetBoundsForRole(out Bounds bounds)
+    {
+        bounds = default;
+        switch (areaRole)
+        {
+            case AreaRole.Friendly: bounds = s_FriendlyBounds; break;
+            case AreaRole.Enemy:    bounds = s_EnemyBounds;   break;
+            case AreaRole.Neutral:  bounds = s_NeutralBounds; break;
+            case AreaRole.MapBounds:bounds = s_MapBounds;     break;
+            default: bounds = s_FriendlyBounds; break;
+        }
+
+        if (!followTargetBounds)
+            return true;
+
+        return bounds.size.x > 0.001f && bounds.size.z > 0.001f;
+    }
+
+    Color ResolveColorForRole(bool usingLayoutBounds)
+    {
+        if (!usingLayoutBounds)
+            return inactiveColor;
+
+        return areaRole switch
+        {
+            AreaRole.Friendly => s_FriendlyBlocked ? blockedColor : activeColor,
+            AreaRole.Enemy    => inactiveColor,
+            AreaRole.Neutral  => inactiveColor,
+            AreaRole.MapBounds=> inactiveColor,
+            _ => inactiveColor
+        };
+    }
+
+    AreaRole GuessRoleFromCollider(AreaRole fallback)
+    {
+        if (!_col) return fallback;
+
+        var world = ToWorldBounds(_col);
+        if (world.size.sqrMagnitude <= 0.0001f)
+            return fallback;
+
+        AreaRole bestRole = fallback;
+        float bestScore = float.PositiveInfinity;
+
+        void Consider(AreaRole role, Bounds target)
+        {
+            if (target.size.sqrMagnitude <= 0.0001f) return;
+            float score = ScoreBounds(world, target);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestRole = role;
+            }
+        }
+
+        Consider(AreaRole.Friendly, s_FriendlyBounds);
+        Consider(AreaRole.Enemy, s_EnemyBounds);
+        Consider(AreaRole.Neutral, s_NeutralBounds);
+        Consider(AreaRole.MapBounds, s_MapBounds);
+
+        return bestRole;
+    }
+
+    static float ScoreBounds(Bounds source, Bounds target)
+    {
+        var sizeDiff = Mathf.Abs(source.size.x - target.size.x) + Mathf.Abs(source.size.z - target.size.z);
+        var src = new Vector2(source.center.x, source.center.z);
+        var dst = new Vector2(target.center.x, target.center.z);
+        float centerDiff = Vector2.Distance(src, dst);
+        return sizeDiff + centerDiff;
+    }
+
     static Bounds ToWorldBounds(BoxCollider c)
     {
         // Use Unity's world AABB (handles rotation and scale).
@@ -226,10 +348,4 @@ void BuildHoleMasks(Bounds myWorld)
         return p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z;
     }
 
-    static bool SizesRoughlyMatchXZ(Vector3 a, Vector3 b)
-    {
-        // Tolerate authoring/scale differences
-        float eps = Mathf.Max(0.5f, 0.1f * Mathf.Max(a.x, a.z));
-        return Mathf.Abs(a.x - b.x) <= eps && Mathf.Abs(a.z - b.z) <= eps;
-    }
 }

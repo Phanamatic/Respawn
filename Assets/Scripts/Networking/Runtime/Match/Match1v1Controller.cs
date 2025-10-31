@@ -61,9 +61,9 @@ namespace Game.Net
         [Header("Timings")]
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
         [SerializeField, Min(3f)] private float cinematicSeconds = 3.5f;
-        [SerializeField, Min(3f)] private float spawnSelectSeconds = 10f;
+        [SerializeField, Min(3f)] private float spawnSelectSeconds = 15f;
         [SerializeField, Min(10f)] private float roundDurationSeconds = 90f;
-        [SerializeField, Min(2f)] private float roundEndDelaySeconds = 3f;
+        [SerializeField, Min(0f)] private float roundEndDelaySeconds = 0f;
 
         [Header("Win Conditions")]
         [SerializeField, Min(1)] private int winsNeeded = 5;
@@ -120,8 +120,9 @@ namespace Game.Net
 
         // Client state
         private bool _selecting;
-    private Bounds _myAreaBounds;
-    private bool _myAreaBlocked;
+        private Bounds _myAreaBounds;
+        private bool _myAreaBlocked;
+        private TeamId _myTeam;
         private float _spawnDeadlineLocal;
         private Coroutine _flyCo, _selectCo, _uiCo;
         private GameObject _spawnCursor;
@@ -305,7 +306,7 @@ namespace Game.Net
 
                 var bounds = areas.GetTeamBounds(team);
                 bool blocked = areas.IsAreaBlocked(team);
-                BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, blocked, ToClient(cid));
+                BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, blocked, team, ToClient(cid));
             }
 
             StartCoroutine(CoWatchSpawnDeadline());
@@ -434,20 +435,20 @@ namespace Game.Net
         }
 
         [ClientRpc]
-        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, bool blocked, ClientRpcParams p = default)
+        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, bool blocked, TeamId team, ClientRpcParams p = default)
         {
             if (!IsClient) return;
 
             _myAreaBounds = new Bounds(areaCenter, areaSize);
             _spawnDeadlineLocal = Time.unscaledTime + seconds;
             _myAreaBlocked = blocked;
+            _myTeam = team;
             _selecting = true;
 
             // Highlight with carved holes from overlapping "No Spawn" triggers.
             List<Bounds> holes = null;
             if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
-            // Paint green with per-hole red overlays (even if area is globally unblocked).
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
+            ApplySpawnHighlightLayout(holes);
 // [Match1v1] Client sees green area with red "holes" subtracted.
 
             // Run the intro pan once, then open the spawn UI.
@@ -462,11 +463,6 @@ namespace Game.Net
 
             // No pan path: frame camera from bounds and open UI now.
             FrameSpawnCameraFullMap();
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText)
-            {
-                spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
-            }
 
             if (!_spawnCursor)
             {
@@ -495,6 +491,10 @@ namespace Game.Net
             if (_spawnCursor)
                 _spawnCursor.SetActive(false);
 
+            ShowCanvas(spawnCanvas, true);
+            if (spawnHintText)
+                spawnHintText.text = Mathf.CeilToInt(seconds).ToString("0");
+
             // Fade configured objects during selection
             ApplySelectTransparency(true);
 
@@ -521,6 +521,32 @@ namespace Game.Net
             _selectCo = StartCoroutine(CoSpawnSelectTimer());
         }
 
+        void ApplySpawnHighlightLayout(List<Bounds> holes)
+        {
+            Bounds enemy = default;
+            Bounds neutral = default;
+            Bounds map = default;
+
+            if (areas)
+            {
+                enemy = areas.GetTeamBounds(OpposingTeam(_myTeam));
+                neutral = areas.GetNeutralBounds();
+                map = areas.GetMapBounds();
+            }
+
+            if (map.size.sqrMagnitude <= 0f)
+                map = _myAreaBounds;
+
+            SpawnAreaHighlighter.SetLayout(
+                SpawnAreaHighlighter.Mode.Choosing,
+                _myAreaBounds,
+                enemy,
+                neutral,
+                map,
+                _myAreaBlocked,
+                holes);
+        }
+
         IEnumerator CoSpawnSelectTimer()
         {
             while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
@@ -528,7 +554,7 @@ namespace Game.Net
                 if (spawnHintText)
                 {
                     float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-                    spawnHintText.text = _myAreaBlocked ? $"Spawn blocked in this area ({remain:0}s)" : $"Click to choose spawn ({remain:0}s)";
+                    spawnHintText.text = Mathf.CeilToInt(remain).ToString("0");
                 }
                 yield return null;
             }
@@ -893,7 +919,7 @@ namespace Game.Net
             _selecting = false;
             _myAreaBlocked = false;
             ShowCanvas(spawnCanvas, false);
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, new Bounds(), false);
+            SpawnAreaHighlighter.SetLayout(SpawnAreaHighlighter.Mode.Hidden, default, default, default, default, false, null);
 
             // Restore transparency
             ApplySelectTransparency(false);
@@ -1024,6 +1050,8 @@ namespace Game.Net
         {
             return p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z;
         }
+
+        static TeamId OpposingTeam(TeamId team) => team == TeamId.A ? TeamId.B : TeamId.A;
 
         static Transform FindDeep(Transform root, string name)
         {
@@ -1194,23 +1222,30 @@ namespace Game.Net
 // clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
 ClearCinematicShip();
 FrameSpawnCameraFullMap();
-// Re-send carved holes (guard against blockers changing during pan)
-{
-    List<Bounds> holes = null;
-    if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
-    SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds, /*targetBlocked*/ false, holes);
-}
-// Ensure cursor exists and starts hidden
-EnsureSpawnCursor();
-// Fade configured objects during selection
-ApplySelectTransparency(true);
-_panCo = null;
-ShowCanvas(spawnCanvas, true);
-if (spawnHintText)
-    spawnHintText.text = _myAreaBlocked ? "Spawn blocked in this area" : "Click to choose spawn";
-// Start the timer now that UI is open
-if (_selectCo != null) StopCoroutine(_selectCo);
-_selectCo = StartCoroutine(CoSpawnSelectTimer());
+            // Re-send carved holes (guard against blockers changing during pan)
+            {
+                List<Bounds> holes = null;
+                if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
+                ApplySpawnHighlightLayout(holes);
+            }
+
+            // Ensure cursor exists and starts hidden
+            EnsureSpawnCursor();
+
+            // Fade configured objects during selection
+            ApplySelectTransparency(true);
+            _panCo = null;
+
+            ShowCanvas(spawnCanvas, true);
+            if (spawnHintText)
+            {
+                float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
+                spawnHintText.text = Mathf.CeilToInt(remain).ToString("0");
+            }
+
+            // Start the timer now that UI is open
+            if (_selectCo != null) StopCoroutine(_selectCo);
+            _selectCo = StartCoroutine(CoSpawnSelectTimer());
         }
 
         // Ensure a SeatMount exists under the ship and return it.
