@@ -78636,7 +78636,7 @@ AudioSource:
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 8300000, guid: b197f7c20964ca0459b2aff2ad06f3e8, type: 3}
+  m_Resource: {fileID: 8300000, guid: a56e543e58837074daceb2123cb5bf56, type: 3}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -78739,7 +78739,7 @@ MonoBehaviour:
   softVolumeMult: 0.25
   swellVolumeMult: 0.8
   transitionDuration: 5
-  initialDelay: 0
+  initialDelay: 2
 --- !u!43 &889595636
 Mesh:
   m_ObjectHideFlags: 0
@@ -92325,11 +92325,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_text
-      value: Preferences
+      value: General
       objectReference: {fileID: 0}
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_fontSize
-      value: 12
+      value: 13
       objectReference: {fileID: 0}
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_margin.x
@@ -92341,7 +92341,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_fontSizeBase
-      value: 12
+      value: 13
       objectReference: {fileID: 0}
     - target: {fileID: 1603198997212103345, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_Pivot.x
@@ -97283,18 +97283,18 @@ MonoBehaviour:
   profileRawImage: {fileID: 0}
   usernameText: {fileID: 27218076}
   iconMap:
-  - id: 1
-    sprite: {fileID: -950836225, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - id: 2
-    sprite: {fileID: -1986884353, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - id: 3
-    sprite: {fileID: -718489996, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - id: 4
-    sprite: {fileID: -703844435, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - id: 5
-    sprite: {fileID: -1591915340, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - id: 6
-    sprite: {fileID: 1878250983, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_0
+    sprite: {fileID: 812751949, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_1
+    sprite: {fileID: -720056795, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_2
+    sprite: {fileID: 472042881, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_3
+    sprite: {fileID: 1003516412, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_4
+    sprite: {fileID: 1785420648, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: Icons_5
+    sprite: {fileID: 1755219025, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
   fallbackSprite: {fileID: 21300000, guid: 8838123fd83f2224086dc06c7da2a84b, type: 3}
   autoRunOnStart: 1
   nameTimeoutMs: 8000
@@ -117469,7 +117469,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Quality of Life
+  m_text: Controls
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: d283e497c66745f4e9de68ff45121019, type: 2}
   m_sharedMaterial: {fileID: 4047754360188193027, guid: d283e497c66745f4e9de68ff45121019, type: 2}
@@ -131898,7 +131898,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Preferences
+  m_text: General
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: d283e497c66745f4e9de68ff45121019, type: 2}
   m_sharedMaterial: {fileID: 4047754360188193027, guid: d283e497c66745f4e9de68ff45121019, type: 2}
@@ -185800,7 +185800,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_text
-      value: Keybinds
+      value: Controls
       objectReference: {fileID: 0}
     - target: {fileID: 911385745502108862, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_margin.x
@@ -185892,7 +185892,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3399356530288455570, guid: 669279397b62812469a2c19abeafe791, type: 3}
       propertyPath: m_Name
-      value: Keybinds
+      value: Controls
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

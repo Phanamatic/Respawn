@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -15,8 +16,12 @@ namespace UI.Scripts
         [SerializeField] private AudioClip buttonClickSound;
         [SerializeField, Range(0f, 1f)] private float volume = 1f;
 
+        [Header("Debug")]
+        [SerializeField] private bool showDebugLogs = false;
+
         private static GlobalButtonSoundManager instance;
         private float lastSoundTime = -1f;
+        private HashSet<Button> registeredButtons = new HashSet<Button>();
 
         private void Awake()
         {
@@ -64,27 +69,52 @@ namespace UI.Scripts
 
         private void StartListeningForButtonClicks()
         {
-            // Find all buttons in the scene and add listeners
-            Button[] allButtons = FindObjectsOfType<Button>(true);
+            // Find all buttons in the scene (including inactive ones)
+            Button[] allButtons = Resources.FindObjectsOfTypeAll<Button>();
+
+            int newButtonsCount = 0;
+
             foreach (Button button in allButtons)
             {
-                // Remove listener first to avoid duplicates
-                button.onClick.RemoveListener(PlayButtonSound);
+                // Skip buttons that are part of prefabs (not in scene)
+                if (button.gameObject.scene.name == null) continue;
+
+                // Skip if already registered
+                if (registeredButtons.Contains(button)) continue;
+
                 // Add listener
                 button.onClick.AddListener(PlayButtonSound);
+                registeredButtons.Add(button);
+                newButtonsCount++;
+
+                if (showDebugLogs)
+                {
+                    Debug.Log($"[GlobalButtonSound] Registered button: {button.gameObject.name}");
+                }
+            }
+
+            if (showDebugLogs)
+            {
+                Debug.Log($"[GlobalButtonSound] Registered {newButtonsCount} new buttons. Total: {registeredButtons.Count}");
             }
         }
 
         private void StopListeningForButtonClicks()
         {
-            // Remove listeners from all buttons
-            Button[] allButtons = FindObjectsOfType<Button>(true);
-            foreach (Button button in allButtons)
+            // Remove listeners from all registered buttons
+            foreach (Button button in registeredButtons)
             {
                 if (button != null)
                 {
                     button.onClick.RemoveListener(PlayButtonSound);
                 }
+            }
+
+            registeredButtons.Clear();
+
+            if (showDebugLogs)
+            {
+                Debug.Log("[GlobalButtonSound] Cleared all button listeners");
             }
         }
 
@@ -92,6 +122,10 @@ namespace UI.Scripts
         {
             if (buttonClickSound == null)
             {
+                if (showDebugLogs)
+                {
+                    Debug.LogWarning("[GlobalButtonSound] No audio clip assigned!");
+                }
                 return;
             }
 
@@ -99,10 +133,19 @@ namespace UI.Scripts
             float currentTime = Time.unscaledTime;
             if (currentTime - lastSoundTime < 0.05f)
             {
+                if (showDebugLogs)
+                {
+                    Debug.Log("[GlobalButtonSound] Sound blocked (too soon)");
+                }
                 return;
             }
 
             lastSoundTime = currentTime;
+
+            if (showDebugLogs)
+            {
+                Debug.Log("[GlobalButtonSound] Playing button click sound");
+            }
 
             // Create a temporary GameObject with an AudioSource
             GameObject soundObject = new GameObject("ButtonClickSound");

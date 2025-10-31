@@ -59,6 +59,13 @@ namespace Game.UI.Account
         [SerializeField] Sprite[] availableIcons;            // assign in Inspector
         [SerializeField] Image selectedIconPreview;          // optional preview
 
+        [Header("Audio Settings")]
+        [SerializeField] Button muteButton;
+        [SerializeField] Image muteButtonImage;
+        [SerializeField] Sprite muteSprite;
+        [SerializeField] Sprite unmuteSprite;
+        [SerializeField] AudioSource musicAudioSource;
+
         [Header("On Success")]
         [SerializeField] string nextScene = "Loading Screen";
 
@@ -76,6 +83,7 @@ namespace Game.UI.Account
         string _selectedIconId;              // holds chosen icon before sign-in
         bool _iconSaved;                     // avoid double saves
         bool _devJoinInFlight;               // prevent overlapping quick-join attempts
+        bool _isMuted = false;               // track mute state
 
         void Awake()
         {
@@ -100,7 +108,11 @@ namespace Game.UI.Account
             if (siToCreateButton) siToCreateButton.onClick.AddListener(() => Show(false));
             if (crToSignInButton) crToSignInButton.onClick.AddListener(() => Show(true));
 
+            // mute button
+            if (muteButton) muteButton.onClick.AddListener(ToggleMute);
+
             BuildIconList(); // populate profile icons
+            UpdateMuteButton(); // set initial mute button state
             Show(true); // default to Sign In
         }
 
@@ -220,6 +232,34 @@ namespace Game.UI.Account
             if (string.IsNullOrEmpty(_selectedIconId) || _iconSaved) return;
             var ok = await PlayerProfileStore.SaveProfileIconAsync(_selectedIconId);
             _iconSaved = ok;
+        }
+
+        void ToggleMute()
+        {
+            _isMuted = !_isMuted;
+
+            // Mute/unmute the music audio source
+            if (musicAudioSource != null)
+            {
+                musicAudioSource.mute = _isMuted;
+            }
+
+            UpdateMuteButton();
+        }
+
+        void UpdateMuteButton()
+        {
+            if (muteButtonImage == null) return;
+
+            // Show mute sprite when muted, unmute sprite when not muted
+            if (_isMuted)
+            {
+                muteButtonImage.sprite = muteSprite;
+            }
+            else
+            {
+                muteButtonImage.sprite = unmuteSprite;
+            }
         }
 
         // ---------- Dev quick test: sign in then join first open 1v1 server ----------
