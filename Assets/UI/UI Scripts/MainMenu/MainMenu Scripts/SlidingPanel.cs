@@ -31,6 +31,9 @@ namespace UI.Scripts
         [SerializeField] private PanelSlideDirection slideInDirection = PanelSlideDirection.Left;
         [SerializeField] private PanelSlideDirection slideOutDirection = PanelSlideDirection.Right;
 
+        [Header("Click Outside Behavior")]
+        [SerializeField] private bool closeOnClickOutside = true;
+
         private Vector2 hiddenInPosition;
         private Vector2 hiddenOutPosition;
         private Vector2 visiblePosition;
@@ -91,7 +94,7 @@ namespace UI.Scripts
 
         private void Update()
         {
-            if (isOpen && Input.GetMouseButtonDown(0))
+            if (closeOnClickOutside && isOpen && Input.GetMouseButtonDown(0))
             {
                 CheckClickOutside();
             }

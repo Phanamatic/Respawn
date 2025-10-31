@@ -60,7 +60,7 @@ namespace Game.UI.Account
         [SerializeField] Image selectedIconPreview;          // optional preview
 
         [Header("On Success")]
-        [SerializeField] string nextScene = "MainMenu";
+        [SerializeField] string nextScene = "Loading Screen";
 
         [Header("Dev Quick Test")]
         [SerializeField] Button devSignIn1Button;
