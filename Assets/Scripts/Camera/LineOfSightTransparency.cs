@@ -19,6 +19,8 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     [Min(0f)] public float fadeSpeed = 12f;
     [Tooltip("How often to refresh cached renderers for a tag (seconds).")]
     [Min(0.1f)] public float recacheInterval = 2f;
+    [Tooltip("Keep occluders transparent for this many seconds after the ray no longer hits them.")]
+    [Min(0f)] public float occlusionHoldSeconds = 0.2f;
     public bool debugRay;
 
     readonly Dictionary<string, TagGroup> _groups = new Dictionary<string, TagGroup>(8);
@@ -41,7 +43,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
         var dir = toTarget / distance;
         _activeTags.Clear();
 
-        var hits = Physics.RaycastAll(origin, dir, distance, occluderLayers, QueryTriggerInteraction.Ignore);
+        var hits = Physics.RaycastAll(origin, dir, distance, occluderLayers, QueryTriggerInteraction.Collide);
         for (int i = 0; i < hits.Length; i++)
         {
             var hit = hits[i];
@@ -69,6 +71,15 @@ public sealed class LineOfSightTransparency : MonoBehaviour
             if (!_groups.TryGetValue(tag, out var group)) continue;
 
             bool shouldFade = _activeTags.Contains(tag);
+            if (shouldFade)
+            {
+                group.holdUntil = Time.unscaledTime + occlusionHoldSeconds;
+            }
+            else if (occlusionHoldSeconds > 0f && Time.unscaledTime < group.holdUntil)
+            {
+                shouldFade = true;
+            }
+
             float targetAlphaMultiplier = shouldFade ? Mathf.Clamp01(occludedAlpha) : 1f;
             UpdateGroup(group, targetAlphaMultiplier);
 
@@ -100,6 +111,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     {
         group.entries.Clear();
         group.lastPopulateTime = Time.unscaledTime;
+        group.holdUntil = 0f;
 
         Renderer[] tempRenderers = null;
         try
@@ -197,6 +209,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     {
         public readonly List<Entry> entries = new List<Entry>();
         public float lastPopulateTime;
+        public float holdUntil;
 
         public void RemoveDestroyed()
         {
