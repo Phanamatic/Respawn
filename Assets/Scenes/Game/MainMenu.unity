@@ -15936,6 +15936,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 3
   slideOutDirection: 3
+  closeOnClickOutside: 1
 --- !u!114 &157034943
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -22499,6 +22500,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &249259419
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -31045,6 +31047,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &343050873
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -46082,6 +46085,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &520687976
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -67579,6 +67583,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 3
   slideOutDirection: 3
+  closeOnClickOutside: 1
 --- !u!114 &769910265
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -78631,7 +78636,7 @@ AudioSource:
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 8300000, guid: a56e543e58837074daceb2123cb5bf56, type: 3}
+  m_Resource: {fileID: 8300000, guid: b197f7c20964ca0459b2aff2ad06f3e8, type: 3}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -80553,6 +80558,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 3
   slideOutDirection: 3
+  closeOnClickOutside: 1
 --- !u!114 &902537420
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -97276,7 +97282,19 @@ MonoBehaviour:
   profileImage: {fileID: 1210976520}
   profileRawImage: {fileID: 0}
   usernameText: {fileID: 27218076}
-  iconMap: []
+  iconMap:
+  - id: 1
+    sprite: {fileID: -950836225, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: 2
+    sprite: {fileID: -1986884353, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: 3
+    sprite: {fileID: -718489996, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: 4
+    sprite: {fileID: -703844435, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: 5
+    sprite: {fileID: -1591915340, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - id: 6
+    sprite: {fileID: 1878250983, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
   fallbackSprite: {fileID: 21300000, guid: 8838123fd83f2224086dc06c7da2a84b, type: 3}
   autoRunOnStart: 1
   nameTimeoutMs: 8000
@@ -119285,6 +119303,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1295839809
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -125117,6 +125136,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1353905803
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -130882,6 +130902,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1425849035
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -149413,6 +149434,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1650448553
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -161114,6 +161136,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1794268052
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -172395,6 +172418,7 @@ MonoBehaviour:
   scanOutEase: 8
   slideInDirection: 0
   slideOutDirection: 1
+  closeOnClickOutside: 1
 --- !u!114 &1843395742
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -179311,6 +179335,83 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &1908984711
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1908984713}
+  - component: {fileID: 1908984712}
+  m_Layer: 0
+  m_Name: MapMoving
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1908984712
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1908984711}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f47c6b6a18e849947a2bac33b79696d7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  positionPoints:
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  moveSpeed: 3
+  pauseDuration: 1
+  useEasing: 1
+  easingCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  enableMovement: 1
+--- !u!4 &1908984713
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1908984711}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 960, y: 540, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &1909488208
 Mesh:
   m_ObjectHideFlags: 0
@@ -195525,6 +195626,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   targetPanel: {fileID: 157034942}
+  oppositePanelToClose: {fileID: 0}
   buttonImage: {fileID: 0}
   fillHoverImage: {fileID: 0}
   activeBackgroundImage: {fileID: 0}
@@ -203233,3 +203335,4 @@ SceneRoots:
   - {fileID: 341277212}
   - {fileID: 1999081031}
   - {fileID: 512524328}
+  - {fileID: 1908984713}

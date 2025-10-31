@@ -1,6 +1,8 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 
 namespace UI.Scripts
 {
@@ -14,6 +16,7 @@ namespace UI.Scripts
         [SerializeField, Range(0f, 1f)] private float volume = 1f;
 
         private static GlobalButtonSoundManager instance;
+        private float lastSoundTime = -1f;
 
         private void Awake()
         {
@@ -26,39 +29,37 @@ namespace UI.Scripts
 
             instance = this;
             DontDestroyOnLoad(gameObject);
+
+            // Subscribe to scene loaded event
+            SceneManager.sceneLoaded += OnSceneLoaded;
         }
 
-        private void OnEnable()
+        private void Start()
         {
-            // Subscribe to all button clicks globally
-            if (EventSystem.current != null)
-            {
-                StartListeningForButtonClicks();
-            }
+            // Initial setup for buttons in the first scene
+            StartCoroutine(DelayedButtonSetup());
         }
 
-        private void OnDisable()
+        private void OnDestroy()
         {
+            // Unsubscribe from scene loaded event
+            SceneManager.sceneLoaded -= OnSceneLoaded;
             StopListeningForButtonClicks();
         }
 
-        private void Update()
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            // Detect button clicks via EventSystem
-            if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null)
-            {
-                // Check if a button was clicked this frame
-                if (Input.GetMouseButtonDown(0))
-                {
-                    GameObject clicked = EventSystem.current.currentSelectedGameObject;
-                    Button button = clicked.GetComponent<Button>();
+            // Re-setup buttons when a new scene loads
+            StartCoroutine(DelayedButtonSetup());
+        }
 
-                    if (button != null && button.interactable)
-                    {
-                        PlayButtonSound();
-                    }
-                }
-            }
+        private IEnumerator DelayedButtonSetup()
+        {
+            // Wait one frame to ensure all UI is initialized
+            yield return new WaitForEndOfFrame();
+
+            StopListeningForButtonClicks();
+            StartListeningForButtonClicks();
         }
 
         private void StartListeningForButtonClicks()
@@ -94,6 +95,15 @@ namespace UI.Scripts
                 return;
             }
 
+            // Prevent duplicate sounds within 50ms
+            float currentTime = Time.unscaledTime;
+            if (currentTime - lastSoundTime < 0.05f)
+            {
+                return;
+            }
+
+            lastSoundTime = currentTime;
+
             // Create a temporary GameObject with an AudioSource
             GameObject soundObject = new GameObject("ButtonClickSound");
             AudioSource audioSource = soundObject.AddComponent<AudioSource>();
@@ -109,14 +119,6 @@ namespace UI.Scripts
 
             // Destroy the GameObject after the sound finishes playing
             Destroy(soundObject, buttonClickSound.length + 0.1f);
-        }
-
-        // Call this when a new scene is loaded to refresh button listeners
-        private void OnLevelWasLoaded(int level)
-        {
-            // Re-subscribe to all buttons in the new scene
-            StopListeningForButtonClicks();
-            StartListeningForButtonClicks();
         }
     }
 }

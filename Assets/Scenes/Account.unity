@@ -666,7 +666,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 0}
+  m_Sprite: {fileID: -950836225, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -1836,11 +1836,11 @@ MonoBehaviour:
   iconItemPrefab: {fileID: 5484252030209174177, guid: e57548124497919409140c634c756c61, type: 3}
   availableIcons:
   - {fileID: -950836225, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - {fileID: -1234397886, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - {fileID: -1311289705, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - {fileID: 211749669, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - {fileID: -1064883072, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
-  - {fileID: 1454626657, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - {fileID: -1986884353, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - {fileID: -718489996, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - {fileID: -703844435, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - {fileID: -1591915340, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
+  - {fileID: 1878250983, guid: f247c66909ba92a41b46e4a738d130b5, type: 3}
   selectedIconPreview: {fileID: 241170592}
   nextScene: Loading Screen
   devSignIn1Button: {fileID: 654391651}
@@ -2708,7 +2708,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &799202881
 RectTransform:
   m_ObjectHideFlags: 0
@@ -4759,8 +4759,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -96.5, y: 225.75}
-  m_SizeDelta: {x: 6.92, y: 61.56}
+  m_AnchoredPosition: {x: -96.5, y: 218.3}
+  m_SizeDelta: {x: 6.92, y: 46.66}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1222599332
 MonoBehaviour:
@@ -6565,6 +6565,52 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1797912909}
   m_CullTransparentMesh: 1
+--- !u!1 &1861778113
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1861778115}
+  - component: {fileID: 1861778114}
+  m_Layer: 0
+  m_Name: GLOBALSFX
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1861778114
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1861778113}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f7433677f57229d42a0945b6e2ef9327, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  buttonClickSound: {fileID: 8300000, guid: d7b576d97fbe4f843a544da92dbfa580, type: 3}
+  volume: 1
+--- !u!4 &1861778115
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1861778113}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -1.3101776, y: -27.080036, z: 56.646095}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1889501884
 GameObject:
   m_ObjectHideFlags: 0
@@ -6834,8 +6880,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -17.848, y: 292.5}
-  m_SizeDelta: {x: 899.59, y: 140.74}
+  m_AnchoredPosition: {x: -17.848, y: 285.23}
+  m_SizeDelta: {x: 899.59, y: 155.28}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1907240686
 MonoBehaviour:
@@ -6880,7 +6926,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0, g: 0, b: 0, a: 0.3137255}
+  m_Color: {r: 0, g: 0, b: 0, a: 0.39215687}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -8049,3 +8095,4 @@ SceneRoots:
   - {fileID: 1371646267}
   - {fileID: 887044063}
   - {fileID: 1795088424}
+  - {fileID: 1861778115}
