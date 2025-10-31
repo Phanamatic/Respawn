@@ -3080,7 +3080,6 @@ GameObject:
   m_Component:
   - component: {fileID: 887044063}
   - component: {fileID: 887044062}
-  - component: {fileID: 887044061}
   m_Layer: 0
   m_Name: Music
   m_TagString: Untagged
@@ -3088,24 +3087,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &887044061
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 887044060}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 642e9e52e360a6b4aa890ca581f94cdb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  enableDynamicVolume: 0
-  cycleInterval: 30
-  softVolumeMult: 0.3
-  swellVolumeMult: 0.8
-  transitionDuration: 5
-  initialDelay: 0
 --- !u!82 &887044062
 AudioSource:
   m_ObjectHideFlags: 0
@@ -7092,7 +7073,7 @@ GameObject:
   - component: {fileID: 1861778114}
   m_Layer: 0
   m_Name: GLOBALSFX
-  m_TagString: Untagged
+  m_TagString: SFX
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0

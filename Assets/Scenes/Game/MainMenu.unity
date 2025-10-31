@@ -49004,6 +49004,81 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &550817865
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 550817866}
+  - component: {fileID: 550817868}
+  - component: {fileID: 550817867}
+  m_Layer: 5
+  m_Name: Panel
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &550817866
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 550817865}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 0.81228, y: 0.82506007, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 628939344}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &550817867
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 550817865}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 0, g: 1, b: 0.9896784, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 49198243, guid: 8826759dca10a6a4b88e3e836fdb9f6f, type: 3}
+  m_Type: 0
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &550817868
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 550817865}
+  m_CullTransparentMesh: 1
 --- !u!43 &551914879
 Mesh:
   m_ObjectHideFlags: 0
@@ -56066,15 +56141,16 @@ RectTransform:
   m_GameObject: {fileID: 628939343}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.2123, y: 1.2623, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 550817866}
   - {fileID: 1210976518}
   m_Father: {fileID: 988906567}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 0}
+  m_AnchoredPosition: {x: -11, y: 1.4}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &628939345
@@ -67631,6 +67707,8 @@ MonoBehaviour:
   musicVolumeHandle: {fileID: 1965913320}
   sfxVolumeSlider: {fileID: 1332133820}
   sfxVolumeHandle: {fileID: 1332133821}
+  musicAudioSource: {fileID: 886763525}
+  musicController: {fileID: 0}
   mouseSensitivitySlider: {fileID: 1368515508}
   mouseSensitivityHandle: {fileID: 1368515509}
   resetSettingsButton: {fileID: 1930402967}
@@ -78602,7 +78680,6 @@ GameObject:
   m_Component:
   - component: {fileID: 886763524}
   - component: {fileID: 886763525}
-  - component: {fileID: 886763526}
   m_Layer: 0
   m_Name: Music
   m_TagString: Music
@@ -78722,24 +78799,6 @@ AudioSource:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
---- !u!114 &886763526
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 886763523}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 642e9e52e360a6b4aa890ca581f94cdb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  enableDynamicVolume: 1
-  cycleInterval: 25
-  softVolumeMult: 0.25
-  swellVolumeMult: 0.8
-  transitionDuration: 5
-  initialDelay: 2
 --- !u!43 &889595636
 Mesh:
   m_ObjectHideFlags: 0
@@ -89679,7 +89738,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 0}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -111764,7 +111823,7 @@ RectTransform:
   m_GameObject: {fileID: 1210976517}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.58866745, y: 0.6285235, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 628939344}
@@ -159787,7 +159846,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: -110.410645, y: -51.04492}
+  m_AnchoredPosition: {x: -133.9, y: -51.04492}
   m_SizeDelta: {x: 274.7284, y: 60.5114}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1778978976
@@ -202688,6 +202747,22 @@ PrefabInstance:
     - target: {fileID: 2725439395211997419, guid: 9fcd0a52cacf91c4480f336829d4ec5f, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8232695553057952932, guid: 9fcd0a52cacf91c4480f336829d4ec5f, type: 3}
+      propertyPath: m_fontColor.b
+      value: 0.03755782
+      objectReference: {fileID: 0}
+    - target: {fileID: 8232695553057952932, guid: 9fcd0a52cacf91c4480f336829d4ec5f, type: 3}
+      propertyPath: m_fontColor.g
+      value: 0.03755782
+      objectReference: {fileID: 0}
+    - target: {fileID: 8232695553057952932, guid: 9fcd0a52cacf91c4480f336829d4ec5f, type: 3}
+      propertyPath: m_fontColor.r
+      value: 0.03773582
+      objectReference: {fileID: 0}
+    - target: {fileID: 8232695553057952932, guid: 9fcd0a52cacf91c4480f336829d4ec5f, type: 3}
+      propertyPath: m_fontColor32.rgba
+      value: 4278848010
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

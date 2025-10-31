@@ -271,8 +271,6 @@ namespace UI.Scripts
                     }
                 }
             }
-
-            Debug.Log($"NewsCarousel: Active image is now {currentActiveIndex}");
         }
 
         private int[] GetImageOrder()

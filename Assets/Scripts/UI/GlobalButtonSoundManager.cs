@@ -23,6 +23,13 @@ namespace UI.Scripts
         private float lastSoundTime = -1f;
         private HashSet<Button> registeredButtons = new HashSet<Button>();
 
+        // Public getter/setter for volume
+        public float Volume
+        {
+            get => volume;
+            set => volume = Mathf.Clamp01(value);
+        }
+
         private void Awake()
         {
             // Singleton pattern - only one instance across all scenes
