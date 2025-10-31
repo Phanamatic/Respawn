@@ -10,10 +10,11 @@ namespace Game.Net
     [DisallowMultipleComponent]
     public sealed class Match1v1Areas : MonoBehaviour
     {
-        [Header("Assign BoxColliders (legacy 3-collider mode)")]
-        [SerializeField] private BoxCollider teamAArea;
-        [SerializeField] private BoxCollider teamBArea;
-        [SerializeField] private BoxCollider neutralArea;
+        [Header("Assign BoxColliders (legacy - unused at runtime)")]
+        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider teamAArea;
+        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider teamBArea;
+        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider neutralArea;
+// Legacy fields preserved to avoid prefab breakage, but no longer used anywhere at runtime.
 
         [Header("Unified map area (new)")]
         [SerializeField, Tooltip("Single BoxCollider covering the whole playable map. If set, the script splits it 45/10/45 into TeamA/Neutral/TeamB.")]
@@ -27,10 +28,12 @@ namespace Game.Net
         [SerializeField] private string noSpawnTag = "No Spawn";
 // Tag must exactly match the scene objects' Tag; fixes missed blockers due to casing/spacing.
 
-        bool UseUnified => mapArea != null;
+        // Force unified mode; legacy is removed from runtime. If mapArea is missing we return empty bounds and log.
+        bool UseUnified => true;
         bool _swapSides; // set by controller at halftime
 
-        public bool HasAll => UseUnified ? mapArea : (teamAArea && teamBArea && neutralArea);
+        public bool HasAll => mapArea != null;
+// We now require a single mapArea to be assigned.
 
         public string BlockingTag => noSpawnTag;
 
@@ -40,29 +43,33 @@ namespace Game.Net
         // Public bounds accessors that abstract legacy vs unified modes
         public Bounds GetMapBounds()
         {
-            if (UseUnified) return mapArea.bounds;
-            // compose from legacy A+B+Neutral combined
-            var b = teamAArea ? teamAArea.bounds : new Bounds(transform.position, Vector3.zero);
-            if (teamBArea) b.Encapsulate(teamBArea.bounds);
-            if (neutralArea) b.Encapsulate(neutralArea.bounds);
-            return b;
+            if (mapArea)
+                return mapArea.bounds;
+
+            Debug.LogError("[Match1v1Areas] mapArea is not assigned. Assign a single BoxCollider that covers the whole playable map.");
+            return new Bounds(transform.position, Vector3.zero);
         }
+// Removes legacy fallback; mapArea is the single source of truth.
 
         public Bounds GetTeamBounds(TeamId team)
         {
-            if (!UseUnified)
-                return (team == TeamId.A ? teamAArea : teamBArea)?.bounds ?? new Bounds(transform.position, Vector3.zero);
+            if (!mapArea)
+                return new Bounds(transform.position, Vector3.zero);
 
             var (a, n, b) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
             return team == TeamId.A ? a : b;
         }
+// Always split the single map area 45/10/45; honors halftime swap.
 
         public Bounds GetNeutralBounds()
         {
-            if (!UseUnified) return neutralArea ? neutralArea.bounds : new Bounds(transform.position, Vector3.zero);
+            if (!mapArea)
+                return new Bounds(transform.position, Vector3.zero);
+
             var (_, n, _) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
             return n;
         }
+// Neutral is the center 10% from the unified map bounds.
 
         public bool Contains(TeamId team, Vector3 worldPoint)
         {
@@ -88,7 +95,9 @@ namespace Game.Net
             return b.size.sqrMagnitude > 0f ? b.center : transform.position;
         }
 
-        public BoxCollider GetTeamCollider(TeamId team) => team == TeamId.A ? teamAArea : teamBArea;
+        [System.Obsolete("Legacy team colliders are no longer used at runtime. Use GetTeamBounds().")]
+        public BoxCollider GetTeamCollider(TeamId team) => null;
+// Prevents any accidental legacy usage without breaking existing serialized references.
 
         // NEW: fine-grained spawn blocking helpers + random sampler that avoids "No Spawn" triggers.
         public bool IsPointBlockedForTeam(TeamId team, Vector3 worldPoint)
@@ -237,16 +246,15 @@ namespace Game.Net
 
         public Vector3 GetFallbackSpawn(TeamId team)
         {
-            var neutralCenter = GetNeutralCenter();
-            if (!neutralArea)
-            {
+            var n = GetNeutralBounds();
+            if (n.size.sqrMagnitude <= 0f)
                 return (team == TeamId.A ? transform.position + Vector3.left : transform.position + Vector3.right);
-            }
 
             // Offset slightly left/right along world X so teams do not overlap exactly at neutral center.
-            float offset = Mathf.Max(1f, neutralArea.bounds.extents.x * 0.5f);
-            return neutralCenter + (team == TeamId.A ? Vector3.left : Vector3.right) * offset;
+            float offset = Mathf.Max(1f, n.extents.x * 0.5f);
+            return n.center + (team == TeamId.A ? Vector3.left : Vector3.right) * offset;
         }
+// Uses unified neutral bounds instead of legacy neutralArea collider.
 
         static bool BoundsContainsTag(Bounds bounds, string tag, Collider ignore)
         {
@@ -266,17 +274,21 @@ namespace Game.Net
 #if UNITY_EDITOR
         void OnDrawGizmosSelected()
         {
-            void Draw(BoxCollider c, Color color)
-            {
-                if (!c) return;
-                Gizmos.color = color;
-                Gizmos.DrawWireCube(c.bounds.center, c.bounds.size);
-            }
-            Draw(teamAArea, new Color(0.2f, 0.8f, 0.2f, 1f));
-            Draw(teamBArea, new Color(0.8f, 0.2f, 0.2f, 1f));
-            Draw(neutralArea, new Color(0.2f, 0.6f, 1f, 1f));
+            if (!mapArea) return;
+
+            // Draw the single map area
+            Gizmos.color = new Color(1f, 1f, 1f, 0.6f);
+            Gizmos.DrawWireCube(mapArea.bounds.center, mapArea.bounds.size);
+
+            // Draw computed 45/10/45 split for quick visual verification
+            var (a, n, b) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
+
+            Gizmos.color = new Color(0.2f, 0.8f, 0.2f, 0.9f); Gizmos.DrawWireCube(a.center, a.size);
+            Gizmos.color = new Color(0.2f, 0.6f, 1f, 0.9f); Gizmos.DrawWireCube(n.center, n.size);
+            Gizmos.color = new Color(0.8f, 0.2f, 0.2f, 0.9f); Gizmos.DrawWireCube(b.center, b.size);
         }
 #endif
+// Gizmos now preview the unified split instead of legacy colliders.
 
         static Vector3 RandomPointInBounds(Bounds b)
         {

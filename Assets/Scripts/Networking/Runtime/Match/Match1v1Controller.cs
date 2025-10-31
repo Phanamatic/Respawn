@@ -595,9 +595,12 @@ namespace Game.Net
                 {
                     if (_spawnCursor)
                     {
-                        _spawnCursor.transform.position = new Vector3(point.x, point.y + 0.5f, point.z);
+                        // Place the cursor exactly on ground (slight lift to avoid z-fight)
+                        float gy = GroundYAt(point);
+                        _spawnCursor.transform.position = new Vector3(point.x, gy + 0.02f, point.z);
                         _spawnCursor.SetActive(true);
                     }
+// Cursor now appears exactly on the ground at the mouse position during spawn select.
 
                     if (Input.GetMouseButtonDown(0))
                     {
@@ -1062,6 +1065,7 @@ namespace Game.Net
         }
 
         // Top-down orthographic/perspective frame of the full map bounds with a margin.
+        // Fix: respect camera aspect so the whole map fits with extra margin (no cut-off).
         void FrameSpawnCameraFullMap()
         {
             if (!AcquireCameraSafe()) return;
@@ -1077,19 +1081,33 @@ namespace Game.Net
             if (spawnCamUseOrthographic)
             {
                 _cam.orthographic = true;
-                _cam.orthographicSize = Mathf.Max(halfW, halfH);
+                // Orthographic size is vertical half-size. Fit width using aspect.
+                float sizeY = Mathf.Max(halfH, halfW / Mathf.Max(0.0001f, _cam.aspect));
+                _cam.orthographicSize = sizeY;
             }
             else
             {
                 _cam.orthographic = false;
-                // Rough FOV fit (keep simple): move up until both half sizes fit
-                float fovRad = Mathf.Deg2Rad * Mathf.Max(1f, _cam.fieldOfView);
-                float need = Mathf.Max(halfW, halfH) / Mathf.Tan(fovRad * 0.5f);
+                // Perspective fit: satisfy both vertical and horizontal fits.
+                float fovRad = Mathf.Deg2Rad * Mathf.Clamp(_cam.fieldOfView, 1f, 179f);
+                float needY = halfH / Mathf.Tan(fovRad * 0.5f);
+                float needX = (halfW / Mathf.Max(0.0001f, _cam.aspect)) / Mathf.Tan(fovRad * 0.5f);
+                float need = Mathf.Max(needX, needY);
                 pos.y = Mathf.Max(spawnCamHeight, need);
             }
 
             _cam.transform.SetPositionAndRotation(pos, rot);
         }
+
+        // Helper: get precise ground height for cursor placement (uses the same ground mask)
+        float GroundYAt(Vector3 xz)
+        {
+            var origin = new Vector3(xz.x, spawnCamHeight + 500f, xz.z);
+            if (Physics.Raycast(origin, Vector3.down, out var hit, 5000f, groundMask, QueryTriggerInteraction.Ignore))
+                return hit.point.y;
+            return xz.y;
+        }
+// Camera framing now fits full map with margin even on ultra-wide/tall aspects.
 
 
 
