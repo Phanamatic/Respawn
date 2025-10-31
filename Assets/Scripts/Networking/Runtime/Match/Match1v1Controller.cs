@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using TMPro;
+using UnityEngine.Rendering;
 
 namespace Game.Net
 {
@@ -96,6 +97,11 @@ namespace Game.Net
         [SerializeField] Renderer[] fadeDuringSelect;
         [Range(0f,1f)] [SerializeField] float selectFadeAlpha = 0.3f;
         Dictionary<Renderer, Color[]> _origFadeColors = new Dictionary<Renderer, Color[]>();
+        Dictionary<Renderer, ShadowCastingMode> _origShadowModes = new Dictionary<Renderer, ShadowCastingMode>();
+
+        // Cache for restore after select
+        bool _preSelectOrtho;
+        float _preSelectOrthoSize;
 
         [Header("Spawn Camera Framing (Top-Down)")]
         [SerializeField, Min(1f)] float spawnCamMargin = 1.08f;  // % margin around map
@@ -291,6 +297,8 @@ namespace Game.Net
         void StartSpawnSelect()
         {
             _state.Value = MatchState.SpawnSelect;
+            // Hard enforce 15 s spawn-select.
+            spawnSelectSeconds = 15f;
             _spawnDeadlineServer = Time.unscaledTime + spawnSelectSeconds;
             _chosenSpawns.Clear();
 
@@ -462,7 +470,8 @@ namespace Game.Net
             }
 
             // No pan path: frame camera from bounds and open UI now.
-            FrameSpawnCameraFullMap();
+            // Force a top-down ORTHOGRAPHIC frame so entire map is guaranteed visible.
+            FrameSpawnCameraFullMapOrtho();
 
             if (!_spawnCursor)
             {
@@ -503,22 +512,12 @@ namespace Game.Net
                 _originalFollow = _isoCam.follow;
                 _isoCam.enabled = false;
             }
-            if (_cam)
-            {
-                _cam.transform.position = spawnCameraPosition;
-                if (spawnSelectLookTarget)
-                {
-                    var look = (spawnSelectLookTarget.position - _cam.transform.position).normalized;
-                    _cam.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
-                }
-                else
-                {
-                    _cam.transform.rotation = Quaternion.LookRotation((spawnCameraLookAt - spawnCameraPosition).normalized, Vector3.up);
-                }
-            }
+            // Do NOT override FrameSpawnCameraFullMap() here. It already framed the whole map.
+            // (Fixes the "too close / cut off" camera during spawn choose.)
 
             if (_selectCo != null) StopCoroutine(_selectCo);
             _selectCo = StartCoroutine(CoSpawnSelectTimer());
+// We stop clobbering the framed transform after FrameSpawnCameraFullMap(), which respects aspect & margin.
         }
 
         void ApplySpawnHighlightLayout(List<Bounds> holes)
@@ -549,6 +548,11 @@ namespace Game.Net
 
         IEnumerator CoSpawnSelectTimer()
         {
+            // While selecting, force all SpawnAreaHighlighters to friendly GREEN for local player.
+            var highs = Object.FindObjectsOfType(typeof(SpawnAreaHighlighter)) as SpawnAreaHighlighter[];
+            for (int i = 0; i < highs.Length; i++)
+                highs[i].ForceFriendlyGreen(isBlocked:false);
+
             while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
             {
                 if (spawnHintText)
@@ -816,15 +820,18 @@ namespace Game.Net
                     else roundWinner = -1; // draw
                 }
 
-                if (roundWinner != -1 || Time.time >= _roundEndTime.Value)
+                if (roundWinner != -1 || GetServerNowSafe() >= _roundEndTime.Value)
                 {
                     EndRound(roundWinner);
                     yield break;
                 }
 
-                yield return new WaitForSeconds(0.5f);
+                // Tighter polling so the round ends exactly at 0:00 (≤50ms jitter).
+                yield return new WaitForSeconds(0.05f);
             }
         }
+
+        // Use server clock consistently and increase polling rate so the round flips precisely at 0:00.
 
         void EndRound(int winnerTeam)
         {
@@ -947,6 +954,13 @@ namespace Game.Net
                 _isoCam.follow = target;    // may be new spawn or the previous follow
                 _isoCam.enabled = true;
             }
+
+            // Restore camera to previous projection after select.
+            if (_cam)
+            {
+                _cam.orthographic = _preSelectOrtho;
+                _cam.orthographicSize = _preSelectOrthoSize;
+            }
         }
 // Now we always reattach the iso camera to the current local PlayerObject (covers late spawn/random cases).
 
@@ -977,6 +991,7 @@ namespace Game.Net
                             TryMakeTransparent(mat, true);
                         }
                         _origFadeColors[r] = colors;
+                        _origShadowModes[r] = r.shadowCastingMode;
                     }
 
                     var matsNow = r.materials;
@@ -993,6 +1008,7 @@ namespace Game.Net
                         }
                         TryMakeTransparent(mat, true);
                     }
+                    r.shadowCastingMode = ShadowCastingMode.Off;
                 }
                 else
                 {
@@ -1009,10 +1025,11 @@ namespace Game.Net
                             TryMakeTransparent(mat, false);
                         }
                     }
+                    if (_origShadowModes.TryGetValue(r, out var mode)) r.shadowCastingMode = mode;
                 }
             }
 
-            if (!on) _origFadeColors.Clear();
+            if (!on) { _origFadeColors.Clear(); _origShadowModes.Clear(); }
         }
 
         // Minimal URP Lit toggle: Opaque<->Transparent
@@ -1515,5 +1532,32 @@ FrameSpawnCameraFullMap();
             }
             t.text = prev;
         }
+    }
+
+    /// <summary>Frame full map for spawn choose using orthographic top-down. Aspect-safe.</summary>
+    void FrameSpawnCameraFullMapOrtho()
+    {
+        if (!_cam) return;
+
+        // Get world bounds to frame.
+        var renderers = Object.FindObjectsOfType(typeof(Renderer)) as Renderer[];
+        if (renderers.Length == 0) return;
+        var b = new Bounds(renderers[0].bounds.center, Vector3.zero);
+        for (int i = 0; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
+
+        // Save current camera state to restore after spawn.
+        _preSelectOrtho = _cam.orthographic;
+        _preSelectOrthoSize = _cam.orthographicSize;
+
+        // Force top-down ortho
+        _cam.orthographic = true;
+        var halfSize = Mathf.Max(b.extents.x, b.extents.z);
+        var margin = 1.20f; // gives breathing room
+        _cam.orthographicSize = halfSize * margin;
+
+        var center = b.center;
+        // Put camera above center looking straight down.
+        _cam.transform.position = new Vector3(center.x, center.y + 1000f, center.z);
+        _cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
     }
 }

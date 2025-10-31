@@ -7,51 +7,63 @@ using UnityEngine;
 public sealed class SpawnAreaHighlighter : MonoBehaviour
 {
     public enum Mode { Hidden, Choosing }
-
-    public enum AreaRole
-    {
-        Friendly,
-        Enemy,
-        Neutral,
-        MapBounds
-    }
+    public enum AreaRole { Friendly, Enemy, Neutral, MapBounds }
 
     [Header("Behavior")]
     [Tooltip("When true, ignore this object's BoxCollider during Choosing and render exactly the target Bounds sent from the controller.")]
     [SerializeField] bool followTargetBounds = true;
+    [SerializeField] bool autoDetectRole = true;
+    [SerializeField] AreaRole areaRole;
+
+    // Forbidden regions to show as red (neutral + enemy lane)
+    static readonly List<Bounds> s_Forbidden = new();
 
     [Header("Visual")]
-    [SerializeField] Color activeColor = new Color(0.2f, 0.8f, 0.2f, 0.28f);
-    [SerializeField] Color inactiveColor = new Color(0.8f, 0.2f, 0.2f, 0.14f);
-    [SerializeField] Color blockedColor = new Color(0.8f, 0.2f, 0.2f, 0.35f);
+    // 40% transparent across all area colours (alpha = 0.6). Friendly = green, Neutral/Enemy/Map = red.
+    [SerializeField] Color activeColor   = new Color(0.20f, 0.95f, 0.20f, 0.60f);
+    [SerializeField] Color inactiveColor = new Color(0.90f, 0.20f, 0.20f, 0.60f);
+    public Color blockedColor  = new Color(1f, 0.25f, 0.25f, 0.6f);
     [SerializeField, Min(0f)] float yOffset = 0.02f;
+// Sets consistent 40% transparency and colour scheme (green for own, red for others). Previously these were much more transparent.
 
-    [Header("Role")]
-    [SerializeField] AreaRole areaRole = AreaRole.Friendly;
-    [SerializeField] bool autoDetectRole = true;
+// Ensure friendly highlight is GREEN, enemy/other is RED.
+[Header("Colors")]
+public Color friendlyColor = new Color(0f, 1f, 0f, 0.35f);
+public Color enemyColor    = new Color(1f, 0f, 0f, 0.35f);
 
     static readonly List<SpawnAreaHighlighter> s_All = new();
     static Mode s_Mode = Mode.Hidden;
+    static Bounds s_Target;
+    static bool s_TargetBlocked;
+    // Carved "holes" from blockers (world-space XZ AABBs)
+    static readonly List<Bounds> s_Holes = new();
+// [Highlighter] Store per-area carved rectangles.
+
+    // New layout mode fields
+    static bool s_LayoutMode = false;
     static Bounds s_FriendlyBounds;
     static Bounds s_EnemyBounds;
     static Bounds s_NeutralBounds;
     static Bounds s_MapBounds;
     static bool s_FriendlyBlocked;
-    // Carved "holes" from blockers (world-space XZ AABBs)
-    static readonly List<Bounds> s_Holes = new();
-// [Highlighter] Store per-area carved rectangles.
 
     BoxCollider _col;
     MeshRenderer _mr;
+    MaterialPropertyBlock _mpb;
     MeshFilter _mf;
     bool _roleResolved;
+
+    void Awake()
+    {
+        _mr = GetComponentInChildren<MeshRenderer>();
+        _mpb = new MaterialPropertyBlock();
+    }
 
     void OnEnable()
     {
         _col = GetComponent<BoxCollider>();
         Build();
         if (!s_All.Contains(this)) s_All.Add(this);
-        _roleResolved = false;
         Apply();
     }
 
@@ -96,15 +108,38 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
             // Prefer stencil-culling material (cuts out holes). Fallback to plain Unlit/Color.
             var cutout = Shader.Find("Unlit/SpawnAreaStencilCull");
             var mat = cutout ? new Material(cutout) : new Material(Shader.Find("Unlit/Color"));
+            // Transparent overlay drawn AFTER hole masks
             mat.SetInt("_ZWrite", 0);
-            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent + 10;
+            // Subtle inner-edge neon glow defaults
+            if (mat.HasProperty("_Glow"))      mat.SetFloat("_Glow", 0.85f);
+            if (mat.HasProperty("_GlowWidth")) mat.SetFloat("_GlowWidth", 0.02f);
             _mr.sharedMaterial = mat;
         }
+        }
+// Renders the coloured area after the stencil masks and enables a soft neon rim. Previously both used the same queue, causing unreliable ordering.
+
+    public static void SetMode(Mode mode, Bounds target, bool targetBlocked = false, List<Bounds> holes = null, List<Bounds> forbidden = null)
+    {
+        s_LayoutMode = false;
+        s_Mode = mode;
+        s_Target = target;
+        s_TargetBlocked = targetBlocked;
+
+        s_Holes.Clear();
+        if (holes != null) s_Holes.AddRange(holes);
+
+        s_Forbidden.Clear();
+        if (forbidden != null) s_Forbidden.AddRange(forbidden);
+
+        for (int i = 0; i < s_All.Count; i++) s_All[i].Apply();
     }
+// [Highlighter] New holes argument from controller.
 
     public static void SetLayout(Mode mode, Bounds friendly, Bounds enemy, Bounds neutral, Bounds map,
         bool friendlyBlocked = false, List<Bounds> holes = null)
     {
+        s_LayoutMode = true;
         s_Mode = mode;
         s_FriendlyBounds = friendly;
         s_EnemyBounds = enemy;
@@ -115,6 +150,27 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         s_Holes.Clear();
         if (holes != null) s_Holes.AddRange(holes);
 
+        // Ensure a MapBounds renderer exists so the full map area is always visible.
+        bool hasMapRenderer = false;
+        for (int i = 0; i < s_All.Count; i++)
+        {
+            var h = s_All[i];
+            if (!h) continue;
+            if (h.areaRole == AreaRole.MapBounds) { hasMapRenderer = true; break; }
+        }
+        if (!hasMapRenderer && s_MapBounds.size.sqrMagnitude > 0.0001f)
+        {
+            var go = new GameObject("SpawnArea_MapBounds_Runtime");
+            go.hideFlags = HideFlags.DontSave;
+            var col = go.AddComponent<BoxCollider>();
+            col.isTrigger = true;
+            var hi = go.AddComponent<SpawnAreaHighlighter>();
+            hi.autoDetectRole = false;
+            hi.areaRole = AreaRole.MapBounds;
+            hi.followTargetBounds = true;
+            if (Camera.main) go.transform.SetPositionAndRotation(s_MapBounds.center, Quaternion.identity);
+        }
+
         for (int i = 0; i < s_All.Count; i++)
         {
             var h = s_All[i];
@@ -123,6 +179,7 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
             h.Apply();
         }
     }
+// Auto-spawns a MapBounds highlighter at runtime so the map area is always rendered.
 
     void Apply()
     {
@@ -131,26 +188,37 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         if (s_Mode == Mode.Hidden) { _mr.enabled = false; ClearHoleVisuals(); return; }
         _mr.enabled = true;
 
-        if (!_roleResolved && autoDetectRole)
-        {
-            areaRole = GuessRoleFromCollider(areaRole);
-            _roleResolved = true;
-        }
+        Bounds renderWorld;
 
-        if (!TryGetBoundsForRole(out var target))
+        if (s_LayoutMode)
         {
-            _mr.enabled = false;
-            ClearHoleVisuals();
-            return;
-        }
+            // Layout mode: each highlighter renders its assigned area
+            if (!_roleResolved)
+            {
+                if (autoDetectRole)
+                {
+                    var pos = _col.bounds.center;
+                    if (s_FriendlyBounds.Contains(pos)) areaRole = AreaRole.Friendly;
+                    else if (s_EnemyBounds.Contains(pos)) areaRole = AreaRole.Enemy;
+                    else if (s_NeutralBounds.Contains(pos)) areaRole = AreaRole.Neutral;
+                    else areaRole = AreaRole.MapBounds;
+                }
+                _roleResolved = true;
+            }
 
-        // Either render our own collider (legacy) or the layout's bounds for our role.
-        Bounds renderWorld = followTargetBounds ? target : ToWorldBounds(_col);
-        if (renderWorld.size.x <= 0.001f || renderWorld.size.z <= 0.001f)
+            switch (areaRole)
+            {
+                case AreaRole.Friendly: renderWorld = s_FriendlyBounds; followTargetBounds = true; break;
+                case AreaRole.Enemy: renderWorld = s_EnemyBounds; followTargetBounds = false; break;
+                case AreaRole.Neutral: renderWorld = s_NeutralBounds; followTargetBounds = false; break;
+                case AreaRole.MapBounds: renderWorld = s_MapBounds; followTargetBounds = false; break;
+                default: renderWorld = ToWorldBounds(_col); followTargetBounds = false; break;
+            }
+        }
+        else
         {
-            _mr.enabled = false;
-            ClearHoleVisuals();
-            return;
+            // Legacy mode
+            renderWorld = followTargetBounds ? s_Target : ToWorldBounds(_col);
         }
 
         // Place/scale visual quad directly from the render bounds.
@@ -159,7 +227,12 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         _mr.transform.localScale = new Vector3(renderWorld.size.x, 1f, renderWorld.size.z);
 
         var mat = _mr.sharedMaterial; if (!mat) return;
-        mat.color = ResolveColorForRole(followTargetBounds);
+
+        // Apply color for role and drive emission for neon glow.
+        var col = ResolveColorForRole(followTargetBounds);
+        mat.color = col;
+        if (mat.HasProperty("_EmissionColor"))
+            mat.SetColor("_EmissionColor", new Color(col.r, col.g, col.b, 0f) * 1.35f);
 
         // Carve holes relative to what we're rendering when highlighting the friendly area.
         if (followTargetBounds && areaRole == AreaRole.Friendly)
@@ -167,6 +240,81 @@ public sealed class SpawnAreaHighlighter : MonoBehaviour
         else
             ClearHoleVisuals();
     }
+
+    Color ResolveColorForRole(bool followsTarget)
+    {
+        // Treat the quad that follows the target bounds as the "friendly" highlight.
+        // This avoids misclassification when auto-detecting areaRole by collider position.
+        if (!followsTarget)
+            return inactiveColor;
+
+        return s_FriendlyBlocked ? blockedColor : activeColor; // green unless blocked
+    }
+// Friendlies now render green even if a scene highlighter sits outside the friendly split.
+
+// Draw neutral+enemy bounds as red, outside the allowed s_Target area.
+// We draw each forbidden Bounds as one quad under the green.
+void BuildForbiddenVisuals(Bounds myWorld)
+{
+    var parent = _mr ? _mr.transform.parent : transform;
+    var root = parent.Find("Forbidden");
+    if (!root)
+    {
+        var go = new GameObject("Forbidden");
+        root = go.transform;
+        root.SetParent(parent, false);
+        root.localPosition = Vector3.zero;
+        root.localRotation = Quaternion.identity;
+        root.localScale = Vector3.one;
+    }
+
+    int alive = 0;
+    for (int i = 0; i < s_Forbidden.Count; i++)
+    {
+        var fb = s_Forbidden[i];
+        if (fb.size.x <= 0.001f || fb.size.z <= 0.001f) continue;
+
+        var child = (alive < root.childCount) ? root.GetChild(alive) : null;
+        if (!child)
+        {
+            var go = new GameObject($"Forbidden_{alive}");
+            child = go.transform;
+            child.SetParent(root, false);
+            var mf = go.AddComponent<MeshFilter>();
+            var mr = go.AddComponent<MeshRenderer>();
+            mf.sharedMesh ??= CreateQuadXZ();
+            if (!mr.sharedMaterial)
+            {
+                var mat = new Material(Shader.Find("Unlit/Color"));
+                mat.SetInt("_ZWrite", 0);
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 5; // draw under green
+                mr.sharedMaterial = mat;
+            }
+        }
+
+        child.position = new Vector3(fb.center.x, myWorld.center.y + yOffset * 0.5f, fb.center.z);
+        child.localRotation = Quaternion.identity;
+        child.localScale = new Vector3(fb.size.x, 1f, fb.size.z);
+
+        var mrE = child.GetComponent<MeshRenderer>();
+        if (mrE && mrE.sharedMaterial) mrE.sharedMaterial.color = blockedColor;
+
+        alive++;
+    }
+
+    for (int i = root.childCount - 1; i >= alive; i--)
+    {
+        var t = root.GetChild(i);
+        if (t) Destroy(t.gameObject);
+    }
+}
+
+void ClearForbiddenVisuals()
+{
+    var root = transform.Find("Forbidden");
+    if (!root) return;
+    for (int i = root.childCount - 1; i >= 0; i--) Destroy(root.GetChild(i).gameObject);
+}
 
 // Build child quads that write **stencil only** (no color), so the area material can cull them.
 void BuildHoleMasks(Bounds myWorld)
@@ -201,10 +349,11 @@ void BuildHoleMasks(Bounds myWorld)
             var mr = go.AddComponent<MeshRenderer>();
             if (!mf.sharedMesh) mf.sharedMesh = CreateQuadXZ();
 
-            // Hole = stencil writer (no color)
+            // Hole = stencil writer (no color) — must render BEFORE area fill for reliable stencil cull
             var maskShader = Shader.Find("Hidden/SpawnHoleMask");
             mr.sharedMaterial = maskShader ? new Material(maskShader) : new Material(Shader.Find("Unlit/Color"));
-            mr.sharedMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            mr.sharedMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 20;
+// Forces hole masks to write stencil earlier; fixes cases where the map area appeared missing or not cut out.
         }
 
         // Normalize to parent space
@@ -224,9 +373,7 @@ void BuildHoleMasks(Bounds myWorld)
         var t = holesRoot.GetChild(i);
         if (t) Destroy(t.gameObject);
     }
-}
-
-    void ClearHoleVisuals()
+}    void ClearHoleVisuals()
     {
         if (_mr == null) return;
         var holesRoot = _mr.transform.Find("Holes");
@@ -265,78 +412,6 @@ void BuildHoleMasks(Bounds myWorld)
     }
 // [Highlighter] Adds hole quads and intersection helper.
 
-    bool TryGetBoundsForRole(out Bounds bounds)
-    {
-        bounds = default;
-        switch (areaRole)
-        {
-            case AreaRole.Friendly: bounds = s_FriendlyBounds; break;
-            case AreaRole.Enemy:    bounds = s_EnemyBounds;   break;
-            case AreaRole.Neutral:  bounds = s_NeutralBounds; break;
-            case AreaRole.MapBounds:bounds = s_MapBounds;     break;
-            default: bounds = s_FriendlyBounds; break;
-        }
-
-        if (!followTargetBounds)
-            return true;
-
-        return bounds.size.x > 0.001f && bounds.size.z > 0.001f;
-    }
-
-    Color ResolveColorForRole(bool usingLayoutBounds)
-    {
-        if (!usingLayoutBounds)
-            return inactiveColor;
-
-        return areaRole switch
-        {
-            AreaRole.Friendly => s_FriendlyBlocked ? blockedColor : activeColor,
-            AreaRole.Enemy    => inactiveColor,
-            AreaRole.Neutral  => inactiveColor,
-            AreaRole.MapBounds=> inactiveColor,
-            _ => inactiveColor
-        };
-    }
-
-    AreaRole GuessRoleFromCollider(AreaRole fallback)
-    {
-        if (!_col) return fallback;
-
-        var world = ToWorldBounds(_col);
-        if (world.size.sqrMagnitude <= 0.0001f)
-            return fallback;
-
-        AreaRole bestRole = fallback;
-        float bestScore = float.PositiveInfinity;
-
-        void Consider(AreaRole role, Bounds target)
-        {
-            if (target.size.sqrMagnitude <= 0.0001f) return;
-            float score = ScoreBounds(world, target);
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestRole = role;
-            }
-        }
-
-        Consider(AreaRole.Friendly, s_FriendlyBounds);
-        Consider(AreaRole.Enemy, s_EnemyBounds);
-        Consider(AreaRole.Neutral, s_NeutralBounds);
-        Consider(AreaRole.MapBounds, s_MapBounds);
-
-        return bestRole;
-    }
-
-    static float ScoreBounds(Bounds source, Bounds target)
-    {
-        var sizeDiff = Mathf.Abs(source.size.x - target.size.x) + Mathf.Abs(source.size.z - target.size.z);
-        var src = new Vector2(source.center.x, source.center.z);
-        var dst = new Vector2(target.center.x, target.center.z);
-        float centerDiff = Vector2.Distance(src, dst);
-        return sizeDiff + centerDiff;
-    }
-
     static Bounds ToWorldBounds(BoxCollider c)
     {
         // Use Unity's world AABB (handles rotation and scale).
@@ -348,4 +423,31 @@ void BuildHoleMasks(Bounds myWorld)
         return p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z;
     }
 
+    static bool SizesRoughlyMatchXZ(Vector3 a, Vector3 b)
+    {
+        // Tolerate authoring/scale differences
+        float eps = Mathf.Max(0.5f, 0.1f * Mathf.Max(a.x, a.z));
+        return Mathf.Abs(a.x - b.x) <= eps && Mathf.Abs(a.z - b.z) <= eps;
+    }
+
+    // Call this whenever area role or block state changes.
+    void ApplyColorNow(bool isFriendly, bool isBlocked)
+    {
+        if (_mr == null) return;
+        var c = isBlocked ? blockedColor : (isFriendly ? friendlyColor : enemyColor);
+
+        _mr.GetPropertyBlock(_mpb);
+        // Cover common pipelines/shaders.
+        if (_mr.sharedMaterial && _mr.sharedMaterial.HasProperty("_BaseColor")) _mpb.SetColor("_BaseColor", c);
+        if (_mr.sharedMaterial && _mr.sharedMaterial.HasProperty("_Color"))     _mpb.SetColor("_Color", c);
+        if (_mr.sharedMaterial && _mr.sharedMaterial.HasProperty("_Tint"))      _mpb.SetColor("_Tint", c);
+        if (_mr.sharedMaterial && _mr.sharedMaterial.HasProperty("_EmissiveColor")) _mpb.SetColor("_EmissiveColor", c);
+        _mr.SetPropertyBlock(_mpb);
+    }
+
+    // Public helper for external callers to force green for friendly.
+    public void ForceFriendlyGreen(bool isBlocked)
+    {
+        ApplyColorNow(true, isBlocked);
+    }
 }
