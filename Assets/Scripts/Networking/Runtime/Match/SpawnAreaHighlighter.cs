@@ -1,6 +1,7 @@
 // Assets/Scripts/Networking/Runtime/Match/SpawnAreaHighlighter.cs
 using System.Collections.Generic;
 using UnityEngine;
+using Game.Net;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(BoxCollider))]
@@ -150,6 +151,13 @@ public Color enemyColor    = new Color(1f, 0f, 0f, 0.35f);
         s_Holes.Clear();
         if (holes != null) s_Holes.AddRange(holes);
 
+        // Enemy + Neutral render as forbidden red under green
+        s_Forbidden.Clear();
+        if (enemy.size.sqrMagnitude > 0f)   s_Forbidden.Add(enemy);
+        if (neutral.size.sqrMagnitude > 0f) s_Forbidden.Add(neutral);
+
+        Debug.Log($"[SpawnHighlight] Layout set. Friendly={friendly.size} Enemy={enemy.size} Neutral={neutral.size} Map={map.size} Holes={s_Holes.Count}");
+
         // Ensure a MapBounds renderer exists so the full map area is always visible.
         bool hasMapRenderer = false;
         for (int i = 0; i < s_All.Count; i++)
@@ -234,11 +242,17 @@ public Color enemyColor    = new Color(1f, 0f, 0f, 0.35f);
         if (mat.HasProperty("_EmissionColor"))
             mat.SetColor("_EmissionColor", new Color(col.r, col.g, col.b, 0f) * 1.35f);
 
-        // Carve holes relative to what we're rendering when highlighting the friendly area.
+        // Carve holes and draw forbidden red overlays only for the friendly target.
         if (followTargetBounds && areaRole == AreaRole.Friendly)
+        {
             BuildHoleMasks(renderWorld);
+            BuildForbiddenVisuals(renderWorld);
+        }
         else
+        {
             ClearHoleVisuals();
+            ClearForbiddenVisuals();
+        }
     }
 
     Color ResolveColorForRole(bool followsTarget)
@@ -321,6 +335,7 @@ void BuildHoleMasks(Bounds myWorld)
 {
     if (myWorld.size.x <= 0.001f || myWorld.size.z <= 0.001f) { ClearHoleVisuals(); return; }
 
+    // AABB-based hole quads under the AreaVisual (normalized)
     var parent = _mr.transform;
     var holesRoot = parent.Find("Holes");
     if (!holesRoot)
@@ -353,7 +368,6 @@ void BuildHoleMasks(Bounds myWorld)
             var maskShader = Shader.Find("Hidden/SpawnHoleMask");
             mr.sharedMaterial = maskShader ? new Material(maskShader) : new Material(Shader.Find("Unlit/Color"));
             mr.sharedMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 20;
-// Forces hole masks to write stencil earlier; fixes cases where the map area appeared missing or not cut out.
         }
 
         // Normalize to parent space
@@ -367,12 +381,82 @@ void BuildHoleMasks(Bounds myWorld)
 
         alive++;
     }
-
+    // Trim extras
     for (int i = holesRoot.childCount - 1; i >= alive; i--)
     {
         var t = holesRoot.GetChild(i);
         if (t) Destroy(t.gameObject);
     }
+
+    // Exact rotated cutouts in world space for BoxCollider blockers tagged "No Spawn".
+    // These write stencil directly in world, so they match rotated blocks precisely.
+    var holesWorld = transform.Find("HolesWorld");
+    if (!holesWorld)
+    {
+        var go = new GameObject("HolesWorld");
+        holesWorld = go.transform;
+        holesWorld.SetParent(transform, false);
+        holesWorld.localPosition = Vector3.zero;
+        holesWorld.localRotation = Quaternion.identity;
+        holesWorld.localScale    = Vector3.one;
+    }
+
+    int aliveWorld = 0;
+    string blockerTag = "No Spawn";
+    var areas = UnityEngine.Object.FindFirstObjectByType<Match1v1Areas>();
+    if (areas) blockerTag = areas.BlockingTag;
+
+    // Tall overlap to ignore Y
+    var tallCenter  = new Vector3(myWorld.center.x, 0f, myWorld.center.z);
+    var tallExtents = new Vector3(myWorld.extents.x, 5000f, myWorld.extents.z);
+    var hits = Physics.OverlapBox(tallCenter, tallExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
+    for (int i = 0; i < hits.Length; i++)
+    {
+        var bc = hits[i] as BoxCollider;
+        if (!bc || !bc.CompareTag(blockerTag)) continue;
+
+        // Simple XZ footprint with yaw from the collider transform
+        var sizeLocal = bc.size;
+        var lossy = bc.transform.lossyScale;
+        var sizeXZ = new Vector3(Mathf.Abs(sizeLocal.x * lossy.x), 1f, Mathf.Abs(sizeLocal.z * lossy.z));
+        var centerXZ = new Vector3(bc.bounds.center.x, myWorld.center.y + 0.01f, bc.bounds.center.z);
+
+        // Skip if no intersection with myWorld XZ
+        if (IntersectXZ(myWorld, new Bounds(new Vector3(centerXZ.x, 0, centerXZ.z), new Vector3(sizeXZ.x, 0, sizeXZ.z))).size.sqrMagnitude <= 0f)
+            continue;
+
+        var child = (aliveWorld < holesWorld.childCount) ? holesWorld.GetChild(aliveWorld) : null;
+        if (!child)
+        {
+            var go = new GameObject($"HoleRot_{aliveWorld}");
+            child = go.transform;
+            child.SetParent(holesWorld, false);
+            var mf = go.AddComponent<MeshFilter>();
+            var mr = go.AddComponent<MeshRenderer>();
+            mf.sharedMesh = mf.sharedMesh ?? CreateQuadXZ();
+
+            var maskShader = Shader.Find("Hidden/SpawnHoleMask");
+            mr.sharedMaterial = maskShader ? new Material(maskShader) : new Material(Shader.Find("Unlit/Color"));
+            mr.sharedMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 20;
+        }
+
+        // Place in world, align yaw
+        float yaw = bc.transform.eulerAngles.y;
+        child.SetPositionAndRotation(centerXZ, Quaternion.Euler(0f, yaw, 0f));
+        child.localScale = sizeXZ;
+
+        aliveWorld++;
+    }
+
+    // Trim extras
+    for (int i = holesWorld.childCount - 1; i >= aliveWorld; i--)
+    {
+        var t = holesWorld.GetChild(i);
+        if (t) Destroy(t.gameObject);
+    }
+
+    if (aliveWorld > 0 || s_Holes.Count > 0)
+        Debug.Log($"[SpawnHighlight] Built hole masks. AABB={s_Holes.Count} Rotated={aliveWorld}");
 }    void ClearHoleVisuals()
     {
         if (_mr == null) return;

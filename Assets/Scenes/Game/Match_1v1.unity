@@ -2116,7 +2116,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &35160442
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2136,6 +2136,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
   blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &35160443
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -9525,7 +9527,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &124650859
 Transform:
   m_ObjectHideFlags: 0
@@ -16603,7 +16605,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &202901854
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16623,6 +16625,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
   blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &202901855
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -17392,6 +17396,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
   blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &210826670
 Mesh:
   m_ObjectHideFlags: 0
@@ -34734,6 +34740,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
   blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &416090351
 Mesh:
   m_ObjectHideFlags: 0
@@ -46684,6 +46692,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
   blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &568112229
 Mesh:
   m_ObjectHideFlags: 0
@@ -48829,6 +48839,37 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &594070950
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 594070951}
+  m_Layer: 0
+  m_Name: Spawn 1 (Side B)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &594070951
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 594070950}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 19.61, y: 6.75, z: 15.99}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &594455740
 Mesh:
   m_ObjectHideFlags: 0
@@ -72464,6 +72505,37 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &935418165
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 935418166}
+  m_Layer: 0
+  m_Name: Spawn 1 (Side A)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &935418166
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 935418165}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -21.23, y: 6.75, z: -24.900475}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &935605973
 Mesh:
   m_ObjectHideFlags: 0
@@ -74397,6 +74469,12 @@ MonoBehaviour:
   teamPercent: 0.45
   neutralPercent: 0.1
   noSpawnTag: No Spawn
+  teamASpawnPoints:
+  - {fileID: 935418166}
+  - {fileID: 1247743185}
+  teamBSpawnPoints:
+  - {fileID: 594070951}
+  - {fileID: 1656595205}
 --- !u!43 &972708942
 Mesh:
   m_ObjectHideFlags: 0
@@ -98627,6 +98705,37 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &1247743184
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1247743185}
+  m_Layer: 0
+  m_Name: Spawn 2 (Side A)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1247743185
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1247743184}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -21.23, y: 6.75, z: 10.08}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &1248717246
 Mesh:
   m_ObjectHideFlags: 0
@@ -128806,6 +128915,37 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &1656595204
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1656595205}
+  m_Layer: 0
+  m_Name: Spawn 2 (Side B)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1656595205
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1656595204}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 19.61, y: 6.75, z: -11.8}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &1662876076
 Mesh:
   m_ObjectHideFlags: 0
@@ -142660,8 +142800,8 @@ MonoBehaviour:
   spawnCameraLookAt: {x: 0, y: 0, z: 0}
   countdownSeconds: 3
   cinematicSeconds: 3.5
-  spawnSelectSeconds: 10
   roundDurationSeconds: 90
+  preRoundCountdownSeconds: 3
   roundEndDelaySeconds: 3
   winsNeeded: 5
   winLeadNeeded: 2
@@ -145462,7 +145602,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1885319641
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -145482,6 +145622,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
   blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &1885319642
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -175679,6 +175821,8 @@ MonoBehaviour:
   inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
   blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
   yOffset: 0.02
+  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
+  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!4 &6691284414302392911
 Transform:
   m_ObjectHideFlags: 0
@@ -175721,3 +175865,7 @@ SceneRoots:
   - {fileID: 35160444}
   - {fileID: 202901856}
   - {fileID: 1885319643}
+  - {fileID: 935418166}
+  - {fileID: 1247743185}
+  - {fileID: 594070951}
+  - {fileID: 1656595205}

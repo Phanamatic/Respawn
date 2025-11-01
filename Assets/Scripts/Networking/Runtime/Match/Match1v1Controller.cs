@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Netcode;
+using Game.Net; // use existing GroundClampServer
+// Resolve type without fully qualifying everywhere.
 using UnityEngine;
 using TMPro;
 using UnityEngine.Rendering;
@@ -62,8 +64,10 @@ namespace Game.Net
         [Header("Timings")]
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
         [SerializeField, Min(3f)] private float cinematicSeconds = 3.5f;
-        [SerializeField, Min(3f)] private float spawnSelectSeconds = 15f;
-        [SerializeField, Min(10f)] private float roundDurationSeconds = 90f;
+        [SerializeField, Min(0f)] private float roundDurationSeconds = 90f;
+
+        [Header("Pre-Round")]
+        [SerializeField, Min(1)] private int preRoundCountdownSeconds = 3;
         [SerializeField, Min(0f)] private float roundEndDelaySeconds = 0f;
 
         [Header("Win Conditions")]
@@ -291,15 +295,15 @@ namespace Game.Net
                 areas.SetSwapSides(swap);
             }
 
-            StartSpawnSelect();
+            // No spawn-choose: immediately spawn both teams at random side points, then do a 3..2..1 and start.
+            SpawnAllAndStartRound();
         }
 
         void StartSpawnSelect()
         {
             _state.Value = MatchState.SpawnSelect;
-            // Hard enforce 15 s spawn-select.
-            spawnSelectSeconds = 15f;
-            _spawnDeadlineServer = Time.unscaledTime + spawnSelectSeconds;
+            // Hard enforce 0 s spawn-select (instant).
+            _spawnDeadlineServer = Time.unscaledTime + 0f;
             _chosenSpawns.Clear();
 
             foreach (var kv in _teams)
@@ -314,7 +318,7 @@ namespace Game.Net
 
                 var bounds = areas.GetTeamBounds(team);
                 bool blocked = areas.IsAreaBlocked(team);
-                BeginSpawnSelectClientRpc(bounds.center, bounds.size, spawnSelectSeconds, blocked, team, ToClient(cid));
+                BeginSpawnSelectClientRpc(bounds.center, bounds.size, 0f, blocked, team, ToClient(cid));
             }
 
             StartCoroutine(CoWatchSpawnDeadline());
@@ -458,6 +462,7 @@ namespace Game.Net
             if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
             ApplySpawnHighlightLayout(holes);
 // [Match1v1] Client sees green area with red "holes" subtracted.
+            Debug.Log($"[Match1v1] SpawnSelect begin. Team={team} BoundsC={_myAreaBounds.center} Size={_myAreaBounds.size} Holes={(holes?.Count ?? 0)} Blocked={blocked}");
 
             // Run the intro pan once, then open the spawn UI.
             if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
@@ -549,9 +554,13 @@ namespace Game.Net
         IEnumerator CoSpawnSelectTimer()
         {
             // While selecting, force all SpawnAreaHighlighters to friendly GREEN for local player.
-            var highs = Object.FindObjectsOfType(typeof(SpawnAreaHighlighter)) as SpawnAreaHighlighter[];
-            for (int i = 0; i < highs.Length; i++)
-                highs[i].ForceFriendlyGreen(isBlocked:false);
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var highs = UnityEngine.Object.FindObjectsByType<SpawnAreaHighlighter>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var highs = UnityEngine.Object.FindObjectsOfType<SpawnAreaHighlighter>();
+#endif
+            // removed; we want friendly=green only, other/neutral=red
+            // Highlighters now color by role in layout mode.
 
             while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
             {
@@ -659,54 +668,71 @@ namespace Game.Net
 
             // Store the exact XZ and let server snap Y to Ground on spawn.
             _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
-// [Match1v1] Server authority validates chosen point against blockers.
+            Debug.Log($"[Match1v1] Chosen spawn accepted: cid={cid} team={team} point={point}");
 
+// [Match1v1] Server authority validates chosen point against blockers.
             if (_chosenSpawns.Count >= 2)
                 SpawnAllAndStartRound();
         }
 
         IEnumerator CoWatchSpawnDeadline()
         {
-            yield return new WaitForSecondsRealtime(spawnSelectSeconds + 0.1f);
+            yield return new WaitForSecondsRealtime(0f + 0.1f);
             if (_state.Value == MatchState.SpawnSelect)
                 SpawnAllAndStartRound();
         }
 
         void SpawnAllAndStartRound()
         {
+            if (!IsServer) return;
+
             if (!playerPrefab)
             {
                 Debug.LogError("[Match1v1] Player prefab not assigned on controller.");
                 return;
             }
 
-            // Spawn fresh PlayerObjects at chosen positions.
+            // Spawn fresh PlayerObjects at random fixed points (fallback to unblocked area sample).
             var ids = NetworkManager.ConnectedClientsIds;
             foreach (var cid in ids)
             {
                 if (cid == NetworkManager.ServerClientId) continue;
                 if (!_teams.TryGetValue(cid, out var team)) continue;
 
-                if (!areas)
-                {
-                    Debug.LogError("[Match1v1] Areas reference missing during spawn; defaulting to controller position.");
-                    SpawnFreshPlayerForClient(cid, transform.position, team);
-                    continue;
-                }
+                Vector3 point = transform.position;
 
-                Vector3 point;
-                if (_chosenSpawns.TryGetValue(cid, out var chosen))
+                if (areas)
                 {
-                    point = chosen;
-                }
-                else
-                {
-                    // Only sample from **unblocked** sub-areas (respects carved holes)
-                    point = areas.GetRandomUnblockedPoint(team, 128);
+                    // Prefer designer-defined side arrays; fallback to random unblocked inside team bounds.
+                    if (!areas.TryGetRandomFixedSpawn(team, out point))
+                        point = areas.GetRandomUnblockedPoint(team, 128);
                 }
 
                 SpawnFreshPlayerForClient(cid, point, team);
             }
+
+            // Keep players frozen/paused and visible while we run the 3..2..1 pre-round countdown.
+            SetAllPlayersVisibleClientRpc(true);
+            // Ensure any legacy spawn-select UI is hidden.
+            if (spawnCanvas) ShowCanvas(spawnCanvas, false);
+
+            FreezeAllPlayers(true);
+            BroadcastPauseAll(true);
+
+            StopCoroutineSafe(ref _uiCo);
+            StartCoroutine(CoPreRoundCountdownThenStart());
+        }
+
+        IEnumerator CoPreRoundCountdownThenStart()
+        {
+            _state.Value = MatchState.Countdown;
+            for (int i = preRoundCountdownSeconds; i > 0; i--)
+            {
+                CountdownClientRpc(i);
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            CountdownClientRpc(0);
+            yield return new WaitForSecondsRealtime(0.25f);
 
             _state.Value = MatchState.Playing;
             // server-authoritative start/end; guard if server time not ready yet
@@ -717,7 +743,6 @@ namespace Game.Net
             SetAllPlayersVisibleClientRpc(true);
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
-            EndSpawnSelectForAllClientRpc();
 
             StartCoroutine(CoMonitorRound());
         }
@@ -1115,6 +1140,37 @@ namespace Game.Net
 
             _cam.transform.SetPositionAndRotation(pos, rot);
         }
+
+        /// <summary>Frame full map for spawn choose using orthographic top-down. Aspect-safe.</summary>
+        void FrameSpawnCameraFullMapOrtho()
+        {
+            if (!_cam) return;
+
+            // Get world bounds to frame.
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#else
+            var renderers = UnityEngine.Object.FindObjectsOfType<Renderer>();
+#endif
+            if (renderers == null || renderers.Length == 0) return;
+            var b = new Bounds(renderers[0].bounds.center, Vector3.zero);
+            for (int i = 0; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
+
+            // Save current camera state to restore after select.
+            _preSelectOrtho = _cam.orthographic;
+            _preSelectOrthoSize = _cam.orthographicSize;
+
+            // Force top-down ortho
+            _cam.orthographic = true;
+            var halfSize = Mathf.Max(b.extents.x, b.extents.z);
+            var margin = 1.20f; // breathing room
+            _cam.orthographicSize = halfSize * margin;
+
+            var center = b.center;
+            _cam.transform.position = new Vector3(center.x, center.y + 1000f, center.z);
+            _cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+        }
+// Fix: moved inside class to avoid CS0116.
 
         // Helper: get precise ground height for cursor placement (uses the same ground mask)
         float GroundYAt(Vector3 xz)
@@ -1534,30 +1590,5 @@ FrameSpawnCameraFullMap();
         }
     }
 
-    /// <summary>Frame full map for spawn choose using orthographic top-down. Aspect-safe.</summary>
-    void FrameSpawnCameraFullMapOrtho()
-    {
-        if (!_cam) return;
-
-        // Get world bounds to frame.
-        var renderers = Object.FindObjectsOfType(typeof(Renderer)) as Renderer[];
-        if (renderers.Length == 0) return;
-        var b = new Bounds(renderers[0].bounds.center, Vector3.zero);
-        for (int i = 0; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
-
-        // Save current camera state to restore after spawn.
-        _preSelectOrtho = _cam.orthographic;
-        _preSelectOrthoSize = _cam.orthographicSize;
-
-        // Force top-down ortho
-        _cam.orthographic = true;
-        var halfSize = Mathf.Max(b.extents.x, b.extents.z);
-        var margin = 1.20f; // gives breathing room
-        _cam.orthographicSize = halfSize * margin;
-
-        var center = b.center;
-        // Put camera above center looking straight down.
-        _cam.transform.position = new Vector3(center.x, center.y + 1000f, center.z);
-        _cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-    }
+    // moved into Match1v1Controller class
 }

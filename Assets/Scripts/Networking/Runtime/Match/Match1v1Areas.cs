@@ -26,6 +26,11 @@ namespace Game.Net
 
         [Header("Spawn Blocking")]
         [SerializeField] private string noSpawnTag = "No Spawn";
+
+        [Header("Fixed Spawn Points (one array per side)")]
+        [Tooltip("Team A spawns from here when sides are NOT swapped; Team B uses B array. When SetSwapSides(true) is active (halftime), teams flip arrays.")]
+        [SerializeField] private Transform[] teamASpawnPoints;
+        [SerializeField] private Transform[] teamBSpawnPoints;
 // Tag must exactly match the scene objects' Tag; fixes missed blockers due to casing/spacing.
 
         // Force unified mode; legacy is removed from runtime. If mapArea is missing we return empty bounds and log.
@@ -110,6 +115,46 @@ namespace Game.Net
         public bool IsPointBlockedInBounds(Bounds areaBounds, Vector3 worldPoint)
         {
             return IsPointInAnyBlocker(worldPoint, areaBounds, noSpawnTag);
+        }
+
+        /// <summary>
+        /// Try pick a random Transform from side arrays (respecting halftime swap).
+        /// Returns true and world position if a valid Transform exists; else false.
+        /// </summary>
+        public bool TryGetRandomFixedSpawn(TeamId team, out Vector3 pos)
+        {
+            Transform[] a = teamASpawnPoints;
+            Transform[] b = teamBSpawnPoints;
+
+            // Halftime swap flips which array each team pulls from
+            bool swapped = false; // read private field through method that sets it
+            // _swapSides is private; we are inside this class so we can read it directly.
+            swapped = _swapSides;
+
+            Transform[] use = null;
+            if (!swapped)
+                use = (team == TeamId.A) ? a : b;
+            else
+                use = (team == TeamId.A) ? b : a;
+
+            if (use != null)
+            {
+                // Collect non-null transforms
+                var candidates = new System.Collections.Generic.List<Transform>(use.Length);
+                for (int i = 0; i < use.Length; i++)
+                    if (use[i]) candidates.Add(use[i]);
+
+                if (candidates.Count > 0)
+                {
+                    int i = UnityEngine.Random.Range(0, candidates.Count);
+                    var t = candidates[i];
+                    pos = t.position;
+                    return true;
+                }
+            }
+
+            pos = default;
+            return false;
         }
 
         public Vector3 GetRandomUnblockedPoint(TeamId team, int maxTries = 128)

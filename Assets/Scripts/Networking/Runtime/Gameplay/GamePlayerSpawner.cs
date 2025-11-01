@@ -1,5 +1,7 @@
 // Assets/Scripts/Networking/Runtime/Gameplay/GamePlayerSpawner.cs
 using UnityEngine;
+using Game.Net; // use existing GroundClampServer
+// Enables direct calls to GroundClampServer.TryFindNearestClearGround/SnapToGround if referenced here.
 using Unity.Netcode;
 
 namespace Game.Net
