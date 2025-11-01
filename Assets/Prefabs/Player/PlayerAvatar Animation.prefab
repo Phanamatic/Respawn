@@ -9,7 +9,9 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2175930713061618387}
-  m_Layer: 0
+  - component: {fileID: 4230793381085330056}
+  - component: {fileID: 7211393495198156950}
+  m_Layer: 7
   m_Name: PlayerVisualAnchor
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -22,7 +24,7 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2189414339830708796}
+  m_GameObject: {fileID: 7629307799589511846}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -40,8 +42,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 5914470287193299296}
-  - component: {fileID: 4230793381085330056}
-  - component: {fileID: 7211393495198156950}
   - component: {fileID: 4610652831622128449}
   m_Layer: 0
   m_Name: PlayerAvatar Animation
@@ -73,7 +73,7 @@ MeshFilter:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7629307799589511846}
+  m_GameObject: {fileID: 2189414339830708796}
   m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
 --- !u!23 &7211393495198156950
 MeshRenderer:
@@ -81,7 +81,7 @@ MeshRenderer:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7629307799589511846}
+  m_GameObject: {fileID: 2189414339830708796}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
@@ -144,7 +144,7 @@ GameObject:
   - component: {fileID: 8293086637473939724}
   - component: {fileID: 4247808313785581503}
   - component: {fileID: 1568220164743985275}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Cube
   m_TagString: Untagged
   m_Icon: {fileID: 0}

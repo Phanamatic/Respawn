@@ -88,6 +88,8 @@ namespace Game.Net
         Rigidbody _rb;
         CapsuleCollider _capsule;
 
+        static bool s_warnedMissingPlayerRevealLayer;
+
         Renderer[] _renderers;
         Collider[] _colliders;
 
@@ -190,6 +192,12 @@ namespace Game.Net
 
                 FogOfWarOverlayPlane.InstallFor(Camera.main);
 
+                if (TryGetPlayerRevealLayer(out var revealLayer))
+                {
+                    ApplyPlayerRevealLayer(revealLayer);
+                    PlayerOccludedRevealInstaller.EnsureInstalled(1 << revealLayer);
+                }
+
                 // Force local model fully visible each spawn (guards against any fade components).
                 EnsureLocalModelVisible();
 
@@ -246,6 +254,8 @@ namespace Game.Net
 
             var root = modelRoot ? modelRoot : transform;
             _renderers = root.GetComponentsInChildren<Renderer>(true);
+            if (TryGetPlayerRevealLayer(out var revealLayer))
+                ApplyPlayerRevealLayer(revealLayer);
             _colliders = GetComponentsInChildren<Collider>(true);
 
             _stamina = sprintStaminaMax;
@@ -448,6 +458,9 @@ void OnActiveSlotChanged()
 
                 var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
                 los.target = transform;
+
+                if (TryGetPlayerRevealLayer(out var revealLayer))
+                    EnsureCameraLayer(_cam, revealLayer);
             }
         }
 
@@ -866,6 +879,53 @@ void OnActiveSlotChanged()
                 }
                 r.SetPropertyBlock(mpb);
             }
+        }
+
+        bool TryGetPlayerRevealLayer(out int revealLayer)
+        {
+            revealLayer = LayerMask.NameToLayer("PlayerReveal");
+            if (revealLayer >= 0) return true;
+
+            if (!s_warnedMissingPlayerRevealLayer)
+            {
+                s_warnedMissingPlayerRevealLayer = true;
+                Debug.LogWarning("[LOS] Missing PlayerReveal layer; occlusion reveal pass disabled.");
+            }
+            return false;
+        }
+
+        void ApplyPlayerRevealLayer(int revealLayer)
+        {
+            if (revealLayer < 0) return;
+
+            if (modelRoot && !modelRoot.TryGetComponent<Collider>(out _))
+                modelRoot.gameObject.layer = revealLayer;
+
+            var span = GetModelRenderersSpan();
+            if (span.Length == 0)
+            {
+                var root = modelRoot ? modelRoot : transform;
+                _renderers = root.GetComponentsInChildren<Renderer>(true);
+                span = GetModelRenderersSpan();
+                if (span.Length == 0) return;
+            }
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                var r = span[i];
+                if (!r) continue;
+                var go = r.gameObject;
+                if (!go || go.TryGetComponent<Collider>(out _)) continue;
+                go.layer = revealLayer;
+            }
+        }
+
+        static void EnsureCameraLayer(Camera cam, int layer)
+        {
+            if (!cam || layer < 0) return;
+            int bit = 1 << layer;
+            if ((cam.cullingMask & bit) == 0)
+                cam.cullingMask |= bit;
         }
 
         void SetCollidersEnabled(bool enabled)

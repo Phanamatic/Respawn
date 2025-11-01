@@ -98,6 +98,7 @@ sealed class DepthState
     public Material[] mats;
     public int[] origSortingPriority;
     public int origSortingOrder;
+    public int[] origRenderQueue;
     public float[] origZWrite, origTZWrite, origPrepass;
     public bool initialized;
     public bool appliedFaded;
@@ -456,6 +457,7 @@ static void r_GetBlock(ref Faded f)
         {
             st.mats = r.materials; // instanced
             st.origSortingPriority = new int[st.mats.Length];
+            st.origRenderQueue = new int[st.mats.Length];
             st.origZWrite = new float[st.mats.Length];
             st.origTZWrite = new float[st.mats.Length];
             st.origPrepass = new float[st.mats.Length];
@@ -464,6 +466,7 @@ static void r_GetBlock(ref Faded f)
                 var m = st.mats[i];
                 if (!m) continue;
                 st.origSortingPriority[i] = m.HasProperty(SortingPriorityId) ? m.GetInt(SortingPriorityId) : 0;
+                st.origRenderQueue[i]     = m.renderQueue;
                 st.origZWrite[i]          = m.HasProperty(ZWriteId) ? m.GetFloat(ZWriteId) : 0f;
                 st.origTZWrite[i]         = m.HasProperty(TransparentZWriteId) ? m.GetFloat(TransparentZWriteId) : 0f;
                 st.origPrepass[i]         = m.HasProperty(EnableTransparentDepthPrepassId) ? m.GetFloat(EnableTransparentDepthPrepassId) : 0f;
@@ -484,6 +487,9 @@ static void r_GetBlock(ref Faded f)
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
+
+                // Pull occluder before player reveal queue (player ~3000+ priority)
+                if (m.renderQueue > 2950) m.renderQueue = 2950;
             }
             r.sortingOrder = -50;
             st.appliedFaded = true;
@@ -498,6 +504,7 @@ static void r_GetBlock(ref Faded f)
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, st.origTZWrite[i]);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, st.origPrepass[i]);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, st.origSortingPriority[i]);
+                m.renderQueue = st.origRenderQueue[i];
             }
             r.sortingOrder = st.origSortingOrder;
             st.appliedFaded = false;
