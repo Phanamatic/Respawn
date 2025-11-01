@@ -13,8 +13,13 @@ public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
     [SerializeField] int sortingPriority = 100;
     [SerializeField] int sortingOrder = 100;
 
+    const string PlayerRevealLayerName = "PlayerReveal";
+    int _playerRevealLayer = -1;
+    bool _warnedColliderLayerConflict;
+
     static readonly int SP = Shader.PropertyToID("_SortingPriority");
     static readonly int TZWrite = Shader.PropertyToID("_TransparentZWrite");
+    static readonly int ZWrite = Shader.PropertyToID("_ZWrite");
     static readonly int TPre = Shader.PropertyToID("_EnableTransparentDepthPrepass");
     static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
     static readonly int ColorId = Shader.PropertyToID("_Color");
@@ -30,15 +35,19 @@ public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
         if (renderers == null || renderers.Length == 0)
             renderers = GetComponentsInChildren<Renderer>(true);
         Filter();
+        EnsurePlayerRevealLayer();
     }
 
     void LateUpdate()
     {
+        EnsurePlayerRevealLayer();
         var mpb = new MaterialPropertyBlock();
         for (int i = 0; i < renderers.Length; i++)
         {
             var r = renderers[i];
             if (!r) continue;
+
+            ApplyPlayerRevealLayer(r);
 
             // Push material knobs if available.
             var mats = r.sharedMaterials;
@@ -48,6 +57,7 @@ public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
                 if (!mat) continue;
                 if (mat.HasProperty(SP)) mat.SetInt(SP, sortingPriority);
                 if (mat.HasProperty(TZWrite)) mat.SetFloat(TZWrite, 1f);
+                if (mat.HasProperty(ZWrite)) mat.SetFloat(ZWrite, 1f);
                 if (mat.HasProperty(TPre)) mat.SetFloat(TPre, 1f);
             }
             r.sortingOrder = sortingOrder;
@@ -89,5 +99,28 @@ public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
             if (!isLos) list.Add(r);
         }
         renderers = list.ToArray();
+    }
+
+    void EnsurePlayerRevealLayer()
+    {
+        if (_playerRevealLayer >= 0) return;
+        _playerRevealLayer = LayerMask.NameToLayer(PlayerRevealLayerName);
+        if (_playerRevealLayer < 0)
+            Debug.LogWarning("[LOS] PlayerReveal layer missing. Players may not render in reveal pass.");
+    }
+
+    void ApplyPlayerRevealLayer(Renderer r)
+    {
+        if (_playerRevealLayer < 0 || !r) return;
+        if (r.gameObject.layer == _playerRevealLayer) return;
+
+        if (!_warnedColliderLayerConflict && r.TryGetComponent<Collider>(out _))
+        {
+            _warnedColliderLayerConflict = true;
+            Debug.LogWarning($"[LOS] Renderer '{r.name}' has a Collider on the same GameObject. Skipping PlayerReveal layer reassignment to avoid collider layer changes.");
+            return;
+        }
+
+        r.gameObject.layer = _playerRevealLayer;
     }
 }

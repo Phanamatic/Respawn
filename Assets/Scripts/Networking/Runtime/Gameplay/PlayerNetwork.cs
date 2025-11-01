@@ -189,6 +189,7 @@ namespace Game.Net
                 fov.follow = modelRoot ? modelRoot : transform;
 
                 FogOfWarOverlayPlane.InstallFor(Camera.main);
+                PlayerOccludedRevealInstaller.InstallFor(Camera.main);
 
                 // Force local model fully visible each spawn (guards against any fade components).
                 EnsureLocalModelVisible();
