@@ -87,6 +87,23 @@ struct Faded
 readonly Dictionary<Renderer, Faded> _current = new Dictionary<Renderer, Faded>(64);
 readonly HashSet<Renderer> _thisFrame = new HashSet<Renderer>();
 
+// Depth/ordering control for faded occluders
+static readonly int ZWriteId = Shader.PropertyToID("_ZWrite");
+static readonly int TransparentZWriteId = Shader.PropertyToID("_TransparentZWrite");
+static readonly int EnableTransparentDepthPrepassId = Shader.PropertyToID("_EnableTransparentDepthPrepass");
+static readonly int SortingPriorityId = Shader.PropertyToID("_SortingPriority");
+
+sealed class DepthState
+{
+    public Material[] mats;
+    public int[] origSortingPriority;
+    public int origSortingOrder;
+    public float[] origZWrite, origTZWrite, origPrepass;
+    public bool initialized;
+    public bool appliedFaded;
+}
+static readonly Dictionary<Renderer, DepthState> _depth = new Dictionary<Renderer, DepthState>(64);
+
 void Awake()
 {
     _cam = GetComponent<Camera>();
@@ -121,6 +138,9 @@ void _RestoreAllToOpaque()
         {
             f.t = 1f; f.toA = 1f; WriteAlpha(ref f, 1f);
         }
+
+        // Restore depth state.
+        EnsureOccluderNoDepth(r, false);
     }
     _current.Clear();
 }
@@ -221,7 +241,10 @@ void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, floa
     f.mpb.SetFloat(_CutAlphaId, Mathf.Clamp01(alphaInside));
     r.SetPropertyBlock(f.mpb);
 
-    // Ensure the fade system keeps this renderer opaque outside the cutout.
+    // Disable depth write while cutout is active so player behind is visible.
+    EnsureOccluderNoDepth(r, true);
+
+    // Keep renderer opaque outside cutout.
     f.fromA = 1f;
     f.toA = 1f;
     f.t = 0f;
@@ -356,8 +379,9 @@ void _TickFades()
         bool done = Mathf.Approximately(a, f.toA);
         if (done && Mathf.Approximately(a, 1f))
         {
-            // Fully restored → stop managing
+            // Fully restored → stop managing and restore depth state
             _current.Remove(r);
+            EnsureOccluderNoDepth(r, false);
             continue;
         }
 
@@ -388,6 +412,7 @@ void _RestoreMissing()
             f.mpb.SetFloat(_CutAlphaId, 1f);
             r.SetPropertyBlock(f.mpb);
             _current.Remove(r);
+            EnsureOccluderNoDepth(r, false);
         }
         else if (_current.TryGetValue(r, out var f2))
         {
@@ -416,6 +441,68 @@ static void r_GetBlock(ref Faded f)
     if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
     f.r.GetPropertyBlock(f.mpb);
 }
+
+    // Ensure occluders do not write depth while faded, so players behind remain visible.
+    void EnsureOccluderNoDepth(Renderer r, bool faded)
+    {
+        if (!r) return;
+
+        if (!_depth.TryGetValue(r, out var st))
+        {
+            st = new DepthState();
+            _depth[r] = st;
+        }
+        if (!st.initialized)
+        {
+            st.mats = r.materials; // instanced
+            st.origSortingPriority = new int[st.mats.Length];
+            st.origZWrite = new float[st.mats.Length];
+            st.origTZWrite = new float[st.mats.Length];
+            st.origPrepass = new float[st.mats.Length];
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                st.origSortingPriority[i] = m.HasProperty(SortingPriorityId) ? m.GetInt(SortingPriorityId) : 0;
+                st.origZWrite[i]          = m.HasProperty(ZWriteId) ? m.GetFloat(ZWriteId) : 0f;
+                st.origTZWrite[i]         = m.HasProperty(TransparentZWriteId) ? m.GetFloat(TransparentZWriteId) : 0f;
+                st.origPrepass[i]         = m.HasProperty(EnableTransparentDepthPrepassId) ? m.GetFloat(EnableTransparentDepthPrepassId) : 0f;
+            }
+            st.origSortingOrder = r.sortingOrder;
+            st.initialized = true;
+        }
+
+        if (faded == st.appliedFaded) return;
+
+        if (faded)
+        {
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, 0f);
+                if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
+                if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
+                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
+            }
+            r.sortingOrder = -50;
+            st.appliedFaded = true;
+        }
+        else
+        {
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, st.origZWrite[i]);
+                if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, st.origTZWrite[i]);
+                if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, st.origPrepass[i]);
+                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, st.origSortingPriority[i]);
+            }
+            r.sortingOrder = st.origSortingOrder;
+            st.appliedFaded = false;
+        }
+    }
 
 
 #if UNITY_EDITOR

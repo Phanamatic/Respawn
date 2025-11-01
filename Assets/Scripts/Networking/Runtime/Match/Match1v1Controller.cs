@@ -133,6 +133,14 @@ namespace Game.Net
                 RecountPlayers();
                 AssignTeamsIfNeeded();
                 TryStartFlow();
+
+                // Install LOS system on server.
+                LosVisibilitySystem.Install(
+                    networkManager: NetworkManager,
+                    losRadiusMeters: 12f,
+                    fadeSeconds: 1f,
+                    occluderMask: LayerMask.GetMask("Occluder", "OccluderExtra")
+                );
             }
 
             _state.OnValueChanged += (_, __) => RefreshUI();
@@ -163,6 +171,8 @@ namespace Game.Net
 
             if (returnToLobbyButton)
                 returnToLobbyButton.onClick.RemoveListener(OnReturnToLobby);
+
+            if (IsServer) LosVisibilitySystem.Shutdown();
         }
 
         void OnClientConnected(ulong clientId)
@@ -520,6 +530,9 @@ namespace Game.Net
             // Ensure prefab is registered then spawn.
             try { NetworkManager.AddNetworkPrefab(inst.gameObject); } catch { }
             inst.SpawnAsPlayerObject(clientId);
+
+            // Register with LOS server culling.
+            LosVisibilitySystem.Instance?.RegisterTarget(inst, team);
 
             // Initialize team and health post-spawn.
             var pn = inst.GetComponent<PlayerNetwork>();
@@ -1037,6 +1050,9 @@ void DetachCameraFromShip()
                 var po = cc.PlayerObject;
                 if (po && po.IsSpawned)
                 {
+                    // Unregister from LOS before destroying.
+                    LosVisibilitySystem.Instance?.UnregisterTarget(po);
+
                     po.Despawn(true); // destroy object on all peers
                 }
             }

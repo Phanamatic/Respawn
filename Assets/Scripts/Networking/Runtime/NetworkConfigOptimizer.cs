@@ -44,18 +44,19 @@ namespace Game.Net
 
         private void ApplyPhysicsAndFps()
         {
-            int targetTick = GetTargetTickRate();
+            // Shooter baseline: 60 Hz physics regardless of net tick.
+            Time.fixedDeltaTime   = 1f / 60f;
+            Time.maximumDeltaTime = 0.033f; // 2x fixedDelta
 
-            // Physics step synced to tick (safe default for top-down & arcade games)
-            Time.fixedDeltaTime = 1f / targetTick;
-            Time.maximumDeltaTime = Mathf.Clamp(Time.fixedDeltaTime * 2f, 0.01f, 0.05f);
-
-            // Hard-requirement: target FPS must be exactly 60
-            QualitySettings.vSyncCount = 0;         // disable vSync so targetFrameRate is respected
-            Application.targetFrameRate = 60;       // strict 60 fps
+            // Frame pacing for lowest input lag on Windows D3D.
+            QualitySettings.vSyncCount   = 0;   // CPU submit is not blocked by vSync
+            QualitySettings.maxQueuedFrames = 1; // reduce render queue latency
+            Application.targetFrameRate   = 60;
+            Application.runInBackground   = true; // keep server and clients ticking when not focused
+            UnityEngine.Rendering.OnDemandRendering.renderFrameInterval = 1;
 
 #if UNITY_EDITOR
-            Debug.Log($"[NetworkConfigOptimizer] Physics {Mathf.RoundToInt(1f/Time.fixedDeltaTime)} Hz, TargetFPS={Application.targetFrameRate} (vSync={QualitySettings.vSyncCount})");
+            Debug.Log($"[NetworkConfigOptimizer] Physics 60 Hz, TargetFPS={Application.targetFrameRate} (vSync={QualitySettings.vSyncCount}, maxQueuedFrames={QualitySettings.maxQueuedFrames})");
 #endif
         }
 
@@ -95,11 +96,11 @@ namespace Game.Net
             var config = nm.NetworkConfig;
             int targetTick = GetTargetTickRate();
 
-            // Tick & timing (cover old/new property names)
-            SetConfigProperty(config, "TickRate", (uint)targetTick);
+            // Tick & timing (server 128 Hz authoritative; clients interpolate)
+            SetConfigProperty(config, "TickRate", (uint)targetTick);           // 128 for Competitive
             SetConfigProperty(config, "NetworkTickIntervalSec", 1f / targetTick);
 
-            // Timeouts
+            // Tighten timeouts; keep-alives moderately aggressive to detect drops fast.
             SetConfigProperty(config, "SpawnTimeout", 1.0f);
             SetConfigProperty(config, "PlayerSpawnTimeout", 1.0f);
             SetConfigProperty(config, "ConnectTimeout", 10f);
@@ -209,18 +210,29 @@ namespace Game.Net
                 return;
             }
 
-            utp.HeartbeatTimeoutMS = 2000;
-            utp.ConnectTimeoutMS = 5000;
-            utp.MaxConnectAttempts = 8;
-            utp.DisconnectTimeoutMS = 6000;
+            // Connection liveness and quick failure.
+            utp.HeartbeatTimeoutMS   = 1500;
+            utp.ConnectTimeoutMS     = 4000;
+            utp.MaxConnectAttempts   = 6;
+            utp.DisconnectTimeoutMS  = 5000;
 
-            SetUTPProperty(utp, "MaxPacketQueueSize", 2048);
-            SetUTPProperty(utp, "MaxSendQueueSize",   2048);
-            SetUTPProperty(utp, "MaxReceiveQueueSize",2048);
-            SetUTPProperty(utp, "MaxPacketSize", 1200); // safer WAN MTU for UDP
+            // Queues and MTU for low-latency bursts. 1200 safe across WAN.
+            SetUTPProperty(utp, "MaxPacketQueueSize",   4096);
+            SetUTPProperty(utp, "MaxSendQueueSize",     4096);
+            SetUTPProperty(utp, "MaxReceiveQueueSize",  4096);
+            SetUTPProperty(utp, "MaxPacketSize",        1200);
 
-            // Keep mixed reliability; do not force ReliableSequenced for all traffic.
-            // (Intentionally no SetUTPReliabilityMode here)
+            // Prefer platform NIC optimizations if available.
+            SetUTPProperty(utp, "UsePlatformSpecificNetworkInterface", true);
+
+            // Send pacing: 2x tick to cut queuing delay for inputs/small RPCs.
+            SetConfigProperty(nm.NetworkConfig, "MessageSendRate", targetTick * 2);
+            SetConfigProperty(nm.NetworkConfig, "SendRate",        targetTick * 2);
+            SetConfigProperty(nm.NetworkConfig, "SendTickrate",    targetTick * 2);
+            SetConfigProperty(nm.NetworkConfig, "ClientSendInterval", 1f / (targetTick * 2));
+            SetConfigProperty(nm.NetworkConfig, "ServerSendInterval", 1f / (targetTick * 2));
+
+            // Keep mixed reliability; unreliable for state, reliable for critical.
         }
 
         private static void SetUTPProperty(UnityTransport utp, string name, object value)

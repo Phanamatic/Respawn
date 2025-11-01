@@ -28,8 +28,11 @@ namespace Game.Net
         {
             if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null)
             {
+                // Redundant with NetworkConfigOptimizer but safe if that object is removed.
                 QualitySettings.vSyncCount = 0;
+                QualitySettings.maxQueuedFrames = 1;
                 Application.targetFrameRate = 60;
+                Application.runInBackground = true;
             }
 
             var args = new Args(Environment.GetCommandLineArgs());

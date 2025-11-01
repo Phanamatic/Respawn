@@ -12,7 +12,11 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     public Transform target;
 
     [Tooltip("Only colliders on these layers trigger transparency.")]
-    public LayerMask occluderLayers = ~0;
+    public LayerMask occluderLayers = ~0;  // include Occluder + OccluderExtra in Inspector
+
+    [Header("Raycast")]
+    [Min(0f)] public float probeRadius = 0.25f;
+    [Min(1)]  public int   maxHits     = 32;
 
     [Header("Behaviour")]
     [Range(0f, 1f)] public float occludedAlpha = 0.3f;
@@ -31,6 +35,30 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     static readonly int ColorId     = Shader.PropertyToID("_Color");
     static readonly int TintId      = Shader.PropertyToID("_TintColor");
 
+    // Depth/ordering knobs for HDRP Transparent
+    static readonly int ZWriteId = Shader.PropertyToID("_ZWrite");
+    static readonly int TransparentZWriteId = Shader.PropertyToID("_TransparentZWrite");
+    static readonly int EnableTransparentDepthPrepassId = Shader.PropertyToID("_EnableTransparentDepthPrepass");
+    static readonly int SortingPriorityId = Shader.PropertyToID("_SortingPriority");
+
+    sealed class DepthState
+    {
+        public Material[] mats;
+        public int[] origSortingPriority;
+        public int origSortingOrder;
+        public int[] origRenderQueue;
+        public float[] origZWrite, origTZWrite, origPrepass;
+        public bool initialized;
+        public bool appliedFaded;
+    }
+    static readonly Dictionary<Renderer, DepthState> _depthCache = new Dictionary<Renderer, DepthState>(64);
+
+    RaycastHit[] _hitsBuf;
+    void Awake()
+    {
+        _hitsBuf = new RaycastHit[Mathf.Max(8, maxHits)];
+    }
+
     void LateUpdate()
     {
         if (!target) return;
@@ -43,10 +71,13 @@ public sealed class LineOfSightTransparency : MonoBehaviour
         var dir = toTarget / distance;
         _activeTags.Clear();
 
-        var hits = Physics.RaycastAll(origin, dir, distance, occluderLayers, QueryTriggerInteraction.Collide);
-        for (int i = 0; i < hits.Length; i++)
+        // Stable sample: sphere cast along sightline, ignore triggers.
+        if (_hitsBuf == null || _hitsBuf.Length < maxHits) _hitsBuf = new RaycastHit[Mathf.Max(8, maxHits)];
+        int hitCount = Physics.SphereCastNonAlloc(origin, probeRadius, dir, _hitsBuf, distance, occluderLayers, QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < hitCount; i++)
         {
-            var hit = hits[i];
+            var hit = _hitsBuf[i];
             if (!hit.collider) continue;
             if (target && hit.collider.transform.IsChildOf(target)) continue;
 
@@ -183,6 +214,11 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     {
         float delta = fadeSpeed <= 0f ? 1f : fadeSpeed * Time.unscaledDeltaTime;
 
+        // Ensure depth state matches faded/non-faded so player is visible behind.
+        bool faded = targetMultiplier < 0.999f;
+        for (int i = group.entries.Count - 1; i >= 0; i--)
+            if (group.entries[i].renderer) EnsureTransparentNoDepth(group.entries[i].renderer, faded);
+
         for (int i = group.entries.Count - 1; i >= 0; i--)
         {
             var entry = group.entries[i];
@@ -202,6 +238,10 @@ public sealed class LineOfSightTransparency : MonoBehaviour
             color.a = newAlpha;
             entry.block.SetColor(entry.colorProperty, color);
             entry.renderer.SetPropertyBlock(entry.block);
+
+            // When restored to fully opaque, restore depth state.
+            if (!faded && Mathf.Approximately(newAlpha, entry.baseAlpha))
+                EnsureTransparentNoDepth(entry.renderer, false);
         }
     }
 
@@ -228,5 +268,77 @@ public sealed class LineOfSightTransparency : MonoBehaviour
         public Color baseColor;
         public float baseAlpha;
         public float currentAlpha;
+    }
+
+    // Ensure occluders do not write depth while transparent, so players behind remain visible.
+    void EnsureTransparentNoDepth(Renderer r, bool faded)
+    {
+        if (!r) return;
+
+        if (!_depthCache.TryGetValue(r, out var st))
+        {
+            st = new DepthState();
+            _depthCache[r] = st;
+        }
+
+        if (!st.initialized)
+        {
+            // Material instances so we do not touch shared assets.
+            st.mats = r.materials;
+            st.origSortingPriority = new int[st.mats.Length];
+            st.origRenderQueue = new int[st.mats.Length];
+            st.origZWrite = new float[st.mats.Length];
+            st.origTZWrite = new float[st.mats.Length];
+            st.origPrepass = new float[st.mats.Length];
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                st.origSortingPriority[i] = m.HasProperty(SortingPriorityId) ? m.GetInt(SortingPriorityId) : 0;
+                st.origRenderQueue[i] = m.renderQueue;
+                st.origZWrite[i]          = m.HasProperty(ZWriteId) ? m.GetFloat(ZWriteId) : 0f;
+                st.origTZWrite[i]         = m.HasProperty(TransparentZWriteId) ? m.GetFloat(TransparentZWriteId) : 0f;
+                st.origPrepass[i]         = m.HasProperty(EnableTransparentDepthPrepassId) ? m.GetFloat(EnableTransparentDepthPrepassId) : 0f;
+            }
+            st.origSortingOrder = r.sortingOrder;
+            st.initialized = true;
+        }
+
+        if (faded == st.appliedFaded) return; // already applied
+
+        if (faded)
+        {
+            // Disable depth writes and prepass while transparent. Draw before players.
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, 0f);
+                if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
+                if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
+                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
+
+                // Force queue earlier than player (player ~3000+priority). Use 2950.
+                if (m.renderQueue > 2950) m.renderQueue = 2950;
+            }
+            r.sortingOrder = -50;
+            st.appliedFaded = true;
+        }
+        else
+        {
+            // Restore original material and renderer sort/depth.
+            for (int i = 0; i < st.mats.Length; i++)
+            {
+                var m = st.mats[i];
+                if (!m) continue;
+                if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, st.origZWrite[i]);
+                if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, st.origTZWrite[i]);
+                if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, st.origPrepass[i]);
+                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, st.origSortingPriority[i]);
+                m.renderQueue = st.origRenderQueue[i];
+            }
+            r.sortingOrder = st.origSortingOrder;
+            st.appliedFaded = false;
+        }
     }
 }

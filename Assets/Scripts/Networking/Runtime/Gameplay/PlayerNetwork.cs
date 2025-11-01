@@ -173,6 +173,33 @@ namespace Game.Net
             if (IsOwner)
             {
                 SetupInputAndCamera();
+
+                // Install client-side LOS FOV visualization for local player.
+                var fov = gameObject.GetComponent<FovMesh>();
+                if (!fov) fov = gameObject.AddComponent<FovMesh>();
+                fov.radiusMeters = 12f;                                  // requested
+                fov.rayCount = 350;                                      // requested
+                // Detect both LOS layers.
+                fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
+                fov.showFill = true;
+                fov.fillColor = new Color(1.0f, 0.98f, 0.85f, 0.40f); // bright inside
+                fov.fillIntensity = 1.15f;
+                fov.edgeFeather = 0.15f;
+                // Anchor FOV to visual root if provided so the stencil sits on the model.
+                fov.follow = modelRoot ? modelRoot : transform;
+
+                FogOfWarOverlayPlane.InstallFor(Camera.main);
+
+                // Force local model fully visible each spawn (guards against any fade components).
+                EnsureLocalModelVisible();
+
+                // Enforce visibility through transparent occluders.
+                var vis = GetComponent<EnsurePlayerVisibleThroughOccluders>();
+                if (!vis) vis = gameObject.AddComponent<EnsurePlayerVisibleThroughOccluders>();
+                if (modelRoot)
+                    vis.GetType().GetField("renderers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                       ?.SetValue(vis, modelRoot.GetComponentsInChildren<Renderer>(true));
+
                 TrySnapToGroundImmediate(); // client visual safety
 
                 if (!GetComponent<NetworkTransform>())
@@ -813,6 +840,32 @@ void OnActiveSlotChanged()
 
             for (int i = 0; i < _renderers.Length; i++)
                 if (_renderers[i]) _renderers[i].enabled = visible;
+        }
+
+        // Force local model fully visible (guards against any fade components).
+        void EnsureLocalModelVisible()
+        {
+            var span = GetModelRenderersSpan();
+            if (span.Length == 0) return;
+            var mpb = new MaterialPropertyBlock();
+            for (int i = 0; i < span.Length; i++)
+            {
+                var r = span[i];
+                if (!r) continue;
+                r.GetPropertyBlock(mpb);
+                // Push alpha to 1 on common color slots.
+                if (r.sharedMaterial && r.sharedMaterial.HasProperty("_BaseColor"))
+                {
+                    var c = r.sharedMaterial.GetColor("_BaseColor"); c.a = 1f;
+                    mpb.SetColor("_BaseColor", c);
+                }
+                if (r.sharedMaterial && r.sharedMaterial.HasProperty("_Color"))
+                {
+                    var c2 = r.sharedMaterial.GetColor("_Color"); c2.a = 1f;
+                    mpb.SetColor("_Color", c2);
+                }
+                r.SetPropertyBlock(mpb);
+            }
         }
 
         void SetCollidersEnabled(bool enabled)
