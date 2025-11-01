@@ -10,14 +10,8 @@ namespace Game.Net
     [DisallowMultipleComponent]
     public sealed class Match1v1Areas : MonoBehaviour
     {
-        [Header("Assign BoxColliders (legacy - unused at runtime)")]
-        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider teamAArea;
-        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider teamBArea;
-        [SerializeField, Tooltip("Legacy fields kept only for prefab compatibility. Ignored at runtime.")] private BoxCollider neutralArea;
-// Legacy fields preserved to avoid prefab breakage, but no longer used anywhere at runtime.
-
-        [Header("Unified map area (new)")]
-        [SerializeField, Tooltip("Single BoxCollider covering the whole playable map. If set, the script splits it 45/10/45 into TeamA/Neutral/TeamB.")]
+        [Header("Map Area Split")]
+        [SerializeField, Tooltip("Single BoxCollider covering the whole playable map. Split 45/10/45 into TeamA/Neutral/TeamB.")]
         private BoxCollider mapArea;
         public enum SplitAxis { X, Z }
         [SerializeField] private SplitAxis splitAxis = SplitAxis.X;
@@ -33,7 +27,7 @@ namespace Game.Net
         [SerializeField] private Transform[] teamBSpawnPoints;
 // Tag must exactly match the scene objects' Tag; fixes missed blockers due to casing/spacing.
 
-        // Force unified mode; legacy is removed from runtime. If mapArea is missing we return empty bounds and log.
+        // Unified mode only.
         bool UseUnified => true;
         bool _swapSides; // set by controller at halftime
 
@@ -98,23 +92,6 @@ namespace Game.Net
         {
             var b = GetNeutralBounds();
             return b.size.sqrMagnitude > 0f ? b.center : transform.position;
-        }
-
-        [System.Obsolete("Legacy team colliders are no longer used at runtime. Use GetTeamBounds().")]
-        public BoxCollider GetTeamCollider(TeamId team) => null;
-// Prevents any accidental legacy usage without breaking existing serialized references.
-
-        // NEW: fine-grained spawn blocking helpers + random sampler that avoids "No Spawn" triggers.
-        public bool IsPointBlockedForTeam(TeamId team, Vector3 worldPoint)
-        {
-            var b = GetTeamBounds(team);
-            if (!b.Contains(worldPoint)) return true;
-            return IsPointInAnyBlocker(worldPoint, b, noSpawnTag);
-        }
-
-        public bool IsPointBlockedInBounds(Bounds areaBounds, Vector3 worldPoint)
-        {
-            return IsPointInAnyBlocker(worldPoint, areaBounds, noSpawnTag);
         }
 
         /// <summary>
@@ -184,33 +161,6 @@ namespace Game.Net
             return GetFallbackSpawn(team);
         }
 
-        // World-space AABB (XZ) for each "No Spawn" trigger overlapping the given area bounds.
-        // Used by client to paint red holes.
-        public List<Bounds> GetBlockerIntersectionsFor(Bounds area, List<Bounds> into = null)
-        {
-            if (into == null) into = new List<Bounds>(8);
-            into.Clear();
-
-            // Ignore Y. Treat blockers as columns over the area.
-            var tallCenter  = new Vector3(area.center.x, 0f, area.center.z);
-            var tallExtents = new Vector3(area.extents.x, 5000f, area.extents.z);
-            var hits = Physics.OverlapBox(tallCenter, tallExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
-            for (int i = 0; i < hits.Length; i++)
-            {
-                var col = hits[i];
-                if (!col || !col.CompareTag(noSpawnTag)) continue;
-
-                var inter = IntersectXZ(area, col.bounds);
-                if (inter.size.x > 0.001f && inter.size.z > 0.001f)
-                {
-                    inter.center = new Vector3(inter.center.x, area.center.y, inter.center.z);
-                    into.Add(inter);
-                }
-            }
-// XZ-only carve-outs so red holes always appear even if Y doesn’t overlap.
-            return into;
-        }
-
         // ---------- Internals ----------
         static (Bounds teamA, Bounds neutral, Bounds teamB) ComputeSplitBounds(Bounds map, SplitAxis axis, float teamPct, float neutralPct, bool swap)
         {
@@ -257,16 +207,6 @@ namespace Game.Net
             if (swap)
                 return (b, n, a);
             return (a, n, b);
-        }
-
-        static Bounds IntersectXZ(Bounds a, Bounds b)
-        {
-            var min = new Vector3(Mathf.Max(a.min.x, b.min.x), 0f, Mathf.Max(a.min.z, b.min.z));
-            var max = new Vector3(Mathf.Min(a.max.x, b.max.x), 0f, Mathf.Min(a.max.z, b.max.z));
-            if (max.x < min.x || max.z < min.z) return new Bounds(Vector3.zero, Vector3.zero);
-            var size = new Vector3(max.x - min.x, 0f, max.z - min.z);
-            var center = new Vector3(min.x + size.x * 0.5f, 0f, min.z + size.z * 0.5f);
-            return new Bounds(center, size);
         }
 
         static bool IsPointInAnyBlocker(Vector3 p, Bounds searchArea, string tag)
@@ -321,13 +261,10 @@ namespace Game.Net
         {
             if (!mapArea) return;
 
-            // Draw the single map area
             Gizmos.color = new Color(1f, 1f, 1f, 0.6f);
             Gizmos.DrawWireCube(mapArea.bounds.center, mapArea.bounds.size);
 
-            // Draw computed 45/10/45 split for quick visual verification
             var (a, n, b) = ComputeSplitBounds(mapArea.bounds, splitAxis, teamPercent, neutralPercent, _swapSides);
-
             Gizmos.color = new Color(0.2f, 0.8f, 0.2f, 0.9f); Gizmos.DrawWireCube(a.center, a.size);
             Gizmos.color = new Color(0.2f, 0.6f, 1f, 0.9f); Gizmos.DrawWireCube(n.center, n.size);
             Gizmos.color = new Color(0.8f, 0.2f, 0.2f, 0.9f); Gizmos.DrawWireCube(b.center, b.size);

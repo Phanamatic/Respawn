@@ -14,11 +14,11 @@ namespace Game.Net
         Waiting = 0,
         Countdown = 1,
         FlyIn = 2,
-        SpawnSelect = 3,
         Playing = 4,
         RoundEnd = 5,
         MatchEnd = 6
     }
+// Remove unused SpawnSelect state. Explicit values keep network stability.
 
     [DefaultExecutionOrder(-9000)]
     public sealed class Match1v1Controller : NetworkBehaviour
@@ -56,10 +56,7 @@ namespace Game.Net
         [SerializeField, Tooltip("Optional lightweight visual used if no PlayerNetwork exists yet.")]
         private GameObject cinematicStandInPrefab;   // visual-only prefab (no NetworkObject)
 
-        [Header("Spawn Select")]
-        [SerializeField] private GameObject spawnCursorPrefab;
-        [SerializeField] private Vector3 spawnCameraPosition = new Vector3(0, 50, -20);
-        [SerializeField] private Vector3 spawnCameraLookAt = new Vector3(0, 0, 0);
+// Removed old spawn-select UI and camera fields.
 
         [Header("Timings")]
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
@@ -86,33 +83,20 @@ namespace Game.Net
         [SerializeField] private TMP_Text _requiredPlayersUI;
         [SerializeField, Min(2)] private int requiredPlayers = 2;
 
-        [Header("Intro Pan")]
-        [SerializeField] Transform mapPanStart;
-        [SerializeField] Transform mapPanEnd;
-        [SerializeField, Min(0.1f)] float mapPanSeconds = 3f;
+        Coroutine _cineCo;   // track coroutines so we can stop safely
 
-        Coroutine _cineCo, _panCo;   // track coroutines so we can stop safely
+// Removed map pan used only by selection flow.
 
-        [Header("Spawn Select Camera Target")]
-        [SerializeField] Transform spawnSelectLookTarget;
+// Removed unused spawn-select camera target.
 
-        [Header("Fade During Selection")]
-        [Tooltip("These renderers fade to 30% opacity while players choose spawns.")]
-        [SerializeField] Renderer[] fadeDuringSelect;
-        [Range(0f,1f)] [SerializeField] float selectFadeAlpha = 0.3f;
-        Dictionary<Renderer, Color[]> _origFadeColors = new Dictionary<Renderer, Color[]>();
-        Dictionary<Renderer, ShadowCastingMode> _origShadowModes = new Dictionary<Renderer, ShadowCastingMode>();
+// Removed legacy fade-for-selection fields.
 
-        // Cache for restore after select
+// Cache for restore after select
         bool _preSelectOrtho;
         float _preSelectOrthoSize;
 
-        [Header("Spawn Camera Framing (Top-Down)")]
-        [SerializeField, Min(1f)] float spawnCamMargin = 1.08f;  // % margin around map
-        [SerializeField, Min(10f)] float spawnCamHeight = 80f;   // just needs to clear scenery when orthographic=false
-        [SerializeField] bool spawnCamUseOrthographic = true;
+// Removed legacy spawn-select framing settings.
 
-        bool _didIntroPanThisRound;
         private readonly NetworkVariable<MatchState> _state = new();
         private readonly NetworkVariable<int> _playerCount = new();
         private readonly NetworkVariable<int> _roundNumber = new();
@@ -123,19 +107,14 @@ namespace Game.Net
 
         // Server state
         private readonly Dictionary<ulong, TeamId> _teams = new();
-        private readonly Dictionary<ulong, Vector3> _chosenSpawns = new();
-        private float _spawnDeadlineServer;
+        // removed _chosenSpawns
+        // removed _spawnDeadlineServer
         private bool _firstRound = true;
         private float _roundStartTimeServer;
 
         // Client state
-        private bool _selecting;
-        private Bounds _myAreaBounds;
-        private bool _myAreaBlocked;
-        private TeamId _myTeam;
-        private float _spawnDeadlineLocal;
-        private Coroutine _flyCo, _selectCo, _uiCo;
-        private GameObject _spawnCursor;
+        // removed _selecting, _myAreaBounds, _myAreaBlocked, _myTeam, _spawnDeadlineLocal, _selectCo, _spawnCursor
+        private Coroutine _flyCo, _uiCo;
         private GameObject _shipInstance;
 
         // Camera
@@ -175,6 +154,7 @@ namespace Game.Net
 
         public override void OnNetworkDespawn()
         {
+            StopCinematicClientRpc();
             if (IsServer)
             {
                 NetworkManager.OnClientConnectedCallback -= OnClientConnected;
@@ -197,7 +177,7 @@ namespace Game.Net
         void OnClientDisconnected(ulong clientId)
         {
             _teams.Remove(clientId);
-            _chosenSpawns.Remove(clientId);
+            // removed _chosenSpawns.Remove(clientId);
             RecountPlayers();
             UpdateRequiredPlayersClientRpc(_playerCount.Value, requiredPlayers);
 
@@ -205,7 +185,7 @@ namespace Game.Net
             {
                 _state.Value = MatchState.Waiting;
                 BroadcastPauseAll(true);
-                _chosenSpawns.Clear();
+                // removed _chosenSpawns.Clear();
             }
         }
 
@@ -258,13 +238,13 @@ namespace Game.Net
             _winsTeamB.Value = 0;
             _suddenDeath.Value = false;
             _firstRound = true;
-            _didIntroPanThisRound = false;
 
             yield return StartRound();
         }
 
         IEnumerator StartRound()
         {
+            StopCinematicClientRpc();
             _state.Value = MatchState.Countdown;
             for (int i = countdownSeconds; i > 0; i--)
             {
@@ -299,36 +279,13 @@ namespace Game.Net
             SpawnAllAndStartRound();
         }
 
-        void StartSpawnSelect()
-        {
-            _state.Value = MatchState.SpawnSelect;
-            // Hard enforce 0 s spawn-select (instant).
-            _spawnDeadlineServer = Time.unscaledTime + 0f;
-            _chosenSpawns.Clear();
-
-            foreach (var kv in _teams)
-            {
-                var cid = kv.Key;
-                var team = kv.Value;
-                if (!areas)
-                {
-                    Debug.LogError("[Match1v1] Areas reference missing; cannot determine spawn zone.");
-                    continue;
-                }
-
-                var bounds = areas.GetTeamBounds(team);
-                bool blocked = areas.IsAreaBlocked(team);
-                BeginSpawnSelectClientRpc(bounds.center, bounds.size, 0f, blocked, team, ToClient(cid));
-            }
-
-            StartCoroutine(CoWatchSpawnDeadline());
-        }
-
         [ClientRpc]
         void StartCinematicClientRpc()
         {
             if (!IsClient) return;
-            if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
+            if (_state.Value != MatchState.FlyIn) return;        // hard guard
+            if (_shipInstance) return;                           // do not replay if ship exists
+            if (_cineCo != null) StopCoroutine(_cineCo);
             _cineCo = StartCoroutine(CoFlyIn());
         }
 
@@ -446,199 +403,12 @@ namespace Game.Net
             if (_isoCam) _isoCam.enabled = true;
         }
 
-        [ClientRpc]
-        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, bool blocked, TeamId team, ClientRpcParams p = default)
-        {
-            if (!IsClient) return;
-
-            _myAreaBounds = new Bounds(areaCenter, areaSize);
-            _spawnDeadlineLocal = Time.unscaledTime + seconds;
-            _myAreaBlocked = blocked;
-            _myTeam = team;
-            _selecting = true;
-
-            // Highlight with carved holes from overlapping "No Spawn" triggers.
-            List<Bounds> holes = null;
-            if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
-            ApplySpawnHighlightLayout(holes);
-// [Match1v1] Client sees green area with red "holes" subtracted.
-            Debug.Log($"[Match1v1] SpawnSelect begin. Team={team} BoundsC={_myAreaBounds.center} Size={_myAreaBounds.size} Holes={(holes?.Count ?? 0)} Blocked={blocked}");
-
-            // Run the intro pan once, then open the spawn UI.
-            if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
-            {
-                _didIntroPanThisRound = true;
-                // Keep the ship until spawn-select begins. Only hide players/stand-ins and detach the camera.
-                PrepareCinematicForPanLocal();
-                StartCoroutine(CoIntroPanThenOpenSpawnUI());
-                return;
-            }
-
-            // No pan path: frame camera from bounds and open UI now.
-            // Force a top-down ORTHOGRAPHIC frame so entire map is guaranteed visible.
-            FrameSpawnCameraFullMapOrtho();
-
-            if (!_spawnCursor)
-            {
-                if (spawnCursorPrefab) _spawnCursor = Instantiate(spawnCursorPrefab);
-                else
-                {
-                    _spawnCursor = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    _spawnCursor.transform.localScale = new Vector3(1f, 0.2f, 1f);
-                    Destroy(_spawnCursor.GetComponent<Collider>());
-                    var rend = _spawnCursor.GetComponent<Renderer>();
-                    if (rend)
-                    {
-                        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                        rend.material = new Material(shader);
-                        rend.material.color = new Color(1f, 1f, 0f, 0.7f);
-                    }
-                }
-
-                // Ensure cursor never blocks ground raycasts
-                foreach (var col in _spawnCursor.GetComponentsInChildren<Collider>(true))
-                    if (col) col.enabled = false;
-                int ignoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
-                if (ignoreRaycast >= 0) _spawnCursor.layer = ignoreRaycast;
-            }
-
-            if (_spawnCursor)
-                _spawnCursor.SetActive(false);
-
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText)
-                spawnHintText.text = Mathf.CeilToInt(seconds).ToString("0");
-
-            // Fade configured objects during selection
-            ApplySelectTransparency(true);
-
-            if (_isoCam)
-            {
-                _originalFollow = _isoCam.follow;
-                _isoCam.enabled = false;
-            }
-            // Do NOT override FrameSpawnCameraFullMap() here. It already framed the whole map.
-            // (Fixes the "too close / cut off" camera during spawn choose.)
-
-            if (_selectCo != null) StopCoroutine(_selectCo);
-            _selectCo = StartCoroutine(CoSpawnSelectTimer());
-// We stop clobbering the framed transform after FrameSpawnCameraFullMap(), which respects aspect & margin.
-        }
-
-        void ApplySpawnHighlightLayout(List<Bounds> holes)
-        {
-            Bounds enemy = default;
-            Bounds neutral = default;
-            Bounds map = default;
-
-            if (areas)
-            {
-                enemy = areas.GetTeamBounds(OpposingTeam(_myTeam));
-                neutral = areas.GetNeutralBounds();
-                map = areas.GetMapBounds();
-            }
-
-            if (map.size.sqrMagnitude <= 0f)
-                map = _myAreaBounds;
-
-            SpawnAreaHighlighter.SetLayout(
-                SpawnAreaHighlighter.Mode.Choosing,
-                _myAreaBounds,
-                enemy,
-                neutral,
-                map,
-                _myAreaBlocked,
-                holes);
-        }
-
-        IEnumerator CoSpawnSelectTimer()
-        {
-            // While selecting, force all SpawnAreaHighlighters to friendly GREEN for local player.
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            var highs = UnityEngine.Object.FindObjectsByType<SpawnAreaHighlighter>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-#else
-            var highs = UnityEngine.Object.FindObjectsOfType<SpawnAreaHighlighter>();
-#endif
-            // removed; we want friendly=green only, other/neutral=red
-            // Highlighters now color by role in layout mode.
-
-            while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
-            {
-                if (spawnHintText)
-                {
-                    float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-                    spawnHintText.text = Mathf.CeilToInt(remain).ToString("0");
-                }
-                yield return null;
-            }
-            if (_selecting) EndSpawnSelect();
-        }
-
         void Update()
         {
             // Avoid nulls before NGO starts
             if (!Application.isPlaying) return;
 
-            if (_selecting && _cam)
-            {
-                var ray = _cam.ScreenPointToRay(Input.mousePosition);
-                Vector3 point = Vector3.zero;
-                bool valid = false;
-
-                if (Physics.Raycast(ray, out RaycastHit hit, 2000f, groundMask, QueryTriggerInteraction.Ignore))
-                {
-                    point = hit.point;
-                    valid = ContainsXZ(_myAreaBounds, point);
-                }
-                if (!valid)
-                {
-                    var plane = new Plane(Vector3.up, new Vector3(0, _myAreaBounds.center.y, 0));
-                    if (plane.Raycast(ray, out float dist))
-                    {
-                        point = ray.GetPoint(dist);
-                        valid = ContainsXZ(_myAreaBounds, point);
-                    }
-                }
-
-                // Cursor should show on green only: hide over carved holes.
-                if (valid && areas && areas.IsPointBlockedInBounds(_myAreaBounds, point))
-                    valid = false;
-
-                if (valid)
-                {
-                    if (_spawnCursor)
-                    {
-                        // Place the cursor exactly on ground (slight lift to avoid z-fight)
-                        float gy = GroundYAt(point);
-                        _spawnCursor.transform.position = new Vector3(point.x, gy + 0.02f, point.z);
-                        _spawnCursor.SetActive(true);
-                    }
-// Cursor now appears exactly on the ground at the mouse position during spawn select.
-
-                    if (Input.GetMouseButtonDown(0))
-                    {
-                        if (areas && !areas.IsPointBlockedInBounds(_myAreaBounds, point))
-                        {
-                            ChooseSpawnServerRpc(point);
-                            EndSpawnSelect();
-                        }
-                        else
-                        {
-                            // brief invalid feedback already handled by UI coroutine in this class
-                            if (spawnHintText)
-                            {
-                                StopCoroutineSafe(ref _uiCo);
-                                _uiCo = StartCoroutine(CoFlashInvalid(spawnHintText));
-                            }
-                        }
-                    }
-// [Match1v1] Client click respects red holes.
-                }
-                else if (_spawnCursor)
-                {
-                    _spawnCursor.SetActive(false);
-                }
-            }
+            // removed spawn select logic
 
             if (IsClient && _state.Value == MatchState.Playing && roundTimerText)
             {
@@ -648,38 +418,6 @@ namespace Game.Net
                 int seconds = (int)(t % 60);
                 roundTimerText.text = $"{minutes:0}:{seconds:00}";
             }
-        }
-
-        [ServerRpc(RequireOwnership = false)]
-        void ChooseSpawnServerRpc(Vector3 point, ServerRpcParams rpc = default)
-        {
-            if (!IsServer || _state.Value != MatchState.SpawnSelect) return;
-
-            ulong cid = rpc.Receive.SenderClientId;
-            if (!_teams.TryGetValue(cid, out var team)) return;
-
-            if (!areas) return;
-
-            var b = areas.GetTeamBounds(team);
-            if (!ContainsXZ(b, point)) return;
-
-            // Fine-grained validation only: allow click if it's inside the area and not inside a blocker.
-            if (areas.IsPointBlockedForTeam(team, point)) return;
-
-            // Store the exact XZ and let server snap Y to Ground on spawn.
-            _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
-            Debug.Log($"[Match1v1] Chosen spawn accepted: cid={cid} team={team} point={point}");
-
-// [Match1v1] Server authority validates chosen point against blockers.
-            if (_chosenSpawns.Count >= 2)
-                SpawnAllAndStartRound();
-        }
-
-        IEnumerator CoWatchSpawnDeadline()
-        {
-            yield return new WaitForSecondsRealtime(0f + 0.1f);
-            if (_state.Value == MatchState.SpawnSelect)
-                SpawnAllAndStartRound();
         }
 
         void SpawnAllAndStartRound()
@@ -713,8 +451,6 @@ namespace Game.Net
 
             // Keep players frozen/paused and visible while we run the 3..2..1 pre-round countdown.
             SetAllPlayersVisibleClientRpc(true);
-            // Ensure any legacy spawn-select UI is hidden.
-            if (spawnCanvas) ShowCanvas(spawnCanvas, false);
 
             FreezeAllPlayers(true);
             BroadcastPauseAll(true);
@@ -872,6 +608,7 @@ namespace Game.Net
 
         IEnumerator CoPostRoundFlow()
         {
+            StopCinematicClientRpc();
             yield return new WaitForSecondsRealtime(roundEndDelaySeconds);
 
             bool matchOver = false;
@@ -912,6 +649,7 @@ namespace Game.Net
 
         void EndMatch(TeamId winner)
         {
+            StopCinematicClientRpc();
             _state.Value = MatchState.MatchEnd;
             ShowMatchEndClientRpc(winner);
         }
@@ -940,121 +678,10 @@ namespace Game.Net
             }
         }
 
-        [ClientRpc]
-        void EndSpawnSelectForAllClientRpc()
-        {
-            // Force camera/UI cleanup even if this client never entered selection (random assignment / late join).
-            EndSpawnSelect(force: true);
-        }
-
-        void EndSpawnSelect(bool force = false)
-        {
-            if (!force && !_selecting) return;
-
-            _selecting = false;
-            _myAreaBlocked = false;
-            ShowCanvas(spawnCanvas, false);
-            SpawnAreaHighlighter.SetLayout(SpawnAreaHighlighter.Mode.Hidden, default, default, default, default, false, null);
-
-            // Restore transparency
-            ApplySelectTransparency(false);
-
-            if (_spawnCursor)
-            {
-                Destroy(_spawnCursor);
-                _spawnCursor = null;
-            }
-
-            // Restore or (re)acquire the correct follow target and ensure iso cam is enabled.
-            if (_isoCam)
-            {
-                Transform target = _originalFollow;
-
-                // Prefer the currently spawned local player if available.
-                var nm = Unity.Netcode.NetworkManager.Singleton;
-                var po = nm ? nm.LocalClient?.PlayerObject : null;
-                if (po && po.GetComponent<PlayerNetwork>())
-                    target = po.transform;
-
-                _isoCam.follow = target;    // may be new spawn or the previous follow
-                _isoCam.enabled = true;
-            }
-
-            // Restore camera to previous projection after select.
-            if (_cam)
-            {
-                _cam.orthographic = _preSelectOrtho;
-                _cam.orthographicSize = _preSelectOrthoSize;
-            }
-        }
-// Now we always reattach the iso camera to the current local PlayerObject (covers late spawn/random cases).
-
         // Apply or restore transparency on configured objects
         void ApplySelectTransparency(bool on)
         {
-            if (fadeDuringSelect == null) return;
-            for (int i = 0; i < fadeDuringSelect.Length; i++)
-            {
-                var r = fadeDuringSelect[i];
-                if (!r) continue;
-
-                if (on)
-                {
-                    if (!_origFadeColors.ContainsKey(r))
-                    {
-                        var mats = r.materials;
-                        var colors = new Color[mats.Length];
-                        for (int m = 0; m < mats.Length; m++)
-                        {
-                            var mat = mats[m];
-                            Color c = Color.white;
-                            if (mat.HasProperty("_BaseColor")) c = mat.GetColor("_BaseColor");
-                            else if (mat.HasProperty("_Color")) c = mat.GetColor("_Color");
-                            colors[m] = c;
-
-                            // Switch URP Lit to Transparent if currently Opaque.
-                            TryMakeTransparent(mat, true);
-                        }
-                        _origFadeColors[r] = colors;
-                        _origShadowModes[r] = r.shadowCastingMode;
-                    }
-
-                    var matsNow = r.materials;
-                    for (int m = 0; m < matsNow.Length; m++)
-                    {
-                        var mat = matsNow[m];
-                        if (mat.HasProperty("_BaseColor"))
-                        {
-                            var c = mat.GetColor("_BaseColor"); c.a = selectFadeAlpha; mat.SetColor("_BaseColor", c);
-                        }
-                        else if (mat.HasProperty("_Color"))
-                        {
-                            var c = mat.GetColor("_Color"); c.a = selectFadeAlpha; mat.SetColor("_Color", c);
-                        }
-                        TryMakeTransparent(mat, true);
-                    }
-                    r.shadowCastingMode = ShadowCastingMode.Off;
-                }
-                else
-                {
-                    if (_origFadeColors.TryGetValue(r, out var colors))
-                    {
-                        var mats = r.materials;
-                        for (int m = 0; m < mats.Length && m < colors.Length; m++)
-                        {
-                            var mat = mats[m];
-                            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", colors[m]);
-                            else if (mat.HasProperty("_Color")) mat.SetColor("_Color", colors[m]);
-
-                            // Restore to Opaque if we flipped it.
-                            TryMakeTransparent(mat, false);
-                        }
-                    }
-                    if (_origShadowModes.TryGetValue(r, out var mode)) r.shadowCastingMode = mode;
-                }
-            }
-
-            if (!on) { _origFadeColors.Clear(); _origShadowModes.Clear(); }
+            // Removed legacy fade-for-selection logic.
         }
 
         // Minimal URP Lit toggle: Opaque<->Transparent
@@ -1106,76 +733,10 @@ namespace Game.Net
             return null;
         }
 
-        // Top-down orthographic/perspective frame of the full map bounds with a margin.
-        // Fix: respect camera aspect so the whole map fits with extra margin (no cut-off).
-        void FrameSpawnCameraFullMap()
-        {
-            if (!AcquireCameraSafe()) return;
-            var map = areas ? areas.GetMapBounds() : new Bounds(Vector3.zero, new Vector3(60, 0, 60));
-            var center = map.center;
-            float halfW = map.extents.x * spawnCamMargin;
-            float halfH = map.extents.z * spawnCamMargin;
-
-            // Top-down position & rotation
-            var pos = new Vector3(center.x, spawnCamHeight, center.z);
-            var rot = Quaternion.Euler(90f, 0f, 0f);
-
-            if (spawnCamUseOrthographic)
-            {
-                _cam.orthographic = true;
-                // Orthographic size is vertical half-size. Fit width using aspect.
-                float sizeY = Mathf.Max(halfH, halfW / Mathf.Max(0.0001f, _cam.aspect));
-                _cam.orthographicSize = sizeY;
-            }
-            else
-            {
-                _cam.orthographic = false;
-                // Perspective fit: satisfy both vertical and horizontal fits.
-                float fovRad = Mathf.Deg2Rad * Mathf.Clamp(_cam.fieldOfView, 1f, 179f);
-                float needY = halfH / Mathf.Tan(fovRad * 0.5f);
-                float needX = (halfW / Mathf.Max(0.0001f, _cam.aspect)) / Mathf.Tan(fovRad * 0.5f);
-                float need = Mathf.Max(needX, needY);
-                pos.y = Mathf.Max(spawnCamHeight, need);
-            }
-
-            _cam.transform.SetPositionAndRotation(pos, rot);
-        }
-
-        /// <summary>Frame full map for spawn choose using orthographic top-down. Aspect-safe.</summary>
-        void FrameSpawnCameraFullMapOrtho()
-        {
-            if (!_cam) return;
-
-            // Get world bounds to frame.
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            var renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-#else
-            var renderers = UnityEngine.Object.FindObjectsOfType<Renderer>();
-#endif
-            if (renderers == null || renderers.Length == 0) return;
-            var b = new Bounds(renderers[0].bounds.center, Vector3.zero);
-            for (int i = 0; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
-
-            // Save current camera state to restore after select.
-            _preSelectOrtho = _cam.orthographic;
-            _preSelectOrthoSize = _cam.orthographicSize;
-
-            // Force top-down ortho
-            _cam.orthographic = true;
-            var halfSize = Mathf.Max(b.extents.x, b.extents.z);
-            var margin = 1.20f; // breathing room
-            _cam.orthographicSize = halfSize * margin;
-
-            var center = b.center;
-            _cam.transform.position = new Vector3(center.x, center.y + 1000f, center.z);
-            _cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-        }
-// Fix: moved inside class to avoid CS0116.
-
         // Helper: get precise ground height for cursor placement (uses the same ground mask)
         float GroundYAt(Vector3 xz)
         {
-            var origin = new Vector3(xz.x, spawnCamHeight + 500f, xz.z);
+            var origin = new Vector3(xz.x, 80f + 500f, xz.z);
             if (Physics.Raycast(origin, Vector3.down, out var hit, 5000f, groundMask, QueryTriggerInteraction.Ignore))
                 return hit.point.y;
             return xz.y;
@@ -1183,28 +744,6 @@ namespace Game.Net
 // Camera framing now fits full map with margin even on ultra-wide/tall aspects.
 
 
-
-        // Ensure spawn cursor exists and starts hidden.
-        void EnsureSpawnCursor()
-        {
-            if (!_spawnCursor)
-            {
-                if (spawnCursorPrefab) _spawnCursor = Instantiate(spawnCursorPrefab);
-                else
-                {
-                    _spawnCursor = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    _spawnCursor.transform.localScale = new Vector3(1f, 0.2f, 1f);
-                    Destroy(_spawnCursor.GetComponent<Collider>());
-                    var rend = _spawnCursor.GetComponent<Renderer>();
-                    if (rend) rend.material.color = Color.green;
-                }
-                foreach (var col in _spawnCursor.GetComponentsInChildren<Collider>(true))
-                    Destroy(col);
-                int ignoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
-                if (ignoreRaycast >= 0) _spawnCursor.layer = ignoreRaycast;
-            }
-            if (_spawnCursor) _spawnCursor.SetActive(false);
-        }
 
         // Remove any ship/stand-in leftovers and hide real player visuals until actual spawn.
         void ForceClearCinematicResidueLocal()
@@ -1269,77 +808,34 @@ namespace Game.Net
             }
         }
 
-        IEnumerator CoIntroPanThenOpenSpawnUI()
-        {
-            if (_panCo != null) { StopCoroutine(_panCo); _panCo = null; }
-            if (!AcquireCameraSafe()) yield break;
+/// <summary>Client-side cinematic cleanup RPC and local helper.</summary>
+[ClientRpc]
+void StopCinematicClientRpc()
+{
+    if (!IsClient) return;
+    CleanupCinematicLocal(restoreCamera:true);
+}
 
-            // temporary disable iso cam while we pan
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
-#else
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
-#endif
-            if (_isoCam) _isoCam.enabled = false;
+void CleanupCinematicLocal(bool restoreCamera)
+{
+    if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
+    DetachCameraFromShip();
+    if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
+    if (_isoCam && restoreCamera) _isoCam.enabled = true;
+}
 
-            // position at start
-            _cam.transform.SetParent(null, true);
-            _cam.transform.position = mapPanStart ? mapPanStart.position : _cam.transform.position;
-            _cam.transform.rotation = mapPanStart ? mapPanStart.rotation : _cam.transform.rotation;
-
-            float t = 0f;
-            while (t < 1f)
-            {
-                if (!AcquireCameraSafe()) yield break;
-                t += Time.unscaledDeltaTime / Mathf.Max(0.001f, mapPanSeconds);
-                _cam.transform.position = Vector3.LerpUnclamped(mapPanStart.position, mapPanEnd.position, t);
-
-                // Always face the spawn-select look target during the pan if assigned
-                if (spawnSelectLookTarget)
-                {
-                    var dir = spawnSelectLookTarget.position - _cam.transform.position;
-                    dir.y = 0f;
-                    if (dir.sqrMagnitude > 1e-4f)
-                        _cam.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
-                }
-                else
-                {
-                    _cam.transform.rotation = Quaternion.SlerpUnclamped(mapPanStart.rotation, mapPanEnd.rotation, t);
-                }
-                yield return null;
-            }
-
-// cut to spawn-select framing
-// clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
-ClearCinematicShip();
-FrameSpawnCameraFullMap();
-            // Re-send carved holes (guard against blockers changing during pan)
-            {
-                List<Bounds> holes = null;
-                if (areas) holes = areas.GetBlockerIntersectionsFor(_myAreaBounds, null);
-                ApplySpawnHighlightLayout(holes);
-            }
-
-            // Ensure cursor exists and starts hidden
-            EnsureSpawnCursor();
-
-            // Fade configured objects during selection
-            ApplySelectTransparency(true);
-            _panCo = null;
-
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText)
-            {
-                float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-                spawnHintText.text = Mathf.CeilToInt(remain).ToString("0");
-            }
-
-            // Start the timer now that UI is open
-            if (_selectCo != null) StopCoroutine(_selectCo);
-            _selectCo = StartCoroutine(CoSpawnSelectTimer());
-        }
-
-        // Ensure a SeatMount exists under the ship and return it.
+/// <summary>Detach main camera from ship if it was parented.</summary>
+void DetachCameraFromShip()
+{
+    if (!_cam) _cam = Camera.main;
+    if (!_cam) return;
+    // If camera is parented under the ship, detach and restore last known transform.
+    if (_cam.transform && _cam.transform.parent != null && _shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
+    {
+        _cam.transform.SetParent(null, worldPositionStays:true);
+        _cam.transform.SetPositionAndRotation(_preCinematicCamPos, _preCinematicCamRot);
+    }
+}
         Transform EnsureSeatMount(Transform shipRoot, string mountName)
         {
             var t = FindDeep(shipRoot, mountName);
@@ -1527,13 +1023,6 @@ FrameSpawnCameraFullMap();
             return !IsUnityNull(_cam);
         }
 
-        void DetachCameraFromShip()
-        {
-            if (IsUnityNull(_cam)) return;
-            if (_shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
-                _cam.transform.SetParent(null, true);
-        }
-
         static ClientRpcParams ToClient(ulong clientId) =>
             new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } };
 
@@ -1573,20 +1062,6 @@ FrameSpawnCameraFullMap();
         void StopCoroutineSafe(ref Coroutine co)
         {
             if (co != null) { StopCoroutine(co); co = null; }
-        }
-
-        IEnumerator CoFlashInvalid(TMP_Text t)
-        {
-            if (!t) yield break;
-            string prev = t.text;
-            t.text = "Invalid location";
-            float dur = 0.5f, e = 0f;
-            while (e < dur)
-            {
-                e += Time.unscaledDeltaTime;
-                yield return null;
-            }
-            t.text = prev;
         }
     }
 

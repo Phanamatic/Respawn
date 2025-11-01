@@ -2109,7 +2109,6 @@ GameObject:
   m_Component:
   - component: {fileID: 35160444}
   - component: {fileID: 35160443}
-  - component: {fileID: 35160442}
   m_Layer: 0
   m_Name: SpawnArea_Friendly
   m_TagString: Untagged
@@ -2117,27 +2116,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 0
---- !u!114 &35160442
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 35160441}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 0
-  areaRole: 0
-  activeColor: {r: 0.2, g: 0.95, b: 0.2, a: 0.6}
-  inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
-  blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &35160443
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -16598,7 +16576,6 @@ GameObject:
   m_Component:
   - component: {fileID: 202901856}
   - component: {fileID: 202901855}
-  - component: {fileID: 202901854}
   m_Layer: 0
   m_Name: SpawnArea_Enemy
   m_TagString: Untagged
@@ -16606,27 +16583,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 0
---- !u!114 &202901854
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 202901853}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 0
-  areaRole: 1
-  activeColor: {r: 0.2, g: 0.95, b: 0.2, a: 0.6}
-  inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
-  blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &202901855
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -17333,7 +17289,6 @@ GameObject:
   m_Component:
   - component: {fileID: 210679990}
   - component: {fileID: 210679991}
-  - component: {fileID: 210679992}
   m_Layer: 0
   m_Name: TeamA_Area
   m_TagString: Untagged
@@ -17377,27 +17332,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 0.8463896, y: 1, z: 0.6688261}
   m_Center: {x: -0.15447637, y: 0, z: -0.1584925}
---- !u!114 &210679992
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 210679989}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 1
-  areaRole: 0
-  activeColor: {r: 0.2, g: 0.8, b: 0.2, a: 0.28}
-  inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
-  blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &210826670
 Mesh:
   m_ObjectHideFlags: 0
@@ -34677,7 +34611,6 @@ GameObject:
   m_Component:
   - component: {fileID: 415427205}
   - component: {fileID: 415427206}
-  - component: {fileID: 415427207}
   m_Layer: 0
   m_Name: Neutral_Area
   m_TagString: Untagged
@@ -34721,27 +34654,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 0.6691263}
   m_Center: {x: 0, y: 0, z: -0.15879446}
---- !u!114 &415427207
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 415427204}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 1
-  areaRole: 0
-  activeColor: {r: 0.2, g: 0.8, b: 0.2, a: 0.28}
-  inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
-  blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &416090351
 Mesh:
   m_ObjectHideFlags: 0
@@ -46629,7 +46541,6 @@ GameObject:
   m_Component:
   - component: {fileID: 561899673}
   - component: {fileID: 561899674}
-  - component: {fileID: 561899675}
   m_Layer: 0
   m_Name: TeamB_Area
   m_TagString: Untagged
@@ -46673,27 +46584,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 0.9529902, y: 1, z: 0.66889966}
   m_Center: {x: -0.07781299, y: 0, z: -0.1588706}
---- !u!114 &561899675
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 561899672}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 1
-  areaRole: 0
-  activeColor: {r: 0.2, g: 0.8, b: 0.2, a: 0.28}
-  inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
-  blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!43 &568112229
 Mesh:
   m_ObjectHideFlags: 0
@@ -66739,16 +66629,6 @@ Mesh:
     offset: 0
     size: 0
     path: 
---- !u!23 &852818403 stripped
-MeshRenderer:
-  m_CorrespondingSourceObject: {fileID: 4448067503355318295, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
-  m_PrefabInstance: {fileID: 1910055251}
-  m_PrefabAsset: {fileID: 0}
---- !u!23 &852818404 stripped
-MeshRenderer:
-  m_CorrespondingSourceObject: {fileID: 4044290992781194864, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
-  m_PrefabInstance: {fileID: 1910055251}
-  m_PrefabAsset: {fileID: 0}
 --- !u!43 &860122560
 Mesh:
   m_ObjectHideFlags: 0
@@ -74461,9 +74341,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f395e0221269c0943a4175b543d166cc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  teamAArea: {fileID: 0}
-  teamBArea: {fileID: 0}
-  neutralArea: {fileID: 0}
   mapArea: {fileID: 1666088919131249484}
   splitAxis: 0
   teamPercent: 0.45
@@ -142795,9 +142672,6 @@ MonoBehaviour:
   cameraMountName: CameraMount
   cameraLookAtName: CameraLookAt
   cinematicStandInPrefab: {fileID: 7629307799589511846, guid: 93416aa7bc7195d4c89a019c3f52c6ce, type: 3}
-  spawnCursorPrefab: {fileID: 272872419383397680, guid: 4adb9a9d52c0a304189c9ace5161c26f, type: 3}
-  spawnCameraPosition: {x: 0, y: 250, z: 0}
-  spawnCameraLookAt: {x: 0, y: 0, z: 0}
   countdownSeconds: 3
   cinematicSeconds: 3.5
   roundDurationSeconds: 90
@@ -142810,17 +142684,6 @@ MonoBehaviour:
   roundStartGraceSeconds: 1.5
   _requiredPlayersUI: {fileID: 103177356}
   requiredPlayers: 2
-  mapPanStart: {fileID: 839555851}
-  mapPanEnd: {fileID: 600182007}
-  mapPanSeconds: 3
-  spawnSelectLookTarget: {fileID: 550800117}
-  fadeDuringSelect:
-  - {fileID: 852818404}
-  - {fileID: 852818403}
-  selectFadeAlpha: 0.3
-  spawnCamMargin: 1.08
-  spawnCamHeight: 80
-  spawnCamUseOrthographic: 1
 --- !u!43 &1838504786
 Mesh:
   m_ObjectHideFlags: 0
@@ -145595,7 +145458,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1885319643}
   - component: {fileID: 1885319642}
-  - component: {fileID: 1885319641}
   m_Layer: 0
   m_Name: SpawnArea_Neutral
   m_TagString: Untagged
@@ -145603,27 +145465,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 0
---- !u!114 &1885319641
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1885319640}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 0
-  areaRole: 2
-  activeColor: {r: 0.2, g: 0.95, b: 0.2, a: 0.6}
-  inactiveColor: {r: 0.9, g: 0.2, b: 0.2, a: 0.6}
-  blockedColor: {r: 0.95, g: 0.1, b: 0.1, a: 0.6}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!65 &1885319642
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -175794,7 +175635,6 @@ GameObject:
   m_Component:
   - component: {fileID: 6691284414302392911}
   - component: {fileID: 1666088919131249484}
-  - component: {fileID: 5748248491949732924}
   m_Layer: 0
   m_Name: Map_Area
   m_TagString: Untagged
@@ -175802,27 +175642,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &5748248491949732924
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2293256179193550567}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 321d7a0a4a93d254aa65a9b976f1da93, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  followTargetBounds: 1
-  autoDetectRole: 0
-  areaRole: 3
-  activeColor: {r: 0.2, g: 0.8, b: 0.2, a: 0.28}
-  inactiveColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.14}
-  blockedColor: {r: 0.8, g: 0.2, b: 0.2, a: 0.35}
-  yOffset: 0.02
-  friendlyColor: {r: 0, g: 1, b: 0, a: 0.35}
-  enemyColor: {r: 1, g: 0, b: 0, a: 0.35}
 --- !u!4 &6691284414302392911
 Transform:
   m_ObjectHideFlags: 0

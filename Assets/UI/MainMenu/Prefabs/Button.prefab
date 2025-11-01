@@ -147,6 +147,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   targetPanel: {fileID: 0}
+  buttonImage: {fileID: 0}
+  fillHoverImage: {fileID: 0}
+  activeBackgroundImage: {fileID: 0}
+  normalOpacity: 155
+  hoverOpacity: 255
+  radialLoopDuration: 0.5
+  radialFinishSpeedMultiplier: 2
 --- !u!1 &2445874026432583748
 GameObject:
   m_ObjectHideFlags: 0
