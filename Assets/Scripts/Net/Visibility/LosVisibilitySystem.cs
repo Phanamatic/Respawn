@@ -28,11 +28,14 @@ public sealed class LosVisibilitySystem : MonoBehaviour
     int _occluderMask;
     float _eyeHeight = 1.2f;
     float _tick = 0.066f; // ~15 Hz
+    float _lostVisibilityGrace = 0.35f; // allow brief occlusion before hiding
 
     // visibility[viewerId][targetNetId] = visible?
     readonly Dictionary<ulong, Dictionary<ulong, bool>> _visibility = new();
     // targets by netId
     readonly Dictionary<ulong, Tracked> _targets = new();
+    // last visible timestamp per viewer/target (seconds)
+    readonly Dictionary<ulong, Dictionary<ulong, float>> _lastVisible = new();
 
     public static void Install(NetworkManager networkManager, float losRadiusMeters, float fadeSeconds, int occluderMask)
     {
@@ -89,11 +92,14 @@ public sealed class LosVisibilitySystem : MonoBehaviour
         _targets.Remove(no.NetworkObjectId);
         foreach (var kv in _visibility.Values)
             kv.Remove(no.NetworkObjectId);
+        foreach (var kv in _lastVisible.Values)
+            kv.Remove(no.NetworkObjectId);
     }
 
     void OnClientDisconnected(ulong clientId)
     {
         _visibility.Remove(clientId);
+    _lastVisible.Remove(clientId);
     }
 
     void OnClientConnected(ulong viewerId)
@@ -101,6 +107,8 @@ public sealed class LosVisibilitySystem : MonoBehaviour
         // Build map
         if (!_visibility.ContainsKey(viewerId))
             _visibility[viewerId] = new Dictionary<ulong, bool>();
+        if (!_lastVisible.ContainsKey(viewerId))
+            _lastVisible[viewerId] = new Dictionary<ulong, float>();
 
         // Enforce initial state for all existing targets for this viewer.
         foreach (var t in _targets.Values)
@@ -129,6 +137,11 @@ public sealed class LosVisibilitySystem : MonoBehaviour
             {
                 map = new Dictionary<ulong, bool>();
                 _visibility[viewerId] = map;
+            }
+            if (!_lastVisible.TryGetValue(viewerId, out var lastMap))
+            {
+                lastMap = new Dictionary<ulong, float>();
+                _lastVisible[viewerId] = lastMap;
             }
 
             // Find viewer's team from tracked NO
@@ -173,7 +186,14 @@ public sealed class LosVisibilitySystem : MonoBehaviour
                 }
 
                 map.TryGetValue(targetId, out var curVisible);
-                if (wantVisible == curVisible) continue;
+                lastMap.TryGetValue(targetId, out var lastTime);
+
+                if (wantVisible == curVisible)
+                {
+                    if (wantVisible)
+                        lastMap[targetId] = Time.time;
+                    continue;
+                }
 
                 if (wantVisible)
                 {
@@ -183,15 +203,23 @@ public sealed class LosVisibilitySystem : MonoBehaviour
                     var fader = t.NO.GetComponent<LosFader>();
                     if (fader != null) fader.CancelFade();
                     map[targetId] = true;
+                    lastMap[targetId] = Time.time;
                 }
                 else
                 {
+                    // require sustained occlusion before hiding to avoid flicker when players rotate
+                    float sinceVisible = Time.time - lastTime;
+                    if (curVisible && sinceVisible < _lostVisibilityGrace)
+                    {
+                        continue;
+                    }
                     var fader = t.NO.GetComponent<LosFader>();
                     if (fader != null)
                         fader.RequestFadeOutTargeted(viewerId, _fadeSec);
 
                     StartCoroutine(CoHideAfter(t.NO, viewerId, _fadeSec + 0.05f));
                     map[targetId] = false;
+                    lastMap[targetId] = Time.time;
                 }
             }
         }
@@ -200,7 +228,20 @@ public sealed class LosVisibilitySystem : MonoBehaviour
     IEnumerator CoHideAfter(NetworkObject no, ulong viewerId, float delay)
     {
         yield return new WaitForSeconds(delay);
-        if (no && no.IsSpawned && no.IsNetworkVisibleTo(viewerId))
+        if (!no || !no.IsSpawned) yield break;
+
+        if (!_visibility.TryGetValue(viewerId, out var map) || !map.TryGetValue(no.NetworkObjectId, out var stillWanted))
+            stillWanted = false;
+
+        if (stillWanted)
+        {
+            // Viewer regained LOS during fade; ensure object is shown and cancel fade.
+            if (!no.IsNetworkVisibleTo(viewerId)) no.NetworkShow(viewerId);
+            var f = no.GetComponent<LosFader>(); if (f) f.CancelFade();
+            yield break;
+        }
+
+        if (no.IsNetworkVisibleTo(viewerId))
             no.NetworkHide(viewerId);
     }
 
@@ -233,6 +274,7 @@ public sealed class LosVisibilitySystem : MonoBehaviour
         {
             if (!t.NO.IsNetworkVisibleTo(viewerId)) t.NO.NetworkShow(viewerId);
             SetMapVisible(viewerId, t.NO.NetworkObjectId, true);
+            SetLastVisible(viewerId, t.NO.NetworkObjectId, Time.time);
             return;
         }
 
@@ -242,6 +284,7 @@ public sealed class LosVisibilitySystem : MonoBehaviour
         {
             if (!t.NO.IsNetworkVisibleTo(viewerId)) t.NO.NetworkShow(viewerId);
             SetMapVisible(viewerId, t.NO.NetworkObjectId, true);
+            SetLastVisible(viewerId, t.NO.NetworkObjectId, Time.time);
             return;
         }
 
@@ -253,11 +296,13 @@ public sealed class LosVisibilitySystem : MonoBehaviour
             // cancel any residual fade
             var f = t.NO.GetComponent<LosFader>(); if (f) f.CancelFade();
             SetMapVisible(viewerId, t.NO.NetworkObjectId, true);
+            SetLastVisible(viewerId, t.NO.NetworkObjectId, Time.time);
         }
         else
         {
             if (t.NO.IsNetworkVisibleTo(viewerId)) t.NO.NetworkHide(viewerId); // immediate hide, no fade on first frame
             SetMapVisible(viewerId, t.NO.NetworkObjectId, false);
+            SetLastVisible(viewerId, t.NO.NetworkObjectId, Time.time);
         }
     }
 
@@ -297,5 +342,15 @@ public sealed class LosVisibilitySystem : MonoBehaviour
             _visibility[viewerId] = map;
         }
         map[targetId] = visible;
+    }
+
+    void SetLastVisible(ulong viewerId, ulong targetId, float time)
+    {
+        if (!_lastVisible.TryGetValue(viewerId, out var map))
+        {
+            map = new Dictionary<ulong, float>();
+            _lastVisible[viewerId] = map;
+        }
+        map[targetId] = time;
     }
 }

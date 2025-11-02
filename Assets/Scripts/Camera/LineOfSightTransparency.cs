@@ -40,6 +40,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     static readonly int TransparentZWriteId = Shader.PropertyToID("_TransparentZWrite");
     static readonly int EnableTransparentDepthPrepassId = Shader.PropertyToID("_EnableTransparentDepthPrepass");
     static readonly int SortingPriorityId = Shader.PropertyToID("_SortingPriority");
+    static readonly int EnableTransparentDepthPostpassId = Shader.PropertyToID("_EnableTransparentDepthPostpass");
 
     sealed class DepthState
     {
@@ -47,7 +48,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
         public int[] origSortingPriority;
         public int origSortingOrder;
         public int[] origRenderQueue;
-        public float[] origZWrite, origTZWrite, origPrepass;
+    public float[] origZWrite, origTZWrite, origPrepass, origPostpass;
         public bool initialized;
         public bool appliedFaded;
     }
@@ -290,6 +291,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
             st.origZWrite = new float[st.mats.Length];
             st.origTZWrite = new float[st.mats.Length];
             st.origPrepass = new float[st.mats.Length];
+            st.origPostpass = new float[st.mats.Length];
             for (int i = 0; i < st.mats.Length; i++)
             {
                 var m = st.mats[i];
@@ -299,6 +301,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
                 st.origZWrite[i]          = m.HasProperty(ZWriteId) ? m.GetFloat(ZWriteId) : 0f;
                 st.origTZWrite[i]         = m.HasProperty(TransparentZWriteId) ? m.GetFloat(TransparentZWriteId) : 0f;
                 st.origPrepass[i]         = m.HasProperty(EnableTransparentDepthPrepassId) ? m.GetFloat(EnableTransparentDepthPrepassId) : 0f;
+                st.origPostpass[i]        = m.HasProperty(EnableTransparentDepthPostpassId) ? m.GetFloat(EnableTransparentDepthPostpassId) : 0f;
             }
             st.origSortingOrder = r.sortingOrder;
             st.initialized = true;
@@ -316,10 +319,11 @@ public sealed class LineOfSightTransparency : MonoBehaviour
                 if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, 0f);
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
+                if (m.HasProperty(EnableTransparentDepthPostpassId)) m.SetFloat(EnableTransparentDepthPostpassId, 0f);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
 
-                // Force queue earlier than player (player ~3000+priority). Use 2950.
-                if (m.renderQueue > 2950) m.renderQueue = 2950;
+                // Draw slightly before player characters (typically queue 3000) so their rendering overwrites the faded occluder, ensuring full visibility.
+                if (m.renderQueue != 2950) m.renderQueue = 2950;
             }
             r.sortingOrder = -50;
             st.appliedFaded = true;
@@ -334,6 +338,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
                 if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, st.origZWrite[i]);
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, st.origTZWrite[i]);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, st.origPrepass[i]);
+                if (m.HasProperty(EnableTransparentDepthPostpassId)) m.SetFloat(EnableTransparentDepthPostpassId, st.origPostpass[i]);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, st.origSortingPriority[i]);
                 m.renderQueue = st.origRenderQueue[i];
             }

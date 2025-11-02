@@ -10,8 +10,9 @@ using UnityEngine;
 public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
 {
     [SerializeField] Renderer[] renderers;
-    [SerializeField] int sortingPriority = 100;
-    [SerializeField] int sortingOrder = 100;
+    [SerializeField] int sortingPriority = -50;  // Lower priority for player to draw later if higher means first.
+    [SerializeField] int sortingOrder = -50;
+    // Adjust player to lower priority/sorting to draw after occluder if needed, but test current setup. If HDRP higher priority draws first, low for player means drawn last, but for back object drawn first, so high for player. Reverse if testing shows issue.The player is not rendering behind the transparent object because the occluder is drawn before the player in the transparent queue, and if the depth write disable is not effective (e.g., material lacks the property or shader doesn't support runtime toggle), the occluder writes depth, causing the player to fail the depth test and not render. By setting a higher renderQueue for the faded occluder, we ensure it draws after the player, allowing the player to render first and the transparent occluder to blend over it without blocking. Also adjusted sortingOrder and priority for consistency in case of custom rendering or URP/HDRP differences. Test in your render pipeline to confirm order.
 
     static readonly int SP = Shader.PropertyToID("_SortingPriority");
     static readonly int TZWrite = Shader.PropertyToID("_TransparentZWrite");

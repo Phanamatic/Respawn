@@ -204,6 +204,14 @@ namespace Game.Net
                 if (nm.NetworkConfig == null) nm.NetworkConfig = new NetworkConfig();
                 if (nm.NetworkConfig.NetworkTransport == null) nm.NetworkConfig.NetworkTransport = utp;
 
+                // Pin NGO tick (server + client). 128 is your fixedDeltaTime; keep them aligned.
+                nm.NetworkConfig.TickRate = 128;
+
+                // Configure Unity Transport for direct UDP with WAN-safe payload.
+                // Payload ~1200 bytes to respect typical internet MTU when headers are present.
+                utp.MaxPayloadSize = 1200;
+                // [DirectNet] Direct UDP C→S; MTU-safe payloads.
+
                 SanitizeNetworkPrefabs(nm);
 
                 // CLI

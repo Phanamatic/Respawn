@@ -2,10 +2,11 @@ Shader "Custom/LOS/FOVStencilWrite"
 {
     Properties
     {
-        _FillColor("Fill Color", Color) = (1,0.98,0.85,0.40)   // warm bright
+    _FillColor("Fill Color", Color) = (0.95,0.97,1.0,0.45)   // cool bright
         _ShowFill("Show Fill", Float) = 1
         _FillMul("Fill Intensity", Float) = 1.15               // slight boost
-        _Feather("Edge Feather (m)", Float) = 0.15
+    _Feather("Edge Feather (m)", Float) = 0.15
+    _Radius("Radius", Float) = 12
     }
     SubShader
     {
@@ -25,7 +26,12 @@ Shader "Custom/LOS/FOVStencilWrite"
             #include "UnityCG.cginc"
             struct appdata { float3 vertex : POSITION; };
             struct v2f     { float4 pos    : SV_POSITION; };
-            v2f Vert(appdata v){ v2f o; o.pos = UnityObjectToClipPos(float4(v.vertex,1)); return o; }
+            v2f Vert(appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(float4(v.vertex,1));
+                return o;
+            }
             float4 Frag(v2f i) : SV_Target { return float4(0,0,0,0); }
             ENDHLSL
         }
@@ -44,17 +50,40 @@ Shader "Custom/LOS/FOVStencilWrite"
             #pragma fragment FragFill
             #include "UnityCG.cginc"
             fixed4 _FillColor;
-            float  _ShowFill, _FillMul, _Feather;
+            float  _ShowFill, _FillMul, _Feather, _Radius;
             struct appdata { float3 vertex : POSITION; };
-            struct v2f     { float4 pos    : SV_POSITION; float2 uv : TEXCOORD0; };
-            v2f Vert(appdata v){ v2f o; o.pos = UnityObjectToClipPos(float4(v.vertex,1)); o.uv = float2(0,0); return o; }
+            struct v2f
+            {
+                float4 pos     : SV_POSITION;
+                float2 localXZ : TEXCOORD0;
+            };
+            v2f Vert(appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(float4(v.vertex,1));
+                o.localXZ = v.vertex.xz;
+                return o;
+            }
             fixed4 FragFill(v2f i) : SV_Target
             {
-                // small edge feather to hide ray fan facets
-                float a = saturate(_Feather > 0 ? 1.0 : 1.0);
-                return (_ShowFill > 0.5) ? _FillColor * (_FillMul * a) : 0;
+                if (_ShowFill < 0.5) return 0;
+
+                float feather = max(1e-3, _Feather);
+                float radius  = max(1e-3, _Radius);
+                float dist    = length(i.localXZ);
+
+                // Edge softness toward the boundary ring.
+                float edge    = saturate((radius - dist) / feather);
+                edge = edge * edge * (3.0 - 2.0 * edge); // smoothstep
+
+                // Slight center boost for more natural falloff.
+                float center  = saturate(1.0 - (dist * dist) / (radius * radius + 1e-4));
+                float fillMul = _FillMul * lerp(0.75, 1.15, center);
+
+                return _FillColor * (fillMul * edge);
             }
             ENDHLSL
+// Brief dev comment: swap SRP transforms for UnityCG path. Fixes 'TransformObjectToHClip' and 'UNITY_MATRIX_M/GetObjectToWorldMatrix' errors.
         }
     }
 }

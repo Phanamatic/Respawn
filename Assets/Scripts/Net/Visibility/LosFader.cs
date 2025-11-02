@@ -17,6 +17,7 @@ public sealed class LosFader : NetworkBehaviour
 
     MaterialPropertyBlock _mpb;
     Coroutine _co;
+    float _currentAlpha = 1f;
 
     void Reset()
     {
@@ -31,7 +32,8 @@ public sealed class LosFader : NetworkBehaviour
         if (renderers == null || renderers.Length == 0) renderers = GetComponentsInChildren<Renderer>(true);
         renderers = FilterNonLosRenderers(renderers);
 
-        StartFade(from:minAlpha, to:1f, seconds:fadeSeconds);
+    ApplyAlpha(minAlpha);
+    StartFade(from:minAlpha, to:1f, seconds:fadeSeconds, forceFrom:true);
     }
 
     void OnDisable()
@@ -39,10 +41,18 @@ public sealed class LosFader : NetworkBehaviour
         if (_co != null) { StopCoroutine(_co); _co = null; }
     }
 
-    void StartFade(float from, float to, float seconds)
+    void StartFade(float from, float to, float seconds, bool forceFrom = false)
     {
         if (_co != null) StopCoroutine(_co);
-        _co = StartCoroutine(CoFade(from, to, Mathf.Max(0.01f, seconds)));
+        float start = forceFrom ? Mathf.Clamp01(from) : Mathf.Clamp01(_currentAlpha);
+        if (forceFrom) ApplyAlpha(start);
+        if (Mathf.Approximately(start, Mathf.Clamp01(to)))
+        {
+            ApplyAlpha(to);
+            return;
+        }
+        if (!isActiveAndEnabled) { ApplyAlpha(to); return; }
+        _co = StartCoroutine(CoFade(start, to, Mathf.Max(0.01f, seconds)));
     }
 
     IEnumerator CoFade(float from, float to, float seconds)
@@ -61,22 +71,24 @@ public sealed class LosFader : NetworkBehaviour
 
     void ApplyAlpha(float a)
     {
+        _currentAlpha = Mathf.Clamp01(a);
         if (renderers == null) return;
         for (int i = 0; i < renderers.Length; i++)
         {
             var r = renderers[i];
             if (!r) continue;
+            if (_mpb == null) _mpb = new MaterialPropertyBlock();
             r.GetPropertyBlock(_mpb);
             if (r.sharedMaterial && r.sharedMaterial.HasProperty("_BaseColor"))
             {
                 var c = r.sharedMaterial.GetColor("_BaseColor");
-                c.a = a;
+                c.a = _currentAlpha;
                 _mpb.SetColor("_BaseColor", c);
             }
             else if (r.sharedMaterial && r.sharedMaterial.HasProperty("_Color"))
             {
                 var c = r.sharedMaterial.GetColor("_Color");
-                c.a = a;
+                c.a = _currentAlpha;
                 _mpb.SetColor("_Color", c);
             }
             r.SetPropertyBlock(_mpb);
@@ -117,7 +129,13 @@ public sealed class LosFader : NetworkBehaviour
     // Cancel any active fade and set to full visibility.
     public void CancelFade()
     {
-        if (_co != null) { StopCoroutine(_co); _co = null; }
+        FadeToFull(0.15f);
+    }
+
+    public void FadeToFull(float seconds)
+    {
+        if (_mpb == null) _mpb = new MaterialPropertyBlock();
+        StartFade(_currentAlpha, 1f, Mathf.Max(0.01f, seconds));
     }
 
     Renderer[] FilterNonLosRenderers(Renderer[] src)

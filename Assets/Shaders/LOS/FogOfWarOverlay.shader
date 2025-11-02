@@ -17,12 +17,12 @@ Shader "Custom/LOS/FogOfWarOverlay"
         }
         Pass
         {
-            Tags { "LightMode" = "SRPDefaultUnlit" }   // <<< important for HDRP
+            Tags { "LightMode" = "SRPDefaultUnlit" }
             HLSLPROGRAM
             #pragma target 3.0
             #pragma vertex Vert
             #pragma fragment Frag
-            #include "UnityCG.cginc"
+            #include "UnityCG.cginc"   // gives UnityObjectToClipPos & standard matrices
 
             float _Darkness;
 
@@ -38,7 +38,7 @@ Shader "Custom/LOS/FogOfWarOverlay"
 
             float4 Frag(v2f i) : SV_Target { return float4(0,0,0,_Darkness); }
             ENDHLSL
-// Use UnityCG’s UnityObjectToClipPos. Works in HDRP for simple passes.
+// Brief dev comment: remove SRP buffers; rely on UnityCG + UnityObjectToClipPos. Fixes 'CBUFFER_START' and matrix macro errors.
         }
     }
 }

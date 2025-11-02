@@ -116,6 +116,7 @@ GameObject:
   - component: {fileID: 6948204331012536248}
   - component: {fileID: 6409565688786376842}
   - component: {fileID: 6800541382982696214}
+  - component: {fileID: 723876725633851347}
   m_Layer: 0
   m_Name: PlayerAvatar
   m_TagString: Player
@@ -231,7 +232,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 1261705983
+  GlobalObjectIdHash: 1958184373
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
@@ -475,6 +476,23 @@ MonoBehaviour:
   fadeSeconds: 1
   minAlpha: 0.2
   renderers: []
+--- !u!114 &723876725633851347
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7629307799589511846}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8090dce4c6fa9c94aab74c918b51057b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  fovSource: {fileID: 0}
+  intensity: 1.2
+  rangeScale: 1
+  castShadows: 1
+  environmentLightLayer: 1
 --- !u!1 &7769304657473620615
 GameObject:
   m_ObjectHideFlags: 0

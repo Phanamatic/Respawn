@@ -3,6 +3,8 @@
 // plus freeze/visibility controls used by Match1v1Controller.
 
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using Unity.Netcode;
 using Unity.Netcode.Components;
@@ -10,6 +12,9 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using TMPro;
 using Game.Net.Weapons;
+using Unity.Collections;
+using Unity.Services.Authentication;
+using Unity.Services.Lobbies.Models;
 
 namespace Game.Net
 {
@@ -103,9 +108,13 @@ namespace Game.Net
         NetworkVariable<float> _netYaw = new();
         NetworkVariable<Vector3> _netVelocity = new();
         NetworkVariable<bool> _netIsDashing = new();
+        readonly NetworkVariable<FixedString64Bytes> _playerName =
+            new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+        const int MaxDisplayNameLength = 32;
 
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
+        InputAction _aScoreboard;
         public bool IsSprinting { get; private set; }
         public bool IsDashing  { get; private set; }
         public event System.Action<bool> SprintChanged;
@@ -118,9 +127,14 @@ namespace Game.Net
         bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ; float _dashQueuedUntil;
 
         Camera _cam; IsometricCamera _isoCam; int _camBindTries;
+    int _scoreboardBindTries;
 
         bool _inputPaused;
         bool _frozen;
+
+    MatchScoreboardPanel _scoreboard;
+    Coroutine _nameSubmitCo;
+    bool _nameSubmitted;
 
         private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
 
@@ -173,22 +187,32 @@ namespace Game.Net
             if (IsOwner)
             {
                 SetupInputAndCamera();
+                TryBindScoreboard();
 
                 // Install client-side LOS FOV visualization for local player.
                 var fov = gameObject.GetComponent<FovMesh>();
                 if (!fov) fov = gameObject.AddComponent<FovMesh>();
-                fov.radiusMeters = 12f;                                  // requested
-                fov.rayCount = 350;                                      // requested
+                fov.radiusMeters = 12f;                                  // LOS radius
+                fov.rayCount = 220;                                      // tuned for perf
                 // Detect both LOS layers.
                 fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
                 fov.showFill = true;
-                fov.fillColor = new Color(1.0f, 0.98f, 0.85f, 0.40f); // bright inside
+                fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f); // bright inside
                 fov.fillIntensity = 1.15f;
                 fov.edgeFeather = 0.15f;
+                fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
                 // Anchor FOV to visual root if provided so the stencil sits on the model.
                 fov.follow = modelRoot ? modelRoot : transform;
 
+                var losLight = GetComponent<PlayerLosLight>();
+                if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
+                losLight.fovSource = fov;
+                losLight.intensity = 1.3f;
+                losLight.rangeScale = 0.9f;
+                losLight.castShadows = true;
+
                 FogOfWarOverlayPlane.InstallFor(Camera.main);
+                BeginSubmitNameRoutine();
 
                 // Force local model fully visible each spawn (guards against any fade components).
                 EnsureLocalModelVisible();
@@ -298,6 +322,23 @@ namespace Game.Net
         {
             sprintFill = null; sprintLabel = null; dashFill = null; dashLabel = null;
         }
+
+        internal void RegisterScoreboard(MatchScoreboardPanel panel)
+        {
+            if (panel == null) return;
+            _scoreboard = panel;
+            _scoreboardBindTries = 0;
+        }
+
+        internal void UnregisterScoreboard(MatchScoreboardPanel panel)
+        {
+            if (_scoreboard == panel) _scoreboard = null;
+        }
+
+        public string GetDisplayName()
+        {
+            return _playerName.Value.IsEmpty ? $"Player {OwnerClientId}" : _playerName.Value.ToString();
+        }
         // ================================================
 // ===== Weapons: equip, switch, throw (server authoritative) =====
 
@@ -400,6 +441,7 @@ void OnActiveSlotChanged()
             _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
             _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
+            _aScoreboard = _map.AddAction(name: "Scoreboard", type: InputActionType.Button, binding: "<Keyboard>/tab");
 
             _aDash.performed += OnDashPerformed;
             // forward dash state to weapon controller via OnDashingChanged callback already patched.
@@ -407,9 +449,12 @@ void OnActiveSlotChanged()
             _aSlot2.performed += _ => RequestSwitchSlot(1);
             _aSlot3.performed += _ => RequestSwitchSlot(2);
             _aThrow.performed += _ => RequestThrowUtility();
+            _aScoreboard.performed += OnScoreboardPerformed;
+            _aScoreboard.canceled  += OnScoreboardCanceled;
 
             _map.Enable();
             TryBindCamera();
+            TryBindScoreboard();
         }
 
         void OnDashPerformed(InputAction.CallbackContext ctx)
@@ -430,6 +475,7 @@ void OnActiveSlotChanged()
                 var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
             }
             if (paused) _map?.Disable(); else _map?.Enable();
+            if (paused) ShowScoreboard(false);
         }
 
         void TryBindCamera()
@@ -448,13 +494,156 @@ void OnActiveSlotChanged()
 
                 var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
                 los.target = transform;
+
+                FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
             }
+        }
+
+        void TryBindScoreboard()
+        {
+            if (!IsOwner || _scoreboard != null) return;
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var panel = FindFirstObjectByType<MatchScoreboardPanel>(FindObjectsInactive.Include);
+#else
+            var panel = FindObjectOfType<MatchScoreboardPanel>();
+#endif
+            if (panel != null)
+            {
+                panel.SetOwner(this);
+            }
+        }
+
+        void ShowScoreboard(bool show)
+        {
+            if (!IsOwner) return;
+            if (_scoreboard == null)
+            {
+                if (show) TryBindScoreboard();
+                if (_scoreboard == null) return;
+            }
+            if (show && _inputPaused) show = false;
+            _scoreboard.SetVisible(show);
+        }
+
+        void OnScoreboardPerformed(InputAction.CallbackContext ctx)
+        {
+            ShowScoreboard(true);
+        }
+
+        void OnScoreboardCanceled(InputAction.CallbackContext ctx)
+        {
+            ShowScoreboard(false);
+        }
+
+        void BeginSubmitNameRoutine()
+        {
+            if (!IsOwner || _nameSubmitted) return;
+            if (_nameSubmitCo != null) StopCoroutine(_nameSubmitCo);
+            _nameSubmitCo = StartCoroutine(CoSubmitPlayerName());
+        }
+
+        IEnumerator CoSubmitPlayerName()
+        {
+            const float timeoutSeconds = 6f;
+            float deadline = Time.unscaledTime + timeoutSeconds;
+
+            while (IsOwner && !_nameSubmitted)
+            {
+                string alias = ResolvePreferredPlayerName();
+                if (!string.IsNullOrWhiteSpace(alias))
+                {
+                    SubmitPlayerNameServerRpc(alias);
+                    _nameSubmitted = true;
+                    yield break;
+                }
+
+                if (Time.unscaledTime >= deadline) break;
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
+
+            if (IsOwner && !_nameSubmitted)
+            {
+                string fallback = $"Player {OwnerClientId}";
+                SubmitPlayerNameServerRpc(fallback);
+                _nameSubmitted = true;
+            }
+        }
+
+        static string ResolvePreferredPlayerName()
+        {
+            try
+            {
+                var auth = AuthenticationService.Instance;
+                var lobby = SessionContext.CurrentLobby;
+                var playerId = auth != null ? auth.PlayerId : null;
+
+                if (lobby != null && !string.IsNullOrEmpty(playerId))
+                {
+                    var players = lobby.Players;
+                    if (players != null)
+                    {
+                        for (int i = 0; i < players.Count; i++)
+                        {
+                            var member = players[i];
+                            if (member == null || member.Id != playerId) continue;
+                            if (member.Data != null)
+                            {
+                                if (member.Data.TryGetValue("displayName", out var display) && display != null && !string.IsNullOrWhiteSpace(display.Value))
+                                    return display.Value;
+                                if (member.Data.TryGetValue("username", out var username) && username != null && !string.IsNullOrWhiteSpace(username.Value))
+                                    return username.Value;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PlayerNetwork] ResolvePreferredPlayerName failed: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        void SubmitPlayerNameServerRpc(FixedString64Bytes alias, ServerRpcParams rpcParams = default)
+        {
+            var sanitized = SanitizeAlias(alias);
+            if (sanitized.IsEmpty) return;
+            _playerName.Value = sanitized;
+        }
+
+        static FixedString64Bytes SanitizeAlias(FixedString64Bytes alias)
+        {
+            var raw = alias.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return default;
+
+            string cleaned = raw.Trim();
+            if (cleaned.Length > MaxDisplayNameLength)
+                cleaned = cleaned.Substring(0, MaxDisplayNameLength);
+            cleaned = cleaned.Replace('\n', ' ').Replace('\r', ' ');
+
+            Span<char> buffer = stackalloc char[cleaned.Length];
+            int len = 0;
+            for (int i = 0; i < cleaned.Length; i++)
+            {
+                char c = cleaned[i];
+                if (char.IsControl(c)) continue;
+                buffer[len++] = c;
+            }
+
+            cleaned = new string(buffer.Slice(0, len));
+            if (string.IsNullOrWhiteSpace(cleaned)) return default;
+            FixedString64Bytes result = cleaned;
+            return result;
         }
 
         void LateUpdate()
         {
             if (!IsOwner) return;
             if (_isoCam == null && _camBindTries < 60) { _camBindTries++; TryBindCamera(); }
+            if (_scoreboard == null && _scoreboardBindTries < 120) { _scoreboardBindTries++; TryBindScoreboard(); }
             if (_inputPaused) { UpdateUI(); return; }
         }
 

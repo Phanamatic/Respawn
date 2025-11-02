@@ -92,6 +92,7 @@ static readonly int ZWriteId = Shader.PropertyToID("_ZWrite");
 static readonly int TransparentZWriteId = Shader.PropertyToID("_TransparentZWrite");
 static readonly int EnableTransparentDepthPrepassId = Shader.PropertyToID("_EnableTransparentDepthPrepass");
 static readonly int SortingPriorityId = Shader.PropertyToID("_SortingPriority");
+// Note: If using URP, consider adjusting renderQueue handling for correct ordering.
 
 sealed class DepthState
 {
@@ -484,9 +485,11 @@ static void r_GetBlock(ref Faded f)
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
+                // Ensure draw after player for correct blend order in transparent queue.
             }
-            r.sortingOrder = -50;
+            r.sortingOrder = 50;  // Higher sortingOrder to draw later if needed for custom passes.
             st.appliedFaded = true;
+            // Adjust sortingOrder to positive for later draw if renderer.sortingOrder affects order.
         }
         else
         {

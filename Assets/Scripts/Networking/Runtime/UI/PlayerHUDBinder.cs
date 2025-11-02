@@ -28,6 +28,7 @@ namespace Game.Net
                 if (p == null) yield return null;
             }
             p.AssignHud(sprintFill, sprintLabel, dashFill, dashLabel);
+            MatchScoreboardPanel.AttachToHud(transform, p);
         }
     }
 }

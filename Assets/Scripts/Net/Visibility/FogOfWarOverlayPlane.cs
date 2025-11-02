@@ -12,6 +12,8 @@ public sealed class FogOfWarOverlayPlane : MonoBehaviour
 
     public static void InstallFor(Camera cam)
     {
+        // Ensure the overlay always uses the correct Unlit material and never falls back to HDRP/Lit.
+        // If the stencil overlay material isn't found, we *disable* the renderer to avoid Lit fallback.
         if (!cam) return;
         if (cam.GetComponentInChildren<FogOfWarOverlayPlane>()) return;
 
@@ -38,24 +40,40 @@ public sealed class FogOfWarOverlayPlane : MonoBehaviour
 
     void EnsureMesh(GameObject go)
     {
-        if (_overlayMat == null)
-        {
-            _overlayMat = Resources.Load<Material>("LOS/FogOfWarOverlayMat");
-            if (_overlayMat == null)
-            {
-                var sh = Shader.Find("Custom/LOS/FogOfWarOverlay");
-                if (sh) _overlayMat = new Material(sh) { name = "FogOfWarOverlayMat(Runtime)" };
-            }
-        }
-
         var mf = go.AddComponent<MeshFilter>();
         var mr = go.AddComponent<MeshRenderer>();
-        mr.sharedMaterial = _overlayMat;
-        // Ensure overlay uses the same layer as the GameObject (already set in InstallFor)
-        mr.gameObject.layer = go.layer;
+
+        // Load the overlay material exactly as expected
+        var overlayMat = Resources.Load<Material>("LOS/FogOfWarOverlayMat");
+        if (overlayMat == null)
+        {
+            // As a last resort try the shader and make a runtime material
+            var sh = Shader.Find("Custom/LOS/FogOfWarOverlay");
+            if (sh != null) overlayMat = new Material(sh);
+        }
+
+        if (overlayMat == null)
+        {
+            Debug.LogError("[LOS] FogOfWarOverlayMat missing. Overlay rendering disabled to avoid HDRP/Lit fallback.");
+            if (mr) mr.enabled = false;
+            return;
+        }
+
+        // Force a single material slot with the overlay mat, and strip any extras
+        mr.sharedMaterials = new[] { overlayMat };
+
+        // Absolute safety: this renderer must never request lighting buffers
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         mr.receiveShadows = false;
-        mr.enabled = (mr.sharedMaterial != null); // if shader missing, don’t draw
+#if UNITY_6000_0_OR_NEWER
+        mr.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
+#endif
+        mr.allowOcclusionWhenDynamic = false;
+        mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+        mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+
+        // Ensure overlay uses the same layer as the GameObject (already set in InstallFor)
+        mr.gameObject.layer = go.layer;
 
         // Simple quad
         var m = new Mesh { name = "FogOverlayQuad" };
@@ -101,3 +119,4 @@ public sealed class FogOfWarOverlayPlane : MonoBehaviour
         }
     }
 }
+// Prevents the HDRP 'g_vLightListCluster' error by guaranteeing an Unlit overlay or nothing.
