@@ -12,6 +12,8 @@ namespace Game.Net
         [SerializeField] private TMP_Text sprintLabel;
         [SerializeField] private Image dashFill;
         [SerializeField] private TMP_Text dashLabel;
+    [SerializeField] private Image healthFill;
+    [SerializeField] private TMP_Text healthLabel;
 
         private void OnEnable() => StartCoroutine(BindWhenReady());
 
@@ -27,7 +29,7 @@ namespace Game.Net
                 }
                 if (p == null) yield return null;
             }
-            p.AssignHud(sprintFill, sprintLabel, dashFill, dashLabel);
+            p.AssignHud(sprintFill, sprintLabel, dashFill, dashLabel, healthFill, healthLabel);
             MatchScoreboardPanel.AttachToHud(transform, p);
         }
     }

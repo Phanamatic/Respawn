@@ -12,7 +12,8 @@ namespace Game.Net
     public static class CloudSaveClient
     {
         // Use simple, compliant key (alphanumeric only).
-        const string Key = "LoadoutV1";
+    const string Key = "LoadoutV1";
+    const string StatsKey = "MatchStatsV1";
 
         public static async Task<PlayerLoadout> LoadLoadoutAsync(PlayerLoadout fallback)
         {
@@ -86,6 +87,98 @@ namespace Game.Net
             public string primary;
             public string secondary;
             public string utility;
+        }
+
+        [Serializable]
+        private struct StatsDTO
+        {
+            public int kills;
+            public int deaths;
+            public int damage;
+        }
+
+        public struct PlayerStatsRecord
+        {
+            public int totalKills;
+            public int totalDeaths;
+            public int totalDamage;
+        }
+
+        public static async Task<PlayerStatsRecord> LoadStatsAsync()
+        {
+            await EnsureReadyAsync();
+
+            try
+            {
+                var keys = new HashSet<string> { StatsKey };
+                var resp = await CloudSaveService.Instance.Data.Player.LoadAsync(keys);
+                if (resp != null && resp.TryGetValue(StatsKey, out Item item))
+                {
+                    var json = item.Value.GetAsString();
+                    if (!string.IsNullOrWhiteSpace(json))
+                    {
+                        var dto = JsonUtility.FromJson<StatsDTO>(json);
+                        return new PlayerStatsRecord
+                        {
+                            totalKills = dto.kills,
+                            totalDeaths = dto.deaths,
+                            totalDamage = dto.damage
+                        };
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[CloudSave] Load stats skipped: {e.Message}");
+            }
+
+            return default;
+        }
+
+        public static async Task<bool> SaveStatsAsync(PlayerStatsRecord record)
+        {
+            await EnsureReadyAsync();
+
+            var dto = new StatsDTO
+            {
+                kills = Mathf.Max(0, record.totalKills),
+                deaths = Mathf.Max(0, record.totalDeaths),
+                damage = Mathf.Max(0, record.totalDamage)
+            };
+
+            var json = JsonUtility.ToJson(dto);
+            var payload = new Dictionary<string, object> { { StatsKey, json } };
+
+            try
+            {
+                await CloudSaveService.Instance.Data.Player.SaveAsync(payload);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[CloudSave] Save stats failed: {e.Message}");
+                return false;
+            }
+        }
+
+        public static async Task<bool> AppendStatsAsync(int killsDelta, int deathsDelta, int damageDelta)
+        {
+            if (killsDelta <= 0 && deathsDelta <= 0 && damageDelta <= 0)
+                return true; // nothing to append
+
+            var current = await LoadStatsAsync();
+            current.totalKills = SafeSum(current.totalKills, killsDelta);
+            current.totalDeaths = SafeSum(current.totalDeaths, deathsDelta);
+            current.totalDamage = SafeSum(current.totalDamage, damageDelta);
+            return await SaveStatsAsync(current);
+        }
+
+        static int SafeSum(int baseValue, int delta)
+        {
+            long sum = (long)baseValue + delta;
+            if (sum < 0) return 0;
+            if (sum > int.MaxValue) return int.MaxValue;
+            return (int)sum;
         }
 
         // Initializes Services and ensures authentication before Cloud Save calls.

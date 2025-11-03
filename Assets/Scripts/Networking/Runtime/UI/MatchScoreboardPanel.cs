@@ -18,6 +18,7 @@ namespace Game.Net
             public TMP_Text nameLabel;
             public TMP_Text pingLabel;
             public Image background;
+            public Image iconImage;
 
             public void SetActive(bool active)
             {
@@ -34,6 +35,11 @@ namespace Game.Net
         [SerializeField] Color evenRowColor = new Color(1f, 1f, 1f, 0.08f);
         [SerializeField] Color oddRowColor = new Color(1f, 1f, 1f, 0.02f);
         [SerializeField, Min(0.1f)] float refreshInterval = 0.35f;
+    [Header("Team Icon Targets")]
+    [SerializeField] Image teamAIconImage;
+    [SerializeField] Image teamBIconImage;
+    [SerializeField] Sprite fallbackIcon;
+    [SerializeField] bool hideTeamIconWhenMissing = true;
 
         readonly List<PlayerRowBinding> _rows = new List<PlayerRowBinding>();
         readonly List<Entry> _entries = new List<Entry>();
@@ -41,6 +47,8 @@ namespace Game.Net
         PlayerNetwork _owner;
         bool _visible;
         float _nextRefresh;
+    Sprite _teamAIconResolved;
+    Sprite _teamBIconResolved;
 
         struct Entry
         {
@@ -48,6 +56,13 @@ namespace Game.Net
             public string name;
             public int ping;
             public bool isLocal;
+            public TeamId team;
+            public Sprite icon;
+            public string iconId;
+            public int health;
+            public int kills;
+            public int deaths;
+            public int damage;
         }
 
         void Awake()
@@ -83,6 +98,10 @@ namespace Game.Net
             {
                 headerLabel.text = "Scoreboard";
             }
+
+            AutoAssignTeamIconTargets();
+            if (!fallbackIcon)
+                fallbackIcon = Game.Services.ProfileIconLookup.Resolve(null);
         }
 
         void OnDestroy()
@@ -141,6 +160,8 @@ namespace Game.Net
             if (rowsRoot == null) return;
 
             _entries.Clear();
+            Sprite teamAIcon = null;
+            Sprite teamBIcon = null;
 
             var manager = NetworkManager.Singleton;
             if (manager != null && manager.IsClient)
@@ -157,13 +178,28 @@ namespace Game.Net
                     string name = player != null ? player.GetDisplayName() : $"Player {clientId}";
                     int ping = QueryPing(manager, clientId);
                     bool isLocal = _owner != null && clientId == _owner.OwnerClientId;
+                    TeamId team = player != null ? player.GetTeam() : TeamId.A;
+                    string iconId = player != null ? player.GetIconId() : null;
+                    var icon = Game.Services.ProfileIconLookup.Resolve(iconId) ?? fallbackIcon;
+                    var stats = player != null ? player.GetCombatStats() : default;
+                    int health = player != null ? Mathf.RoundToInt(player.GetHealth()) : 0;
+
+                    if (team == TeamId.A && teamAIcon == null) teamAIcon = icon;
+                    if (team == TeamId.B && teamBIcon == null) teamBIcon = icon;
 
                     _entries.Add(new Entry
                     {
                         clientId = clientId,
                         name = name,
                         ping = ping,
-                        isLocal = isLocal
+                        isLocal = isLocal,
+                        team = team,
+                        icon = icon,
+                        iconId = iconId,
+                        health = health,
+                        kills = stats.kills,
+                        deaths = stats.deaths,
+                        damage = stats.damage
                     });
                 }
             }
@@ -173,16 +209,22 @@ namespace Game.Net
                 _entries.Sort(CompareEntries);
             }
 
+            _teamAIconResolved = teamAIcon;
+            _teamBIconResolved = teamBIcon;
+
             if (headerLabel != null)
             {
                 headerLabel.text = _entries.Count > 0 ? $"Players ({_entries.Count})" : "Scoreboard";
             }
 
             ApplyEntries();
+            ApplyTeamIcons();
         }
 
         static int CompareEntries(Entry a, Entry b)
         {
+            int teamCompare = a.team.CompareTo(b.team);
+            if (teamCompare != 0) return teamCompare;
             if (a.isLocal != b.isLocal) return a.isLocal ? -1 : 1;
             int nameCompare = string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase);
             if (nameCompare != 0) return nameCompare;
@@ -201,12 +243,60 @@ namespace Game.Net
                 if (!active) continue;
 
                 var entry = _entries[i];
-                if (row.nameLabel != null) row.nameLabel.text = entry.name;
-                if (row.pingLabel != null) row.pingLabel.text = entry.ping >= 0 ? $"{entry.ping} ms" : "—";
+                if (row.nameLabel != null)
+                {
+                    int healthValue = Mathf.Clamp(entry.health, 0, 999);
+                    row.nameLabel.text = $"{entry.name}  HP:{healthValue.ToString("D3")}";
+                }
+                if (row.pingLabel != null)
+                {
+                    var pingText = entry.ping >= 0 ? $"{entry.ping} ms" : "—";
+                    row.pingLabel.text = $"K:{entry.kills} D:{entry.deaths} DMG:{entry.damage}   {pingText}";
+                }
                 if (row.background != null)
                 {
-                    row.background.color = entry.isLocal ? localHighlight : (i % 2 == 0 ? evenRowColor : oddRowColor);
+                    var baseColor = entry.team == TeamId.A ? evenRowColor : oddRowColor;
+                    row.background.color = entry.isLocal ? localHighlight : baseColor;
                 }
+                if (row.iconImage != null)
+                {
+                    var iconToUse = entry.icon != null ? entry.icon : fallbackIcon;
+                    if (iconToUse != null)
+                    {
+                        row.iconImage.sprite = iconToUse;
+                        row.iconImage.enabled = true;
+                    }
+                    else
+                    {
+                        row.iconImage.sprite = null;
+                        row.iconImage.enabled = false;
+                    }
+                }
+            }
+        }
+
+        void ApplyTeamIcons()
+        {
+            AssignTeamIcon(teamAIconImage, _teamAIconResolved);
+            AssignTeamIcon(teamBIconImage, _teamBIconResolved);
+        }
+
+        void AssignTeamIcon(Image target, Sprite sprite)
+        {
+            if (!target) return;
+            var resolved = sprite ? sprite : fallbackIcon;
+            if (resolved)
+            {
+                target.sprite = resolved;
+                target.enabled = true;
+            }
+            else if (hideTeamIconWhenMissing)
+            {
+                target.enabled = false;
+            }
+            else
+            {
+                target.sprite = null;
             }
         }
 
@@ -216,6 +306,26 @@ namespace Game.Net
             for (int i = _rows.Count; i < needed; i++)
             {
                 _rows.Add(CreateRow(i));
+            }
+        }
+
+        void AutoAssignTeamIconTargets()
+        {
+            var images = GetComponentsInChildren<Image>(true);
+            for (int i = 0; i < images.Length; i++)
+            {
+                var img = images[i];
+                if (!img) continue;
+                var name = img.name;
+                if (teamAIconImage == null && string.Equals(name, "icon image (team 1)", StringComparison.OrdinalIgnoreCase))
+                {
+                    teamAIconImage = img;
+                    continue;
+                }
+                if (teamBIconImage == null && string.Equals(name, "icon image (team 2)", StringComparison.OrdinalIgnoreCase))
+                {
+                    teamBIconImage = img;
+                }
             }
         }
 
@@ -238,12 +348,26 @@ namespace Game.Net
             layout.minHeight = 32f;
             layout.flexibleHeight = 0f;
 
+            var iconGo = new GameObject("Icon", typeof(RectTransform));
+            var iconRect = iconGo.GetComponent<RectTransform>();
+            iconRect.SetParent(rect, false);
+            iconRect.anchorMin = new Vector2(0f, 0f);
+            iconRect.anchorMax = new Vector2(0f, 1f);
+            iconRect.pivot = new Vector2(0f, 0.5f);
+            iconRect.offsetMin = new Vector2(6f, 4f);
+            iconRect.offsetMax = new Vector2(42f, -4f);
+            iconRect.sizeDelta = new Vector2(36f, 0f);
+
+            var iconImage = iconGo.AddComponent<Image>();
+            iconImage.preserveAspect = true;
+            iconImage.raycastTarget = false;
+
             var nameGo = new GameObject("Name", typeof(RectTransform));
             var nameRect = nameGo.GetComponent<RectTransform>();
             nameRect.SetParent(rect, false);
             nameRect.anchorMin = new Vector2(0f, 0f);
             nameRect.anchorMax = new Vector2(0.7f, 1f);
-            nameRect.offsetMin = new Vector2(12f, 4f);
+            nameRect.offsetMin = new Vector2(50f, 4f);
             nameRect.offsetMax = new Vector2(-8f, -4f);
 
             var nameText = nameGo.AddComponent<TextMeshProUGUI>();
@@ -270,6 +394,7 @@ namespace Game.Net
             {
                 root = rect,
                 background = image,
+                iconImage = iconImage,
                 nameLabel = nameText,
                 pingLabel = pingText
             };
@@ -403,10 +528,38 @@ namespace Game.Net
             var header = CreateHeader(rect);
             var rows = CreateRowsRoot(rect);
 
+            var team1 = new GameObject("Icon Image (Team 1)", typeof(RectTransform));
+            var team1Rect = team1.GetComponent<RectTransform>();
+            team1Rect.SetParent(rect, false);
+            team1Rect.anchorMin = new Vector2(0f, 1f);
+            team1Rect.anchorMax = new Vector2(0f, 1f);
+            team1Rect.pivot = new Vector2(0f, 1f);
+            team1Rect.offsetMin = new Vector2(12f, -92f);
+            team1Rect.offsetMax = new Vector2(64f, -40f);
+            var team1Image = team1.AddComponent<Image>();
+            team1Image.preserveAspect = true;
+            team1Image.raycastTarget = false;
+
+            var team2 = new GameObject("Icon Image (Team 2)", typeof(RectTransform));
+            var team2Rect = team2.GetComponent<RectTransform>();
+            team2Rect.SetParent(rect, false);
+            team2Rect.anchorMin = new Vector2(1f, 1f);
+            team2Rect.anchorMax = new Vector2(1f, 1f);
+            team2Rect.pivot = new Vector2(1f, 1f);
+            team2Rect.offsetMin = new Vector2(-64f, -92f);
+            team2Rect.offsetMax = new Vector2(-12f, -40f);
+            var team2Image = team2.AddComponent<Image>();
+            team2Image.preserveAspect = true;
+            team2Image.raycastTarget = false;
+
             var panel = go.AddComponent<MatchScoreboardPanel>();
             panel.canvasGroup = canvasGroup;
             panel.headerLabel = header;
             panel.rowsRoot = rows;
+            panel.teamAIconImage = team1Image;
+            panel.teamBIconImage = team2Image;
+            if (!panel.fallbackIcon)
+                panel.fallbackIcon = Game.Services.ProfileIconLookup.Resolve(null);
             return panel;
         }
     }

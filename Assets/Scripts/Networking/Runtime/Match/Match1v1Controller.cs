@@ -6,6 +6,8 @@ using Game.Net; // use existing GroundClampServer
 using UnityEngine;
 using TMPro;
 using UnityEngine.Rendering;
+using UnityEngine.UI;
+using Game.Services;
 
 namespace Game.Net
 {
@@ -39,6 +41,12 @@ namespace Game.Net
         [SerializeField] private TMP_Text scoreTextA;
         [SerializeField] private TMP_Text scoreTextB;
         [SerializeField] private TMP_Text roundNumberText;
+
+    [Header("Player Icons")]
+    [SerializeField] private Image teamAPlayerIcon;
+    [SerializeField] private Image teamBPlayerIcon;
+    [SerializeField] private Sprite defaultPlayerIcon;
+    [SerializeField] private bool hidePlayerIconWhenMissing = true;
 
         [Header("Win Panel")]
         [SerializeField] private CanvasGroup winPanel;
@@ -157,6 +165,8 @@ namespace Game.Net
 
                 if (returnToLobbyButton)
                     returnToLobbyButton.onClick.AddListener(OnReturnToLobby);
+
+                InvokeRepeating(nameof(RefreshAlwaysOnIcons), 0.5f, 1.0f);
             }
         }
 
@@ -171,6 +181,9 @@ namespace Game.Net
 
             if (returnToLobbyButton)
                 returnToLobbyButton.onClick.RemoveListener(OnReturnToLobby);
+
+            if (IsClient)
+                CancelInvoke(nameof(RefreshAlwaysOnIcons));
 
             if (IsServer) LosVisibilitySystem.Shutdown();
         }
@@ -541,6 +554,7 @@ namespace Game.Net
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
                 pn.ServerAutoEquipPrimary(); // force Primary on start
+                pn.ClearDeathRecapForOwner();
             }
 // Players spawn already holding Primary.
         }
@@ -616,6 +630,7 @@ namespace Game.Net
             else { _winsTeamA.Value++; _winsTeamB.Value++; } // draw => both get a point
 
             ShowRoundEndClientRpc(winnerTeam);
+            ClearDeathRecapsClientRpc();
             StartCoroutine(CoPostRoundFlow());
         }
 
@@ -664,6 +679,7 @@ namespace Game.Net
         {
             StopCinematicClientRpc();
             _state.Value = MatchState.MatchEnd;
+            ClearDeathRecapsClientRpc();
             ShowMatchEndClientRpc(winner);
         }
 
@@ -678,6 +694,12 @@ namespace Game.Net
                     statusText.text = $"Round {_roundNumber.Value} - Draw!";
             }
             ShowCanvas(statusCanvas, true);
+        }
+
+        [ClientRpc]
+        void ClearDeathRecapsClientRpc()
+        {
+            PlayerNetwork.InvokeHideDeathRecap();
         }
 
         [ClientRpc]
@@ -984,6 +1006,62 @@ void DetachCameraFromShip()
 
             // Update required players UI
             if (_requiredPlayersUI) _requiredPlayersUI.text = requiredPlayers.ToString();
+
+            RefreshAlwaysOnIcons();
+        }
+
+        void RefreshAlwaysOnIcons()
+        {
+            if (!IsClient) return;
+
+            Sprite iconA = null;
+            Sprite iconB = null;
+
+            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < players.Length; i++)
+            {
+                var player = players[i];
+                if (!player) continue;
+
+                var sprite = ProfileIconLookup.Resolve(player.GetIconId());
+                if (!sprite) sprite = defaultPlayerIcon;
+
+                switch (player.GetTeam())
+                {
+                    case TeamId.A:
+                        if (iconA == null) iconA = sprite;
+                        break;
+                    case TeamId.B:
+                        if (iconB == null) iconB = sprite;
+                        break;
+                }
+            }
+
+            ApplyAlwaysOnIcon(teamAPlayerIcon, iconA);
+            ApplyAlwaysOnIcon(teamBPlayerIcon, iconB);
+        }
+
+        void ApplyAlwaysOnIcon(Image target, Sprite sprite)
+        {
+            if (!target) return;
+            if (sprite)
+            {
+                target.sprite = sprite;
+                target.enabled = true;
+                return;
+            }
+
+            if (defaultPlayerIcon)
+            {
+                target.sprite = defaultPlayerIcon;
+                target.enabled = true;
+            }
+            else
+            {
+                target.enabled = !hidePlayerIconWhenMissing;
+                if (!target.enabled)
+                    target.sprite = null;
+            }
         }
 
         static void ShowCanvas(CanvasGroup cg, bool show)
@@ -1066,13 +1144,16 @@ void DetachCameraFromShip()
         }
 
         // Public method for external health updates
-        public void UpdatePlayerHealth(ulong clientId, float healthDelta)
+        public void UpdatePlayerHealth(ulong clientId, float healthDelta, ulong attackerClientId = ulong.MaxValue)
         {
             if (!IsServer) return;
             var player = NetworkManager.ConnectedClients.TryGetValue(clientId, out var cc) ? cc.PlayerObject?.GetComponent<PlayerNetwork>() : null;
             if (player == null) return;
-            float newHealth = Mathf.Clamp(player.GetHealth() + healthDelta, 0f, 100f);
-            player.SetHealth(newHealth);
+            PlayerNetwork killer = null;
+            if (attackerClientId != ulong.MaxValue && NetworkManager.ConnectedClients.TryGetValue(attackerClientId, out var killerClient))
+                killer = killerClient.PlayerObject ? killerClient.PlayerObject.GetComponent<PlayerNetwork>() : null;
+
+            player.ApplyHealthDelta(healthDelta, killer);
         }
 
         void StopCoroutineSafe(ref Coroutine co)
