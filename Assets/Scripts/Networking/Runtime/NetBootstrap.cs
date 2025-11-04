@@ -235,63 +235,52 @@ namespace Game.Net
                         string bind = args.GetStr("-bind", Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0");
                         int port = args.GetInt("-port", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp) ? lp : 7777);
 
-                        // Auto-port fallback: try the requested port, then walk up to a max (default 7786)
-                        ushort ParsePort(string key, ushort defVal) =>
-                            ushort.TryParse(UnityEngine.Application.absoluteURL.Contains(key) ? "" : "", out var _tmp) ? _tmp : defVal; // placeholder to keep BEFORE/AFTER small
+                        // Auto-port fallback (server): try requested port then walk up to MAX_PORT
+                        var cmd = new System.Collections.Generic.List<string>(System.Environment.GetCommandLineArgs());
 
-                        var utp = (Unity.Netcode.Transports.UTP.UnityTransport)NetworkManager.Singleton.NetworkConfig.NetworkTransport;
+                        var listenBind = System.Environment.GetEnvironmentVariable("BIND") ?? "0.0.0.0";
+                        ushort basePort = (ushort)(System.Environment.GetEnvironmentVariable("BASE_PORT") is string bp && ushort.TryParse(bp, out var bpp) ? bpp : 7777);
+                        ushort maxPort  = (ushort)(System.Environment.GetEnvironmentVariable("MAX_PORT")  is string mp && ushort.TryParse(mp, out var mpp) ? mpp : 7786);
+                        ushort initial  = (ushort)cmd.GetUShort("-port", basePort);
 
-                        // Read args/env (defaults shown)
-                        var bind       = System.Environment.GetEnvironmentVariable("BIND")        ?? "0.0.0.0";
-                        var basePort   = (ushort)(System.Environment.GetEnvironmentVariable("BASE_PORT")  is string bp && ushort.TryParse(bp, out var bpp) ? bpp : 7777);
-                        var maxPort    = (ushort)(System.Environment.GetEnvironmentVariable("MAX_PORT")   is string mp && ushort.TryParse(mp, out var mpp) ? mpp : 7786);
-                        var publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com";
-                        ushort initial = basePort;
-
-                        // Allow -port and -publicPort overrides from command line
-                        foreach (var arg in System.Environment.GetCommandLineArgs())
-                        {
-                            if (arg.Equals("-port", System.StringComparison.OrdinalIgnoreCase)) { /* next token read below */ }
-                        }
-                        var args = new System.Collections.Generic.List<string>(System.Environment.GetCommandLineArgs());
-                        int idx = args.FindIndex(s => s.Equals("-port", System.StringComparison.OrdinalIgnoreCase));
-                        if (idx >= 0 && idx + 1 < args.Count && ushort.TryParse(args[idx + 1], out var cliPort))
-                            initial = cliPort;
+                        var transport = (Unity.Netcode.Transports.UTP.UnityTransport)NetworkManager.Singleton.NetworkConfig.NetworkTransport;
 
                         ushort chosen = 0;
                         for (ushort p = initial; p <= maxPort; p++)
                         {
-                            utp.SetConnectionData(listenAddress: bind, port: p);
+                            // Server listen bind
+                            transport.SetConnectionData(listenBind, p);   // address, port
                             if (NetworkManager.Singleton.StartServer())
                             {
                                 chosen = p;
-                                Debug.Log($"[DirectNet] Bound {bind}:{chosen} (auto-range {initial}-{maxPort})");
+                                UnityEngine.Debug.Log($"[DirectNet] Bound {listenBind}:{chosen} (range {initial}-{maxPort})");
                                 break;
                             }
-                            Debug.LogWarning($"[DirectNet] Port {p} busy, trying next...");
+                            UnityEngine.Debug.LogWarning($"[DirectNet] Port {p} busy, trying next...");
                         }
 
-                        // Bail if none worked
                         if (chosen == 0)
                         {
-                            Debug.LogError($"[NetBootstrap] StartServer failed across range {initial}-{maxPort}. No free UDP port.");
+                            UnityEngine.Debug.LogError($"[NetBootstrap] StartServer failed across range {initial}-{maxPort}. No free UDP port.");
                             return;
                         }
 
-                        // TODO: publish chosen port + endpoints to Lobby metadata:
-                        // PublicHost=publicHost, PublicPort=chosen, LanEndpoint={LAN_HOST}:{chosen}, Region=<ZA>, etc.
+                        // Read hosts for Lobby publish (if your advertiser uses them)
+                        var publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com");
+                        var lanHost    = cmd.Get("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
+                        // TODO: Publish PublicHost=publicHost, PublicPort=chosen, LanEndpoint=$"{lanHost}:{chosen}", Region=<ZA>.
 
                         // Build lobby metadata for discovery only
-                        string publicHost = args.GetStr("-publicHost", Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
-                        int publicPort = args.GetInt("-publicPort", int.TryParse(Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var pp) ? pp : port);
+                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
+                        int publicPort = (int)cmd.GetUShort("-publicPort", chosen);
                         // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
-                        string lanHost = args.GetStr("-lanHost", Environment.GetEnvironmentVariable("LAN_HOST") ?? bind);
+                        lanHost = cmd.Get("-lanHost", System.Environment.GetEnvironmentVariable("LAN_HOST") ?? listenBind);
                         if (lanHost == "0.0.0.0" || lanHost == "127.0.0.1")
                         {
                             var auto = ResolveLocalIPv4();
                             if (!string.IsNullOrWhiteSpace(auto)) lanHost = auto;
                         }
-                        int lanPort = args.GetInt("-lanPort", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp2) ? lp2 : port);
+                        int lanPort = (int)cmd.GetUShort("-lanPort", chosen);
 
                         var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);
                         var lobbyOptions = new CreateLobbyOptions
