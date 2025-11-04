@@ -235,14 +235,51 @@ namespace Game.Net
                         string bind = args.GetStr("-bind", Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0");
                         int port = args.GetInt("-port", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp) ? lp : 7777);
 
-                        // Configure UTP to listen
-                        utp.SetConnectionData(bind, (ushort)port, bind);
+                        // Auto-port fallback: try the requested port, then walk up to a max (default 7786)
+                        ushort ParsePort(string key, ushort defVal) =>
+                            ushort.TryParse(UnityEngine.Application.absoluteURL.Contains(key) ? "" : "", out var _tmp) ? _tmp : defVal; // placeholder to keep BEFORE/AFTER small
 
-                        if (!nm.StartServer())
+                        var utp = (Unity.Netcode.Transports.UTP.UnityTransport)NetworkManager.Singleton.NetworkConfig.NetworkTransport;
+
+                        // Read args/env (defaults shown)
+                        var bind       = System.Environment.GetEnvironmentVariable("BIND")        ?? "0.0.0.0";
+                        var basePort   = (ushort)(System.Environment.GetEnvironmentVariable("BASE_PORT")  is string bp && ushort.TryParse(bp, out var bpp) ? bpp : 7777);
+                        var maxPort    = (ushort)(System.Environment.GetEnvironmentVariable("MAX_PORT")   is string mp && ushort.TryParse(mp, out var mpp) ? mpp : 7786);
+                        var publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com";
+                        ushort initial = basePort;
+
+                        // Allow -port and -publicPort overrides from command line
+                        foreach (var arg in System.Environment.GetCommandLineArgs())
                         {
-                            Debug.LogError("[NetBootstrap] StartServer failed.");
+                            if (arg.Equals("-port", System.StringComparison.OrdinalIgnoreCase)) { /* next token read below */ }
+                        }
+                        var args = new System.Collections.Generic.List<string>(System.Environment.GetCommandLineArgs());
+                        int idx = args.FindIndex(s => s.Equals("-port", System.StringComparison.OrdinalIgnoreCase));
+                        if (idx >= 0 && idx + 1 < args.Count && ushort.TryParse(args[idx + 1], out var cliPort))
+                            initial = cliPort;
+
+                        ushort chosen = 0;
+                        for (ushort p = initial; p <= maxPort; p++)
+                        {
+                            utp.SetConnectionData(listenAddress: bind, port: p);
+                            if (NetworkManager.Singleton.StartServer())
+                            {
+                                chosen = p;
+                                Debug.Log($"[DirectNet] Bound {bind}:{chosen} (auto-range {initial}-{maxPort})");
+                                break;
+                            }
+                            Debug.LogWarning($"[DirectNet] Port {p} busy, trying next...");
+                        }
+
+                        // Bail if none worked
+                        if (chosen == 0)
+                        {
+                            Debug.LogError($"[NetBootstrap] StartServer failed across range {initial}-{maxPort}. No free UDP port.");
                             return;
                         }
+
+                        // TODO: publish chosen port + endpoints to Lobby metadata:
+                        // PublicHost=publicHost, PublicPort=chosen, LanEndpoint={LAN_HOST}:{chosen}, Region=<ZA>, etc.
 
                         // Build lobby metadata for discovery only
                         string publicHost = args.GetStr("-publicHost", Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
