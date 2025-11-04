@@ -11,6 +11,7 @@ namespace UI.Scripts
     {
         [Header("Panel Reference")]
         [SerializeField] private SlidingPanel targetPanel;
+        [SerializeField] private SlidingPanel oppositePanelToClose;
 
         [Header("Image References")]
         [SerializeField] private Image buttonImage;
@@ -167,6 +168,12 @@ namespace UI.Scripts
                 StopCoroutine(clickFlashCoroutine);
             }
             clickFlashCoroutine = StartCoroutine(ClickFlashEffect());
+
+            // Close opposite panel first (if assigned)
+            if (oppositePanelToClose != null && oppositePanelToClose.IsOpen())
+            {
+                oppositePanelToClose.ClosePanel();
+            }
 
             // Open the panel
             targetPanel.OpenPanel();

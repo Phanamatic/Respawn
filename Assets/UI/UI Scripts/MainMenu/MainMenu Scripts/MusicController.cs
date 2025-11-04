@@ -151,9 +151,9 @@ namespace UI.Scripts
 
         private void Update()
         {
-            // Continuously apply current multiplier to respect user volume changes
-            // This ensures slider changes are always reflected immediately
-            if (_audioSource != null && !_isTransitioning)
+            // Only apply volume changes if dynamic volume is enabled
+            // This prevents overriding user's manual slider adjustments
+            if (_audioSource != null && !_isTransitioning && enableDynamicVolume)
             {
                 float targetVolume = AudioManager.Instance.GetEffectiveMusicVolume() * _currentMultiplier;
                 _audioSource.volume = targetVolume;
@@ -169,6 +169,8 @@ namespace UI.Scripts
 
             if (enabled && _volumeCycleCoroutine == null && gameObject.activeInHierarchy)
             {
+                // Reset multiplier to normal when re-enabling
+                _currentMultiplier = 1f;
                 _volumeCycleCoroutine = StartCoroutine(VolumeCycleRoutine());
             }
             else if (!enabled && _volumeCycleCoroutine != null)
@@ -176,8 +178,11 @@ namespace UI.Scripts
                 StopCoroutine(_volumeCycleCoroutine);
                 _volumeCycleCoroutine = null;
 
-                // Return this audio source to normal volume
-                _audioSource.volume = AudioManager.Instance.GetEffectiveMusicVolume();
+                // Reset multiplier to 1.0 so when re-enabled, it starts at normal volume
+                _currentMultiplier = 1f;
+
+                // DON'T touch the volume - let GameSettings control it entirely
+                // The Update() loop is already disabled by the enableDynamicVolume check
             }
         }
     }
