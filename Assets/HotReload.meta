@@ -1,5 +1,9 @@
 fileFormatVersion: 2
+<<<<<<<< HEAD:Assets/HotReload.meta
 guid: e01b01f59a1753c47abfcf368b1cfac6
+========
+guid: 6ea66e842b0b6cc4ab987cf02b32bf23
+>>>>>>>> AccountMenuUpdates:Assets/UI/Mouse.meta
 folderAsset: yes
 DefaultImporter:
   externalObjects: {}

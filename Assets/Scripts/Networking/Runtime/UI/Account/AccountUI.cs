@@ -246,6 +246,7 @@ namespace Game.UI.Account
             _iconSaved = ok;
         }
 
+<<<<<<< HEAD
         async Task CacheIdentityAsync(string iconOverride = null)
         {
             string displayName = await Game.Services.PlayerIdentityState.EnsureDisplayNameAsync();
@@ -255,10 +256,16 @@ namespace Game.UI.Account
             Game.Services.PlayerIdentityState.SetLocal(displayName, iconId);
         }
 
+=======
+>>>>>>> AccountMenuUpdates
         void ToggleMute()
         {
             _isMuted = !_isMuted;
 
+<<<<<<< HEAD
+=======
+            // Mute/unmute the music audio source
+>>>>>>> AccountMenuUpdates
             if (musicAudioSource != null)
             {
                 musicAudioSource.mute = _isMuted;
@@ -270,9 +277,23 @@ namespace Game.UI.Account
         void UpdateMuteButton()
         {
             if (muteButtonImage == null) return;
+<<<<<<< HEAD
             muteButtonImage.sprite = _isMuted ? muteSprite : unmuteSprite;
         }
 // Resolved merge conflict: kept CacheIdentityAsync and incorporated mute UI handlers used by Awake().
+=======
+
+            // Show mute sprite when muted, unmute sprite when not muted
+            if (_isMuted)
+            {
+                muteButtonImage.sprite = muteSprite;
+            }
+            else
+            {
+                muteButtonImage.sprite = unmuteSprite;
+            }
+        }
+>>>>>>> AccountMenuUpdates
 
         // ---------- Dev quick test: sign in then join first open 1v1 server ----------
         async Task DevLoginAndJoin(string email, string password)
