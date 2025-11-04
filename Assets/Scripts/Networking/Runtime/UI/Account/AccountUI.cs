@@ -119,10 +119,10 @@ namespace Game.UI.Account
             if (crToSignInButton) crToSignInButton.onClick.AddListener(() => Show(true));
 
             // mute button
-            if (muteButton) muteButton.onClick.AddListener(ToggleMute);
+            // if (muteButton) muteButton.onClick.AddListener(ToggleMute);
 
             BuildIconList(); // populate profile icons
-            UpdateMuteButton(); // set initial mute button state
+            // UpdateMuteButton(); // set initial mute button state
             Show(true); // default to Sign In
         }
 
@@ -152,7 +152,7 @@ namespace Game.UI.Account
 
                 siStatus.text = "OK";
                 await TrySaveSelectedIconAsync();
-                await CacheIdentityAsync(_selectedIconId);
+                // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();
             }
             catch (Exception e)
@@ -186,7 +186,7 @@ namespace Game.UI.Account
 
                 crStatus.text = "OK";
                 await TrySaveSelectedIconAsync();
-                await CacheIdentityAsync(_selectedIconId);
+                // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();
             }
             catch (Exception e)
@@ -246,26 +246,20 @@ namespace Game.UI.Account
             _iconSaved = ok;
         }
 
-<<<<<<< HEAD
-        async Task CacheIdentityAsync(string iconOverride = null)
-        {
-            string displayName = await Game.Services.PlayerIdentityState.EnsureDisplayNameAsync();
-            string iconId = string.IsNullOrWhiteSpace(iconOverride)
-                ? await Game.Services.PlayerIdentityState.EnsureIconIdAsync()
-                : iconOverride.Trim();
-            Game.Services.PlayerIdentityState.SetLocal(displayName, iconId);
-        }
+        // async Task CacheIdentityAsync(string iconOverride = null)
+        // {
+        //     string displayName = await Game.Services.PlayerIdentityState.EnsureDisplayNameAsync();
+        //     string iconId = string.IsNullOrWhiteSpace(iconOverride)
+        //         ? await Game.Services.PlayerIdentityState.EnsureIconIdAsync()
+        //         : iconOverride.Trim();
+        //     Game.Services.PlayerIdentityState.SetLocal(displayName, iconId);
+        // }
 
-=======
->>>>>>> AccountMenuUpdates
         void ToggleMute()
         {
             _isMuted = !_isMuted;
 
-<<<<<<< HEAD
-=======
             // Mute/unmute the music audio source
->>>>>>> AccountMenuUpdates
             if (musicAudioSource != null)
             {
                 musicAudioSource.mute = _isMuted;
@@ -277,11 +271,6 @@ namespace Game.UI.Account
         void UpdateMuteButton()
         {
             if (muteButtonImage == null) return;
-<<<<<<< HEAD
-            muteButtonImage.sprite = _isMuted ? muteSprite : unmuteSprite;
-        }
-// Resolved merge conflict: kept CacheIdentityAsync and incorporated mute UI handlers used by Awake().
-=======
 
             // Show mute sprite when muted, unmute sprite when not muted
             if (_isMuted)
@@ -293,7 +282,6 @@ namespace Game.UI.Account
                 muteButtonImage.sprite = unmuteSprite;
             }
         }
->>>>>>> AccountMenuUpdates
 
         // ---------- Dev quick test: sign in then join first open 1v1 server ----------
         async Task DevLoginAndJoin(string email, string password)
@@ -315,7 +303,7 @@ namespace Game.UI.Account
 
                 // Save chosen icon if any, but do NOT switch scenes
                 await TrySaveSelectedIconAsync();
-                await CacheIdentityAsync(_selectedIconId);
+                // await CacheIdentityAsync(_selectedIconId);
 
                 // Ensure UGS is ready for Lobby queries
                 if (siStatus) siStatus.text = "UGS init...";
