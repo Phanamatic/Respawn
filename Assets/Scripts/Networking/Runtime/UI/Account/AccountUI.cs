@@ -59,8 +59,15 @@ namespace Game.UI.Account
         [SerializeField] Sprite[] availableIcons;            // assign in Inspector
         [SerializeField] Image selectedIconPreview;          // optional preview
 
+        [Header("Audio Settings")]
+        [SerializeField] Button muteButton;
+        [SerializeField] Image muteButtonImage;
+        [SerializeField] Sprite muteSprite;
+        [SerializeField] Sprite unmuteSprite;
+        [SerializeField] AudioSource musicAudioSource;
+
         [Header("On Success")]
-        [SerializeField] string nextScene = "MainMenu";
+        [SerializeField] string nextScene = "Loading Screen";
 
         [Header("Dev Quick Test")]
         [SerializeField] Button devSignIn1Button;
@@ -76,6 +83,7 @@ namespace Game.UI.Account
         string _selectedIconId;              // holds chosen icon before sign-in
         bool _iconSaved;                     // avoid double saves
         bool _devJoinInFlight;               // prevent overlapping quick-join attempts
+        bool _isMuted = false;               // track mute state
 
         void Awake()
         {
@@ -110,7 +118,11 @@ namespace Game.UI.Account
             if (siToCreateButton) siToCreateButton.onClick.AddListener(() => Show(false));
             if (crToSignInButton) crToSignInButton.onClick.AddListener(() => Show(true));
 
+            // mute button
+            if (muteButton) muteButton.onClick.AddListener(ToggleMute);
+
             BuildIconList(); // populate profile icons
+            UpdateMuteButton(); // set initial mute button state
             Show(true); // default to Sign In
         }
 
@@ -237,9 +249,30 @@ namespace Game.UI.Account
         async Task CacheIdentityAsync(string iconOverride = null)
         {
             string displayName = await Game.Services.PlayerIdentityState.EnsureDisplayNameAsync();
-            string iconId = string.IsNullOrWhiteSpace(iconOverride) ? await Game.Services.PlayerIdentityState.EnsureIconIdAsync() : iconOverride.Trim();
+            string iconId = string.IsNullOrWhiteSpace(iconOverride)
+                ? await Game.Services.PlayerIdentityState.EnsureIconIdAsync()
+                : iconOverride.Trim();
             Game.Services.PlayerIdentityState.SetLocal(displayName, iconId);
         }
+
+        void ToggleMute()
+        {
+            _isMuted = !_isMuted;
+
+            if (musicAudioSource != null)
+            {
+                musicAudioSource.mute = _isMuted;
+            }
+
+            UpdateMuteButton();
+        }
+
+        void UpdateMuteButton()
+        {
+            if (muteButtonImage == null) return;
+            muteButtonImage.sprite = _isMuted ? muteSprite : unmuteSprite;
+        }
+// Resolved merge conflict: kept CacheIdentityAsync and incorporated mute UI handlers used by Awake().
 
         // ---------- Dev quick test: sign in then join first open 1v1 server ----------
         async Task DevLoginAndJoin(string email, string password)
