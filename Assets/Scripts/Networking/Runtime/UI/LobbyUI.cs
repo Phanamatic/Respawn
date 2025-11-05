@@ -6,6 +6,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -207,8 +209,8 @@ namespace Game.Net
         }
 
         // ---------- Play actions (Unity Lobby matchmaking with direct endpoints) ----------
-        private void QueueFor1v1() => StartCoroutine(JoinMatch("OneVOne"));
-        private void QueueFor2v2() => StartCoroutine(JoinMatch("TwoVTwo"));
+        private void QueueFor1v1() => StartCoroutine(JoinMatch("1v1"));
+        private void QueueFor2v2() => StartCoroutine(JoinMatch("2v2"));
 
         private IEnumerator JoinMatch(string serverType)
         {
@@ -225,7 +227,7 @@ namespace Game.Net
                 yield break;
             }
 
-            SetPlayStatus($"Finding {(serverType == "OneVOne" ? "1v1" : "2v2")} match...");
+            SetPlayStatus($"Finding {serverType} match...");
 
             // Query Unity Lobby service for matches
             List<Lobby> availableMatches = null;
@@ -260,7 +262,7 @@ namespace Game.Net
 
             if (availableMatches == null || availableMatches.Count == 0)
             {
-                SetPlayStatus($"No {(serverType == "OneVOne" ? "1v1" : "2v2")} matches available.");
+                SetPlayStatus($"No {serverType} matches available.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
@@ -308,7 +310,16 @@ namespace Game.Net
 
             IEnumerator TryConnect(string host, int prt, float seconds)
             {
-                utp.SetConnectionData(host, (ushort)prt);
+                string resolvedHost = host;
+                try
+                {
+                    var addresses = Dns.GetHostAddresses(host);
+                    var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
+                    if (ipv4 != null) resolvedHost = ipv4.ToString();
+                }
+                catch { }
+
+                utp.SetConnectionData(resolvedHost, (ushort)prt);
                 if (!nm.StartClient())
                 {
                     yield break;
