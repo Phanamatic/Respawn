@@ -477,6 +477,7 @@ namespace Game.Net
                 string serverName      = GetArg("-serverName", $"{sceneName}_{GetArg("-port", "7777")}");
                 string region          = GetArg("-region", System.Environment.GetEnvironmentVariable("REGION") ?? "ZA");
 
+                // Server endpoints (prefer env vars; fall back to DDNS + fixed LAN)
                 string publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? GetArg("-publicHost", "respawnserver.tplinkdns.com");
                 int    publicPort = int.TryParse(System.Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var p1) ? p1 : int.Parse(GetArg("-port", "7777"));
                 string lanHost    = System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? GetArg("-lanHost", "192.168.0.150");
@@ -485,6 +486,15 @@ namespace Game.Net
                 // Resolve a real LAN IP if someone passed 0.0.0.0 (not connectable)
                 if (string.IsNullOrWhiteSpace(lanHost) || lanHost == "0.0.0.0")
                     lanHost = ResolveLocalLanIPv4() ?? "192.168.0.150";
+
+                // Normalized server kind (used for S1 indexing)
+                string serverTypeArg = GetArg("-serverType", "lobby").ToLowerInvariant();
+                string lobbyKind = serverTypeArg switch
+                {
+                    "1v1" => "1v1",
+                    "2v2" => "2v2",
+                    _     => "Lobby"
+                };
 
                 // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
                 if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)
@@ -540,30 +550,20 @@ namespace Game.Net
                 }
 
                 // 4) Create/advertise a Lobby with endpoint keys
-                // Derive "kind" for discovery (Lobby / 1v1 / 2v2)
-                // -serverType comes from QuickBuildAndRun (e.g., "lobby","1v1","2v2")
-                string serverTypeArg = GetArg("-serverType", "lobby").ToLowerInvariant();
-                string lobbyKind = serverTypeArg switch
-                {
-                    "1v1" => "1v1",
-                    "2v2" => "2v2",
-                    _     => "Lobby"
-                };
 
                 // Compose data directly here to avoid stale copies.
-                var createOpts = new CreateLobbyOptions
+                var data = new Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
                 {
-                    IsPrivate = false,
-                    Data = new System.Collections.Generic.Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
-                    {
-                        ["S1"]           = new DataObject(DataObject.VisibilityOptions.Public, lobbyKind),
-                        ["PublicHost"]   = new DataObject(DataObject.VisibilityOptions.Public, publicHost),
-                        ["PublicPort"]   = new DataObject(DataObject.VisibilityOptions.Public, publicPort.ToString()),
-                        ["LanEndpoint"]  = new DataObject(DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
-                        ["Region"]       = new DataObject(DataObject.VisibilityOptions.Public, region),
-                        ["Build"]        = new DataObject(DataObject.VisibilityOptions.Public, Application.version ?? "dev")
-                    }
+                    // IMPORTANT: Use IndexOptions.S1 & S2 so client Query(S1 == "Lobby") works,
+                    // and so 1v1/2v2 don't pollute the Lobby list.
+                    ["ServerType"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, lobbyKind, Unity.Services.Lobbies.Models.DataObject.IndexOptions.S1),
+                    ["Region"]     = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, region,     Unity.Services.Lobbies.Models.DataObject.IndexOptions.S2),
+                    ["PublicHost"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicHost),
+                    ["PublicPort"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicPort.ToString()),
+                    ["LanEndpoint"]= new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                    ["Build"]      = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, Application.version ?? "dev"),
                 };
+                var createOpts = new CreateLobbyOptions { IsPrivate = false, Data = data };
 
                 int maxPlayers = int.TryParse(GetArg("-max", "32"), out var m) ? m : 32;
 
@@ -581,7 +581,7 @@ namespace Game.Net
                 }
 
                 lobby = createTask.Result;
-                Debug.Log($"[DirectNet] Hosting Lobby. LobbyId={lobby?.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort}");
+                Debug.Log($"[DirectNet] Hosting Lobby. LobbyId={lobby?.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort} • S1={lobbyKind} S2={region}");
 
                 // 5) Heartbeat while running
                 if (!string.IsNullOrEmpty(lobby?.Id))
