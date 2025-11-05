@@ -59,6 +59,18 @@ namespace Game.Net
             return baseSeconds * f;
         }
 
+        void Awake()
+        {
+            // Disable the entire menu when running headless/batch so server builds don't run client UI.
+            if (Application.isBatchMode || SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+            {
+                var canvases = GetComponentsInChildren<Canvas>(true);
+                foreach (var c in canvases) c.enabled = false;
+                enabled = false;
+                return;
+            }
+        }
+
         private void OnEnable()
         {
             if (playButton) playButton.onClick.AddListener(OnPlayClicked);
@@ -436,7 +448,42 @@ namespace Game.Net
 
             s_LobbyCache = task.Result.Results ?? new List<Lobby>();
             s_LobbyCacheAt = Time.unscaledTimeAsDouble;
+
+            // If the filtered query returned nothing, run a one-shot, unfiltered diagnostic.
+            if ((s_LobbyCache == null || s_LobbyCache.Count == 0))
+            {
+                StartCoroutine(DiagnosticLobbyScanOnce());
+                // Nudge the UI so the user knows to check project/env.
+                if (openLobbiesText) openLobbiesText.text = $"Open Lobbies (0) • Check Project/Env";
+            }
             SetOpenCountText(s_LobbyCache);
+        }
+
+        // Single diagnostic pass: no filters, logs what we can see.
+        private IEnumerator DiagnosticLobbyScanOnce()
+        {
+            yield return ThrottleLobbyRead();
+            var diag = new QueryLobbiesOptions { Count = 10 };
+            var t = LobbyService.Instance.QueryLobbiesAsync(diag);
+            yield return new WaitUntil(() => t.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (t.Exception != null) yield break;
+
+            var list = t.Result.Results ?? new List<Lobby>();
+            if (list.Count > 0)
+            {
+                Debug.Log($"[MainMenu] Diagnostic: {list.Count} lobby/lobbies visible in project {Application.cloudProjectId}.");
+                foreach (var l in list)
+                {
+                    string s1 = l.Data != null && l.Data.TryGetValue("ServerType", out var d1) ? d1.Value : "(none)";
+                    string s2 = l.Data != null && l.Data.TryGetValue("Region", out var d2) ? d2.Value : "(none)";
+                    int joined = (l.MaxPlayers >= 0 && l.AvailableSlots >= 0)
+                        ? (l.MaxPlayers - l.AvailableSlots)
+                        : (l.Players != null ? l.Players.Count : 0);
+                    Debug.Log($"[MainMenu] • {l.Name} Id={l.Id} Slots={joined}/{l.MaxPlayers} S1(ServerType)={s1} S2(Region)={s2}");
+                }
+            }
         }
 
         private void SetOpenCountText(List<Lobby> lobbies)

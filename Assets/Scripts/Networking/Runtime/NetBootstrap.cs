@@ -172,7 +172,15 @@ namespace Game.Net
                 }
                 Debug.Log("[NetBootstrap] UGS initialized successfully.");
 
-                // Wait for NetworkManager + UnityTransport
+                // Headless server path: load scene, start NGO server, then publish a lobby.
+                if (Application.isBatchMode || HasArg("-headless") || HasArg("-serverName"))
+                {
+                    StartCoroutine(HeadlessServerFlow());
+                    // Do not continue into any client path below.
+                    return;
+                }
+
+                // ... (original client/editor flow continues)
                 NetworkManager nm = null;
                 UnityTransport utp = null;
 
@@ -417,6 +425,144 @@ namespace Game.Net
                     Debug.LogWarning("[NetBootstrap] Prefab sanitize skipped: " + e.Message);
                 }
             }
+
+            static bool HasArg(string flag)
+            {
+                var args = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < args.Length; i++)
+                    if (string.Equals(args[i], flag, System.StringComparison.OrdinalIgnoreCase))
+                        return true;
+                return false;
+            }
+            static string GetArg(string key, string @default = "")
+            {
+                var args = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < args.Length - 1; i++)
+                    if (string.Equals(args[i], key, System.StringComparison.OrdinalIgnoreCase))
+                        return args[i + 1];
+                return @default;
+            }
+
+            private System.Collections.IEnumerator HeadlessServerFlow()
+            // Use the non-generic IEnumerator for Unity coroutines.
+            {
+                // 1) Decide scenes & server metadata
+                string sceneName       = GetArg("-scene", "Lobby");          // gameplay scene (Lobby/Match_1v1/Match_2v2)
+                string bootstrapScene  = GetArg("-bootstrapScene", "Account"); // holds the NetworkManager (DontDestroyOnLoad)
+                string serverName      = GetArg("-serverName", $"{sceneName}_{GetArg("-port", "7777")}");
+                string region          = GetArg("-region", System.Environment.GetEnvironmentVariable("REGION") ?? "ZA");
+
+                string publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? GetArg("-publicHost", "respawnserver.tplinkdns.com");
+                int    publicPort = int.TryParse(System.Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var p1) ? p1 : int.Parse(GetArg("-port", "7777"));
+                string lanHost    = System.Environment.GetEnvironmentVariable("LAN_HOST") ?? GetArg("-lanHost", "192.168.0.150");
+                int    lanPort    = int.TryParse(System.Environment.GetEnvironmentVariable("LAN_PORT"), out var p2) ? p2 : publicPort;
+
+                // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
+                if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)
+                {
+                    Debug.Log($"[Bootstrap] Loading bootstrap scene (with NetworkManager): {bootstrapScene}");
+                    yield return UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(bootstrapScene, UnityEngine.SceneManagement.LoadSceneMode.Single);
+                }
+
+                // 3) Wait for NetworkManager from the bootstrap scene
+                float t0 = Time.realtimeSinceStartup;
+                while (NetworkManager.Singleton == null && Time.realtimeSinceStartup - t0 < 10f)
+                    yield return null;
+
+                if (NetworkManager.Singleton == null)
+                {
+                    Debug.LogError("[Bootstrap] No NetworkManager found after loading bootstrap scene. Server cannot start.");
+                    yield break;
+                }
+
+                // Make extra sure it survives the next scene load (in case the prefab isn't already NNDO).
+                DontDestroyOnLoad(NetworkManager.Singleton.gameObject);
+
+                // 4) Load the target gameplay scene AFTER NetworkManager exists
+                if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != sceneName)
+                {
+                    Debug.Log($"[Bootstrap] Loading server gameplay scene: {sceneName}");
+                    yield return UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(sceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
+                }
+
+                // Apply UTP listen bind/port (server)
+                var utp = NetworkManager.Singleton.NetworkConfig.NetworkTransport as Unity.Netcode.Transports.UTP.UnityTransport;
+                if (utp != null)
+                {
+                    // Bind to all adapters on given port; payload MTU ~1200 WAN-safe
+                    ushort port = (ushort)publicPort;
+                    utp.SetConnectionData("0.0.0.0", port, "0.0.0.0");
+                    utp.MaxSendQueueSize = 1024 * 1024;
+                    utp.MaxPacketQueueSize = 1024;
+                }
+
+                Debug.Log("[Bootstrap] Starting NGO Server…");
+                if (!NetworkManager.Singleton.StartServer())
+                {
+                    Debug.LogError("[Bootstrap] Failed to start NGO Server.");
+                    yield break;
+                }
+
+                // Confirm we're actually running as server before advertising.
+                if (!NetworkManager.Singleton.IsServer)
+                {
+                    Debug.LogError("[Bootstrap] Not in server mode after StartServer(). Aborting lobby advertise.");
+                    yield break;
+                }
+
+                // 4) Create/advertise a Lobby with endpoint keys
+                var data = new Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
+                {
+                    ["ServerType"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, "Lobby", Unity.Services.Lobbies.Models.DataObject.IndexOptions.S1),
+                    ["Region"]     = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, region, Unity.Services.Lobbies.Models.DataObject.IndexOptions.S2),
+                    ["PublicHost"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicHost),
+                    ["PublicPort"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicPort.ToString()),
+                    ["LanEndpoint"]= new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                };
+
+                int maxPlayers = int.TryParse(GetArg("-max", "32"), out var m) ? m : 32;
+
+                Lobby lobby = null;
+                var createOpts = new CreateLobbyOptions
+                {
+                    IsPrivate = false,
+                    Data = data,
+                };
+
+                // Kick off async create and yield until it finishes (coroutine-friendly).
+                var createTask = Unity.Services.Lobbies.LobbyService.Instance.CreateLobbyAsync(serverName, maxPlayers, createOpts);
+                while (!createTask.IsCompleted) yield return null;
+
+                if (createTask.Exception != null)
+                {
+                    var ex = createTask.Exception.InnerException ?? createTask.Exception;
+                    Debug.LogError($"[DirectNet] CreateLobby failed: {ex.Message}");
+                    yield break;
+                }
+
+                lobby = createTask.Result;
+                Debug.Log($"[DirectNet] Hosting Lobby. LobbyId={lobby?.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort}");
+
+                // 5) Heartbeat while running
+                if (!string.IsNullOrEmpty(lobby?.Id))
+                    StartCoroutine(LobbyHeartbeatLoop(lobby.Id));
+            }
+
+            // Wrapper to use async Lobby API inside coroutine flow.
+            private System.Threading.Tasks.Task<Lobby> awaitable_CreateLobby(string name, int max, CreateLobbyOptions opts)
+                => Unity.Services.Lobbies.LobbyService.Instance.CreateLobbyAsync(name, max, opts);
+
+            private System.Collections.IEnumerator LobbyHeartbeatLoop(string lobbyId)
+            // Use the non-generic IEnumerator for Unity coroutines.
+            {
+                var wait = new WaitForSecondsRealtime(15f);
+                while (!string.IsNullOrEmpty(lobbyId))
+                {
+                    var task = Unity.Services.Lobbies.LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
+                    while (!task.IsCompleted) yield return null;
+                    yield return wait;
+                }
+            }
         }
     }
 
@@ -468,7 +614,10 @@ namespace Game.Net
                 }
 
                 IsReady = true;
+                // Extra banner for quick server/client side-by-side comparison.
                 Debug.Log($"[UGS] Init OK. ProjectId={Application.cloudProjectId}, Env={environmentName}, Profile={profile}, PlayerId={AuthenticationService.Instance.PlayerId}");
+                // Keep a short tag so it's easy to grep in logs.
+                Debug.Log($"[Bootstrap] UGS: ProjectId={Application.cloudProjectId} Env={environmentName} Profile={profile}");
             }
             catch (Exception ex)
             {

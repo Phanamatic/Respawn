@@ -148,7 +148,14 @@ public static class QuickBuildAndRun
         var lanHost    = Environment.GetEnvironmentVariable("LAN_HOST")    ?? "0.0.0.0";
         var pubPort    = publicPort > 0 ? publicPort : port;
 
-        return $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} " +
+        // Ensure the server loads the Account scene first (has NetworkManager) before the gameplay scene.
+        // Also tag each instance with a stable serverName for logs/UGS.
+        var serverName = $"{type}_{port}";
+
+        return $"-batchmode -nographics -mpsHost " +
+               $"-bootstrapScene Account -scene {scene} " +
+               $"-serverType {type} -serverName {serverName} -max {max} " +
+               $"-env {env} -profile {ServerProfile} -region {DefaultRegion} " +
                $"-bind 0.0.0.0 -port {port} " +
                $"-lanHost {lanHost} -lanPort {port} " +
                $"-publicHost {publicHost} -publicPort {pubPort} " +
