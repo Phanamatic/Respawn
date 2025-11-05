@@ -278,8 +278,9 @@ namespace Game.Net
                         var lanHost    = cmd.Get("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
                         // TODO: Publish PublicHost=publicHost, PublicPort=chosen, LanEndpoint=$"{lanHost}:{chosen}", Region=<ZA>.
 
-                        // Build lobby metadata for discovery only
-                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
+                        // Build lobby metadata for discovery only (do not fall back to loopback)
+                        // Keep previously resolved publicHost (DDNS/env/CLI), only override if explicitly passed again.
+                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? publicHost);
                         int publicPort = (int)cmd.GetUShort("-publicPort", chosen);
                         // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
                         lanHost = cmd.Get("-lanHost", System.Environment.GetEnvironmentVariable("LAN_HOST") ?? listenBind);
