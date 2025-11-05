@@ -144,8 +144,9 @@ public static class QuickBuildAndRun
     // Direct hosting: bind+port, publish explicit LAN/Public endpoints used by clients (no Relay).
     private static string ArgsForServer(string type, int max, string scene, string env, string logfile, int port, int publicPort = 0)
     {
-        var publicHost = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1";
-        var lanHost    = Environment.GetEnvironmentVariable("LAN_HOST")    ?? "0.0.0.0";
+        // Prefer env vars; fall back to your DDNS + fixed LAN as per hosting prerequisites.
+        var publicHost = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com";
+        var lanHost    = Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150";
         var pubPort    = publicPort > 0 ? publicPort : port;
 
         // Ensure the server loads the Account scene first (has NetworkManager) before the gameplay scene.

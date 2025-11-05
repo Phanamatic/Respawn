@@ -443,6 +443,31 @@ namespace Game.Net
                 return @default;
             }
 
+            private static string ResolveLocalLanIPv4()
+            {
+                try
+                {
+                    var all = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
+                    foreach (var nic in all)
+                    {
+                        if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                        var ipProps = nic.GetIPProperties();
+                        foreach (var ua in ipProps.UnicastAddresses)
+                        {
+                            var ip = ua.Address;
+                            if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                            var s = ip.ToString();
+                            if (s.StartsWith("192.168.") || s.StartsWith("10.") || s.StartsWith("172.16.") || s.StartsWith("172.17.") ||
+                                s.StartsWith("172.18.") || s.StartsWith("172.19.") || s.StartsWith("172.2") || s.StartsWith("172.3"))
+                                return s;
+                        }
+                    }
+                }
+                catch {}
+                return null;
+            }
+            // Dev: best-effort private IPv4 pick for LAN advertisement.
+
             private System.Collections.IEnumerator HeadlessServerFlow()
             // Use the non-generic IEnumerator for Unity coroutines.
             {
@@ -454,8 +479,12 @@ namespace Game.Net
 
                 string publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? GetArg("-publicHost", "respawnserver.tplinkdns.com");
                 int    publicPort = int.TryParse(System.Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var p1) ? p1 : int.Parse(GetArg("-port", "7777"));
-                string lanHost    = System.Environment.GetEnvironmentVariable("LAN_HOST") ?? GetArg("-lanHost", "192.168.0.150");
+                string lanHost    = System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? GetArg("-lanHost", "192.168.0.150");
                 int    lanPort    = int.TryParse(System.Environment.GetEnvironmentVariable("LAN_PORT"), out var p2) ? p2 : publicPort;
+
+                // Resolve a real LAN IP if someone passed 0.0.0.0 (not connectable)
+                if (string.IsNullOrWhiteSpace(lanHost) || lanHost == "0.0.0.0")
+                    lanHost = ResolveLocalLanIPv4() ?? "192.168.0.150";
 
                 // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
                 if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)
@@ -511,23 +540,34 @@ namespace Game.Net
                 }
 
                 // 4) Create/advertise a Lobby with endpoint keys
-                var data = new Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
+                // Derive "kind" for discovery (Lobby / 1v1 / 2v2)
+                // -serverType comes from QuickBuildAndRun (e.g., "lobby","1v1","2v2")
+                string serverTypeArg = GetArg("-serverType", "lobby").ToLowerInvariant();
+                string lobbyKind = serverTypeArg switch
                 {
-                    ["ServerType"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, "Lobby", Unity.Services.Lobbies.Models.DataObject.IndexOptions.S1),
-                    ["Region"]     = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, region, Unity.Services.Lobbies.Models.DataObject.IndexOptions.S2),
-                    ["PublicHost"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicHost),
-                    ["PublicPort"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicPort.ToString()),
-                    ["LanEndpoint"]= new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                    "1v1" => "1v1",
+                    "2v2" => "2v2",
+                    _     => "Lobby"
+                };
+
+                // Compose data directly here to avoid stale copies.
+                var createOpts = new CreateLobbyOptions
+                {
+                    IsPrivate = false,
+                    Data = new System.Collections.Generic.Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
+                    {
+                        ["S1"]           = new DataObject(DataObject.VisibilityOptions.Public, lobbyKind),
+                        ["PublicHost"]   = new DataObject(DataObject.VisibilityOptions.Public, publicHost),
+                        ["PublicPort"]   = new DataObject(DataObject.VisibilityOptions.Public, publicPort.ToString()),
+                        ["LanEndpoint"]  = new DataObject(DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                        ["Region"]       = new DataObject(DataObject.VisibilityOptions.Public, region),
+                        ["Build"]        = new DataObject(DataObject.VisibilityOptions.Public, Application.version ?? "dev")
+                    }
                 };
 
                 int maxPlayers = int.TryParse(GetArg("-max", "32"), out var m) ? m : 32;
 
                 Lobby lobby = null;
-                var createOpts = new CreateLobbyOptions
-                {
-                    IsPrivate = false,
-                    Data = data,
-                };
 
                 // Kick off async create and yield until it finishes (coroutine-friendly).
                 var createTask = Unity.Services.Lobbies.LobbyService.Instance.CreateLobbyAsync(serverName, maxPlayers, createOpts);

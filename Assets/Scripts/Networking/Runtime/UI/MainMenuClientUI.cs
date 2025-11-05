@@ -249,6 +249,20 @@ namespace Game.Net
                 yield break;
             }
 
+            // Ignore obviously un-routable endpoints coming from a remote server
+            if (publicHostData.Value == "127.0.0.1")
+            {
+                Debug.LogWarning("[MainMenu] Lobby advertised 127.0.0.1; skipping (remote client).");
+                SetStatus("Server address invalid");
+                Done(false);
+                yield break;
+            }
+            if (!string.IsNullOrEmpty(lanEp) && lanEp.StartsWith("0.0.0.0"))
+            {
+                Debug.LogWarning("[MainMenu] Lobby advertised LAN 0.0.0.0; ignoring LAN endpoint.");
+                lanEp = null;
+            }
+
             string publicHost = publicHostData.Value;
             int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
 
