@@ -1,7 +1,6 @@
 // Assets/Scripts/Camera/IsometricCamera.cs
 // Defaults set to match the screenshot: Yaw=45, Pitch=35, Distance=(100.2, -3.6), Lerp=12, Ortho=on, OrthoSize=23, FOV=50.
 using UnityEngine;
-
 [DisallowMultipleComponent]
 [ExecuteAlways]
 public sealed class IsometricCamera : MonoBehaviour

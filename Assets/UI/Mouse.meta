@@ -1,5 +1,9 @@
 fileFormatVersion: 2
+<<<<<<<< HEAD:Assets/Resources/LOS.meta
+guid: 73bf83038cdebb04c8a7f84ce0aff648
+========
 guid: 6ea66e842b0b6cc4ab987cf02b32bf23
+>>>>>>>> AccountMenuUpdates:Assets/UI/Mouse.meta
 folderAsset: yes
 DefaultImporter:
   externalObjects: {}

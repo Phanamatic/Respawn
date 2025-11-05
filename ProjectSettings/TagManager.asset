@@ -6,7 +6,20 @@ TagManager:
   tags:
   - PlayerSpawn
   - Music
-  - SFX
+  - Water Tower (Map 1)
+  - Cactus 1 Map 1
+  - Building Map 1
+  - Wagon Map 1`
+  - Wagon 2 Map 1
+  - Water Tower 2 Map 1
+  - Water Tower 3 Map 1
+  - Train cart Map 1
+  - Roof Map 1
+  - Train Car Middle Map 1
+  - Train Car Middle 2 Map 1
+  - Train Map 1
+  - No Spawn
+  - No spawn
   layers:
   - Default
   - TransparentFX
@@ -18,8 +31,8 @@ TagManager:
   - 
   - 
   - 
-  - 
-  - 
+  - Occluder
+  - OccluderExtra
   - 
   - 
   - 

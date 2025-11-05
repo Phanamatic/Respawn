@@ -28,7 +28,7 @@ namespace Game.UI.HUD
             if (!_wp) { FindController(); return; }
 
             // Show only when a weapon is actually equipped
-            bool equipped = _wp.magazineAmmo.Value > 0 || _wp.reserveAmmo.Value > 0;
+            bool equipped = _wp != null;
             if (weaponName) weaponName.enabled = equipped;
             if (ammoText)   ammoText.enabled   = equipped;
 
@@ -40,7 +40,10 @@ namespace Game.UI.HUD
 
             if (ammoText)
             {
-                ammoText.text = $"{_wp.magazineAmmo.Value}/{_wp.reserveAmmo.Value}";
+                int magazine = Mathf.Max(0, _wp.magazineAmmo.Value);
+                int reserve = _wp.reserveAmmo.Value;
+                string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
+                ammoText.text = $"{magazine.ToString("D3")}/{reserveText}";
             }
         }
 // Hides equip texts unless equipped; reload image only when reloading.

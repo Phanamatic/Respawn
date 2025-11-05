@@ -94,6 +94,16 @@ namespace Game.UI.Account
                 _auth = go.AddComponent<PlayFabAuthService>();
             }
 
+            Game.Services.ProfileIconLookup.SetResourcesFolder("ProfileIcons");
+            if (availableIcons != null && availableIcons.Length > 0)
+            {
+                Game.Services.ProfileIconLookup.RegisterSprites(availableIcons);
+                Sprite fallback = availableIcons[0];
+                if (selectedIconPreview && selectedIconPreview.sprite)
+                    fallback = selectedIconPreview.sprite;
+                Game.Services.ProfileIconLookup.SetFallback(fallback);
+            }
+
             showSignInButton.onClick.AddListener(() => Show(true));
             showCreateButton.onClick.AddListener(() => Show(false));
 
@@ -109,10 +119,10 @@ namespace Game.UI.Account
             if (crToSignInButton) crToSignInButton.onClick.AddListener(() => Show(true));
 
             // mute button
-            if (muteButton) muteButton.onClick.AddListener(ToggleMute);
+            // if (muteButton) muteButton.onClick.AddListener(ToggleMute);
 
             BuildIconList(); // populate profile icons
-            UpdateMuteButton(); // set initial mute button state
+            // UpdateMuteButton(); // set initial mute button state
             Show(true); // default to Sign In
         }
 
@@ -142,6 +152,7 @@ namespace Game.UI.Account
 
                 siStatus.text = "OK";
                 await TrySaveSelectedIconAsync();
+                // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();
             }
             catch (Exception e)
@@ -175,6 +186,7 @@ namespace Game.UI.Account
 
                 crStatus.text = "OK";
                 await TrySaveSelectedIconAsync();
+                // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();
             }
             catch (Exception e)
@@ -234,6 +246,15 @@ namespace Game.UI.Account
             _iconSaved = ok;
         }
 
+        // async Task CacheIdentityAsync(string iconOverride = null)
+        // {
+        //     string displayName = await Game.Services.PlayerIdentityState.EnsureDisplayNameAsync();
+        //     string iconId = string.IsNullOrWhiteSpace(iconOverride)
+        //         ? await Game.Services.PlayerIdentityState.EnsureIconIdAsync()
+        //         : iconOverride.Trim();
+        //     Game.Services.PlayerIdentityState.SetLocal(displayName, iconId);
+        // }
+
         void ToggleMute()
         {
             _isMuted = !_isMuted;
@@ -282,6 +303,7 @@ namespace Game.UI.Account
 
                 // Save chosen icon if any, but do NOT switch scenes
                 await TrySaveSelectedIconAsync();
+                // await CacheIdentityAsync(_selectedIconId);
 
                 // Ensure UGS is ready for Lobby queries
                 if (siStatus) siStatus.text = "UGS init...";

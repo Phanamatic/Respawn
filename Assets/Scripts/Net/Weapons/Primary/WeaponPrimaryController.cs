@@ -35,6 +35,16 @@ namespace Game.Net.Weapons
 
         // Local-only visuals
         WeaponView _view;
+        Game.Net.PlayerNetwork _player;
+        bool _hasEquippedPrimary;
+
+        const int InfiniteReserve = -1;
+        const float ProjectileLifetimeSeconds = 3f;
+
+        void Awake()
+        {
+            _player = GetComponent<Game.Net.PlayerNetwork>();
+        }
 
         // ====== API ======
         public void Equip(Game.Net.PrimaryType primaryType, GunStats stats)
@@ -64,11 +74,20 @@ namespace Game.Net.Weapons
         void ServerEquip(Game.Net.PrimaryType t, GunStats provided)
         {
             _netPrimaryType.Value = (byte)t;
-            _stats = provided ?? LookupAssigned(t) ?? GetDefaults(t);
-            magazineAmmo.Value = Mathf.Max(0, _stats.magazineSize);
-            reserveAmmo.Value  = Mathf.Max(0, _stats.reserveSize);
-            isReloading.Value = false;
-            reloadProgress.Value = 0f;
+            var nextStats = provided ?? LookupAssigned(t) ?? GetDefaults(t);
+            bool newGun = !_hasEquippedPrimary || _stats == null || _stats.type != nextStats.type;
+            _stats = nextStats;
+
+            if (newGun)
+            {
+                magazineAmmo.Value = Mathf.Max(0, _stats.magazineSize);
+                reserveAmmo.Value  = InfiniteReserve;
+                isReloading.Value = false;
+                reloadProgress.Value = 0f;
+                _reloadRemain = 0f;
+                _hasEquippedPrimary = true;
+            }
+
             _fireCooldown = 0f;
 
             // Rebuild local visuals on all clients
@@ -82,7 +101,7 @@ namespace Game.Net.Weapons
         {
             if (isReloading.Value) return;
             if (magazineAmmo.Value >= _stats.magazineSize) return;
-            if (reserveAmmo.Value <= 0) return;
+            if (!HasReserveAmmo()) return;
 
             isReloading.Value = true;
             _reloadPaused = false;
@@ -106,10 +125,14 @@ namespace Game.Net.Weapons
 
                 if (_reloadRemain <= 0f)
                 {
-                    var need = _stats.magazineSize - magazineAmmo.Value;
-                    var take = Mathf.Min(need, reserveAmmo.Value);
+                    int need = Mathf.Max(0, _stats.magazineSize - magazineAmmo.Value);
+                    int take = need;
+                    if (reserveAmmo.Value >= 0)
+                    {
+                        take = Mathf.Min(need, reserveAmmo.Value);
+                        reserveAmmo.Value -= take;
+                    }
                     magazineAmmo.Value += take;
-                    reserveAmmo.Value  -= take;
                     isReloading.Value = false;
                     reloadProgress.Value = 1f;
                 }
@@ -137,7 +160,7 @@ namespace Game.Net.Weapons
             if (magazineAmmo.Value <= 0)
             {
                 // auto-reload if we have reserve
-                if (reserveAmmo.Value > 0) { RequestReloadServerRpc(); }
+                if (HasReserveAmmo()) { RequestReloadServerRpc(); }
                 return;
             }
 
@@ -167,10 +190,13 @@ namespace Game.Net.Weapons
 
                 var nob = go.GetComponent<NetworkObject>();
                 var proj = go.GetComponent<BulletProjectile>();
-                proj.speed = _stats.bulletSpeed;
-                proj.lifetime = _stats.bulletLifetime;
-                proj.damage = _stats.damage;
-                nob.Spawn(true);
+                if (proj)
+                {
+                    var owner = _player ? _player : GetComponent<Game.Net.PlayerNetwork>();
+                    var ownerTeam = owner ? owner.GetTeam() : Game.Net.TeamId.A;
+                    proj.ConfigureServer(_stats.bulletSpeed, ProjectileLifetimeSeconds, _stats.damage, OwnerClientId, ownerTeam, owner);
+                }
+                if (nob) nob.Spawn(true);
 // Prevents immediate despawn-on-self-hit and makes bullets visibly travel.
             }
         }
@@ -189,6 +215,11 @@ namespace Game.Net.Weapons
             if (_view && _view.muzzle) return _view.muzzle.position;
             if (sockets && sockets.front) return sockets.front.position;
             return transform.position + GetAimDir() * 0.5f;
+        }
+
+        bool HasReserveAmmo()
+        {
+            return reserveAmmo.Value < 0 || reserveAmmo.Value > 0;
         }
 
         // ====== Client visuals ======

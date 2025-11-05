@@ -3,6 +3,9 @@
 // plus freeze/visibility controls used by Match1v1Controller.
 
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using Unity.Netcode;
 using Unity.Netcode.Components;
@@ -10,6 +13,10 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using TMPro;
 using Game.Net.Weapons;
+using Unity.Collections;
+using Unity.Services.Authentication;
+using Unity.Services.Lobbies.Models;
+using Game.Services;
 
 namespace Game.Net
 {
@@ -73,15 +80,30 @@ namespace Game.Net
         [SerializeField] TMP_Text sprintLabel;
         [SerializeField] Image dashFill;
         [SerializeField] TMP_Text dashLabel;
+    [SerializeField] Image healthFill;
+    [SerializeField] TMP_Text healthLabel;
 
         [Header("Visual Root (optional)")]
         [SerializeField] Transform modelRoot;
+
+        // Expose model renderers for LOS fading
+        public System.ReadOnlySpan<Renderer> GetModelRenderersSpan()
+        {
+            return _renderers != null ? new System.ReadOnlySpan<Renderer>(_renderers) : System.ReadOnlySpan<Renderer>.Empty;
+        }
+
+        // Small accessor so the camera can fade the local player's renderers without allocating.
 
         Rigidbody _rb;
         CapsuleCollider _capsule;
 
         Renderer[] _renderers;
         Collider[] _colliders;
+
+    CombatStats _statsPendingForCloud;
+    CombatStats _statsLastPersisted;
+    Coroutine _statsSaveRoutine;
+    bool _statsFlushImmediate;
 
         struct NetworkState { public Vector3 position; public float yaw; public Vector3 velocity; public float timestamp; public bool isDashing; }
         NetworkState[] _stateBuffer = new NetworkState[64];
@@ -95,9 +117,59 @@ namespace Game.Net
         NetworkVariable<float> _netYaw = new();
         NetworkVariable<Vector3> _netVelocity = new();
         NetworkVariable<bool> _netIsDashing = new();
+        readonly NetworkVariable<FixedString64Bytes> _playerName =
+            new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+        const int MaxDisplayNameLength = 32;
+        readonly NetworkVariable<FixedString128Bytes> _playerIconId =
+            new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+        const int MaxIconIdLength = 96;
+
+        [System.Serializable]
+        public struct CombatStats : INetworkSerializable
+        {
+            public ushort kills;
+            public ushort deaths;
+            public ushort assists;
+            public int damage;
+
+            public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+            {
+                serializer.SerializeValue(ref kills);
+                serializer.SerializeValue(ref deaths);
+                serializer.SerializeValue(ref assists);
+                serializer.SerializeValue(ref damage);
+            }
+        }
+
+        readonly NetworkVariable<CombatStats> _combatStats =
+            new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+        [System.Serializable]
+        public struct DeathRecapPayload : INetworkSerializable
+        {
+            public ulong killerClientId;
+            public FixedString64Bytes killerName;
+            public FixedString128Bytes killerIconId;
+            public float damage;
+            public byte primary;
+            public byte secondary;
+            public byte utility;
+
+            public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+            {
+                serializer.SerializeValue(ref killerClientId);
+                serializer.SerializeValue(ref killerName);
+                serializer.SerializeValue(ref killerIconId);
+                serializer.SerializeValue(ref damage);
+                serializer.SerializeValue(ref primary);
+                serializer.SerializeValue(ref secondary);
+                serializer.SerializeValue(ref utility);
+            }
+        }
 
         InputActionMap _map;
         InputAction _aMove, _aMouse, _aSprint, _aDash;
+        InputAction _aScoreboard;
         public bool IsSprinting { get; private set; }
         public bool IsDashing  { get; private set; }
         public event System.Action<bool> SprintChanged;
@@ -110,9 +182,19 @@ namespace Game.Net
         bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ; float _dashQueuedUntil;
 
         Camera _cam; IsometricCamera _isoCam; int _camBindTries;
+    int _scoreboardBindTries;
 
         bool _inputPaused;
         bool _frozen;
+
+    MatchScoreboardPanel _scoreboard;
+    Coroutine _identitySubmitCo;
+    bool _identitySubmitted;
+
+    static readonly Dictionary<ulong, string> s_lastKnownNames = new();
+    static readonly Dictionary<ulong, string> s_lastKnownIconIds = new();
+    static System.Action<DeathRecapPayload> s_onShowDeathRecap;
+    static System.Action s_onHideDeathRecap;
 
         private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
 
@@ -126,8 +208,20 @@ namespace Game.Net
                 _capsule = GetComponent<CapsuleCollider>();
             }
 
+            _identitySubmitted = false;
+            if (_identitySubmitCo != null)
+            {
+                StopCoroutine(_identitySubmitCo);
+                _identitySubmitCo = null;
+            }
+
+            _playerName.OnValueChanged += OnPlayerNameValueChanged;
+            _playerIconId.OnValueChanged += OnPlayerIconValueChanged;
+
             // Observe active slot to react locally (e.g., show weapon later)
             _activeSlot.OnValueChanged += (_, __) => OnActiveSlotChanged();
+            _health.OnValueChanged += OnHealthChanged;
+            _combatStats.OnValueChanged += OnCombatStatsChanged;
 
             // Client: send saved loadout to server after spawn
             if (IsOwner)
@@ -147,6 +241,9 @@ namespace Game.Net
                 TrySnapToGroundImmediate();
                 ResolveInitialPenetration();
 
+                // Lock physics rotation on all axes; mouse aim will set yaw explicitly.
+                if (_rb) _rb.constraints |= RigidbodyConstraints.FreezeRotationY;
+
                 SetPhase(initialPhase);
                 if (initialPhase == PlayerPhase.Match)
                 {
@@ -159,9 +256,52 @@ namespace Game.Net
                 }
             }
 
+            if (IsServer)
+            {
+                ServerAutoEquipPrimary();
+            }
+
             if (IsOwner)
             {
                 SetupInputAndCamera();
+                TryBindScoreboard();
+                CacheLocalIdentitySnapshot();
+
+                // Install client-side LOS FOV visualization for local player.
+                var fov = gameObject.GetComponent<FovMesh>();
+                if (!fov) fov = gameObject.AddComponent<FovMesh>();
+                fov.radiusMeters = 12f;                                  // LOS radius
+                fov.rayCount = 220;                                      // tuned for perf
+                // Detect both LOS layers.
+                fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
+                fov.showFill = true;
+                fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f); // bright inside
+                fov.fillIntensity = 1.15f;
+                fov.edgeFeather = 0.15f;
+                fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
+                // Anchor FOV to visual root if provided so the stencil sits on the model.
+                fov.follow = modelRoot ? modelRoot : transform;
+
+                var losLight = GetComponent<PlayerLosLight>();
+                if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
+                losLight.fovSource = fov;
+                losLight.intensity = 1.3f;
+                losLight.rangeScale = 0.9f;
+                losLight.castShadows = true;
+
+                FogOfWarOverlayPlane.InstallFor(Camera.main);
+                BeginSubmitNameRoutine();
+
+                // Force local model fully visible each spawn (guards against any fade components).
+                EnsureLocalModelVisible();
+
+                // Enforce visibility through transparent occluders.
+                var vis = GetComponent<EnsurePlayerVisibleThroughOccluders>();
+                if (!vis) vis = gameObject.AddComponent<EnsurePlayerVisibleThroughOccluders>();
+                if (modelRoot)
+                    vis.GetType().GetField("renderers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                       ?.SetValue(vis, modelRoot.GetComponentsInChildren<Renderer>(true));
+
                 TrySnapToGroundImmediate(); // client visual safety
 
                 if (!GetComponent<NetworkTransform>())
@@ -179,6 +319,11 @@ namespace Game.Net
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
                 SetInputPaused(false);
+
+                UpdateHealthUI(_health.Value);
+                _statsLastPersisted = default;
+                _statsPendingForCloud = _combatStats.Value;
+                _statsFlushImmediate = false;
             }
             else
             {
@@ -203,7 +348,8 @@ namespace Game.Net
             _rb.useGravity = true;
             _rb.interpolation = RigidbodyInterpolation.None;
             _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+            // Prevent physics-induced yaw. Mouse aim drives rotation.
+            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationY | RigidbodyConstraints.FreezeRotationZ;
 
             var root = modelRoot ? modelRoot : transform;
             _renderers = root.GetComponentsInChildren<Renderer>(true);
@@ -223,6 +369,16 @@ namespace Game.Net
             _map = null; _aMove = _aMouse = _aSprint = _aDash = null; _aSlot1 = _aSlot2 = _aSlot3 = _aThrow = null;
 
             _activeSlot.OnValueChanged -= (_, __) => OnActiveSlotChanged();
+            _playerName.OnValueChanged -= OnPlayerNameValueChanged;
+            _playerIconId.OnValueChanged -= OnPlayerIconValueChanged;
+            _health.OnValueChanged -= OnHealthChanged;
+            _combatStats.OnValueChanged -= OnCombatStatsChanged;
+
+            if (IsOwner)
+            {
+                _statsPendingForCloud = _combatStats.Value;
+                QueueStatsFlush(true);
+            }
 
             if (useLegacyStateReplication)
             {
@@ -234,12 +390,15 @@ namespace Game.Net
         }
 
         // ==== HUD binding API (for PlayerHUDBinder) ====
-        public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI)
+        public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI, Image healthFillUI = null, TMP_Text healthLabelUI = null)
         {
-            sprintFill = sprintFillUI;
-            sprintLabel = sprintLabelUI;
-            dashFill = dashFillUI;
-            dashLabel = dashLabelUI;
+            if (sprintFillUI) sprintFill = sprintFillUI;
+            if (sprintLabelUI) sprintLabel = sprintLabelUI;
+            if (dashFillUI) dashFill = dashFillUI;
+            if (dashLabelUI) dashLabel = dashLabelUI;
+            if (healthFillUI) healthFill = healthFillUI;
+            if (healthLabelUI) healthLabel = healthLabelUI;
+            UpdateHealthUI(_health.Value);
         }
 
         public void AssignHud(Component root)
@@ -249,15 +408,265 @@ namespace Game.Net
             sprintLabel ??= root.GetComponentInChildren<TMP_Text>(true);
 
             foreach (var img in root.GetComponentsInChildren<Image>(true))
-                if (img && img.gameObject.name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashFill = img; break; }
+            {
+                if (!img) continue;
+                var name = img.gameObject.name;
+                if (dashFill == null && name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashFill = img; continue; }
+                if (healthFill == null && name.IndexOf("health", StringComparison.OrdinalIgnoreCase) >= 0) { healthFill = img; }
+            }
 
             foreach (var txt in root.GetComponentsInChildren<TMP_Text>(true))
-                if (txt && txt.gameObject.name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashLabel = txt; break; }
+            {
+                if (!txt) continue;
+                var name = txt.gameObject.name;
+                if (dashLabel == null && name.IndexOf("dash", StringComparison.OrdinalIgnoreCase) >= 0) { dashLabel = txt; continue; }
+                if (healthLabel == null && name.IndexOf("health", StringComparison.OrdinalIgnoreCase) >= 0) { healthLabel = txt; }
+            }
+
+            UpdateHealthUI(_health.Value);
         }
 
         public void ClearHud()
         {
-            sprintFill = null; sprintLabel = null; dashFill = null; dashLabel = null;
+            sprintFill = null; sprintLabel = null; dashFill = null; dashLabel = null; healthFill = null; healthLabel = null;
+        }
+
+        void OnHealthChanged(float previous, float current)
+        {
+            UpdateHealthUI(current);
+        }
+
+        void UpdateHealthUI(float current)
+        {
+            if (healthFill)
+                healthFill.fillAmount = Mathf.Clamp01(current <= 0f ? 0f : current / 100f);
+
+            if (healthLabel)
+            {
+                int value = Mathf.Clamp(Mathf.RoundToInt(current), 0, 999);
+                healthLabel.text = value.ToString("D3");
+            }
+        }
+
+        void OnCombatStatsChanged(CombatStats previous, CombatStats current)
+        {
+            if (!IsOwner) return;
+            _statsPendingForCloud = current;
+            QueueStatsFlush();
+        }
+
+        void QueueStatsFlush(bool immediate = false)
+        {
+            if (!IsOwner) return;
+            if (immediate) _statsFlushImmediate = true;
+            if (_statsSaveRoutine == null)
+                _statsSaveRoutine = StartCoroutine(CoFlushStatsToCloud());
+        }
+
+        IEnumerator CoFlushStatsToCloud()
+        {
+            while (true)
+            {
+                var waitSeconds = _statsFlushImmediate ? 0f : 1.5f;
+                _statsFlushImmediate = false;
+                if (waitSeconds > 0f)
+                {
+                    float elapsed = 0f;
+                    while (elapsed < waitSeconds)
+                    {
+                        if (_statsFlushImmediate)
+                            break;
+                        elapsed += Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+                    if (_statsFlushImmediate)
+                        continue;
+                }
+
+                var pending = _statsPendingForCloud;
+                int deltaKills = pending.kills - _statsLastPersisted.kills;
+                int deltaDeaths = pending.deaths - _statsLastPersisted.deaths;
+                int deltaDamage = pending.damage - _statsLastPersisted.damage;
+
+                if (deltaKills <= 0 && deltaDeaths <= 0 && deltaDamage <= 0)
+                    break;
+
+                var task = CloudSaveClient.AppendStatsAsync(deltaKills, deltaDeaths, deltaDamage);
+                while (!task.IsCompleted)
+                    yield return null;
+
+                if (task.IsFaulted || task.IsCanceled)
+                {
+                    var message = task.Exception?.GetBaseException()?.Message ?? "Unknown";
+                    Debug.LogWarning($"[CloudSave] Append stats failed: {message}. Retrying...");
+                    for (float retry = 0f; retry < 5f; retry += Time.unscaledDeltaTime)
+                        yield return null;
+                    _statsFlushImmediate = true;
+                    continue;
+                }
+
+                if (!task.Result)
+                {
+                    Debug.LogWarning("[CloudSave] Append stats returned false. Retrying...");
+                    for (float retry = 0f; retry < 5f; retry += Time.unscaledDeltaTime)
+                        yield return null;
+                    _statsFlushImmediate = true;
+                    continue;
+                }
+
+                _statsLastPersisted = pending;
+            }
+
+            _statsSaveRoutine = null;
+        }
+
+        internal void RegisterScoreboard(MatchScoreboardPanel panel)
+        {
+            if (panel == null) return;
+            _scoreboard = panel;
+            _scoreboardBindTries = 0;
+        }
+
+        internal void UnregisterScoreboard(MatchScoreboardPanel panel)
+        {
+            if (_scoreboard == panel) _scoreboard = null;
+        }
+
+        static ClientRpcParams TargetClientParams(ulong clientId)
+        {
+            return new ClientRpcParams
+            {
+                Send = new ClientRpcSendParams
+                {
+                    TargetClientIds = new ulong[1] { clientId }
+                }
+            };
+        }
+
+        static FixedString64Bytes ToFixedString64(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return default;
+            if (value.Length > 62) value = value.Substring(0, 62);
+            return value;
+        }
+
+        static FixedString128Bytes ToFixedString128(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return default;
+            if (value.Length > 126) value = value.Substring(0, 126);
+            return value;
+        }
+
+        internal static void InstallDeathRecapCallbacks(System.Action<DeathRecapPayload> onShow, System.Action onHide)
+        {
+            s_onShowDeathRecap = onShow;
+            s_onHideDeathRecap = onHide;
+        }
+
+        internal static void RemoveDeathRecapCallbacks(System.Action<DeathRecapPayload> onShow, System.Action onHide)
+        {
+            if (s_onShowDeathRecap == onShow) s_onShowDeathRecap = null;
+            if (s_onHideDeathRecap == onHide) s_onHideDeathRecap = null;
+        }
+
+        internal static void InvokeHideDeathRecap() => s_onHideDeathRecap?.Invoke();
+
+        public string GetDisplayName()
+        {
+            if (!_playerName.Value.IsEmpty)
+            {
+                var name = _playerName.Value.ToString();
+                CacheIdentityFor(OwnerClientId, name, null);
+                return name;
+            }
+
+            if (IsOwner)
+            {
+                var local = Game.Services.PlayerIdentityState.LocalDisplayName;
+                if (!string.IsNullOrWhiteSpace(local))
+                {
+                    CacheIdentityFor(OwnerClientId, local, null);
+                    return local;
+                }
+            }
+
+            if (s_lastKnownNames.TryGetValue(OwnerClientId, out var cached) && !string.IsNullOrWhiteSpace(cached))
+                return cached;
+
+            return $"Player {OwnerClientId}";
+        }
+
+        public string GetIconId()
+        {
+            if (!_playerIconId.Value.IsEmpty)
+            {
+                var icon = _playerIconId.Value.ToString();
+                CacheIdentityFor(OwnerClientId, null, icon);
+                return icon;
+            }
+
+            if (IsOwner)
+            {
+                var local = Game.Services.PlayerIdentityState.LocalIconId;
+                if (!string.IsNullOrWhiteSpace(local))
+                {
+                    CacheIdentityFor(OwnerClientId, null, local);
+                    return local;
+                }
+            }
+
+            if (s_lastKnownIconIds.TryGetValue(OwnerClientId, out var cached) && !string.IsNullOrWhiteSpace(cached))
+                return cached;
+
+            return null;
+        }
+
+        internal void NotifyKilledServer(PlayerNetwork killer, float damageAmount)
+        {
+            if (!IsServer) return;
+            var payload = BuildDeathRecapPayload(killer, damageAmount);
+            SendDeathRecap(payload);
+        }
+
+        internal void ClearDeathRecapForOwner()
+        {
+            if (!IsServer) return;
+            ClearDeathRecapClientRpc(TargetClientParams(OwnerClientId));
+        }
+
+        DeathRecapPayload BuildDeathRecapPayload(PlayerNetwork killer, float damageAmount)
+        {
+            var payload = new DeathRecapPayload
+            {
+                killerClientId = killer ? killer.OwnerClientId : ulong.MaxValue,
+                damage = Mathf.Max(0f, damageAmount),
+                primary = killer ? killer._netLoadout.Value.primary : (byte)PrimaryType.None,
+                secondary = killer ? killer._netLoadout.Value.secondary : (byte)SecondaryType.None,
+                utility = killer ? killer._netLoadout.Value.util : (byte)UtilityType.None,
+                killerName = killer ? ToFixedString64(killer.GetDisplayName()) : default,
+                killerIconId = killer != null ? ToFixedString128(killer.GetIconId()) : default
+            };
+            return payload;
+        }
+
+        void SendDeathRecap(DeathRecapPayload payload)
+        {
+            if (!IsServer) return;
+            ShowDeathRecapClientRpc(payload, TargetClientParams(OwnerClientId));
+        }
+
+        [ClientRpc]
+        void ShowDeathRecapClientRpc(DeathRecapPayload payload, ClientRpcParams rpcParams = default)
+        {
+            if (!IsOwner) return;
+            s_onShowDeathRecap?.Invoke(payload);
+        }
+
+        [ClientRpc]
+        void ClearDeathRecapClientRpc(ClientRpcParams rpcParams = default)
+        {
+            if (!IsOwner) return;
+            s_onHideDeathRecap?.Invoke();
         }
         // ================================================
 // ===== Weapons: equip, switch, throw (server authoritative) =====
@@ -361,6 +770,7 @@ void OnActiveSlotChanged()
             _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
             _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
+            _aScoreboard = _map.AddAction(name: "Scoreboard", type: InputActionType.Button, binding: "<Keyboard>/tab");
 
             _aDash.performed += OnDashPerformed;
             // forward dash state to weapon controller via OnDashingChanged callback already patched.
@@ -368,9 +778,12 @@ void OnActiveSlotChanged()
             _aSlot2.performed += _ => RequestSwitchSlot(1);
             _aSlot3.performed += _ => RequestSwitchSlot(2);
             _aThrow.performed += _ => RequestThrowUtility();
+            _aScoreboard.performed += OnScoreboardPerformed;
+            _aScoreboard.canceled  += OnScoreboardCanceled;
 
             _map.Enable();
             TryBindCamera();
+            TryBindScoreboard();
         }
 
         void OnDashPerformed(InputAction.CallbackContext ctx)
@@ -391,6 +804,7 @@ void OnActiveSlotChanged()
                 var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
             }
             if (paused) _map?.Disable(); else _map?.Enable();
+            if (paused) ShowScoreboard(false);
         }
 
         void TryBindCamera()
@@ -405,14 +819,229 @@ void OnActiveSlotChanged()
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
                 _isoCam.follow = transform;
+                _isoCam.enabled = true; // ensure camera is active after (re)spawn — avoids staying on spawn-select view
+
+                var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                los.target = transform;
+
+                FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
             }
+        }
+
+        void TryBindScoreboard()
+        {
+            if (!IsOwner || _scoreboard != null) return;
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var panel = FindFirstObjectByType<MatchScoreboardPanel>(FindObjectsInactive.Include);
+#else
+            var panel = FindObjectOfType<MatchScoreboardPanel>();
+#endif
+            if (panel != null)
+            {
+                panel.SetOwner(this);
+            }
+        }
+
+        void ShowScoreboard(bool show)
+        {
+            if (!IsOwner) return;
+            if (_scoreboard == null)
+            {
+                if (show) TryBindScoreboard();
+                if (_scoreboard == null) return;
+            }
+            if (show && _inputPaused) show = false;
+            _scoreboard.SetVisible(show);
+        }
+
+        void OnScoreboardPerformed(InputAction.CallbackContext ctx)
+        {
+            ShowScoreboard(true);
+        }
+
+        void OnScoreboardCanceled(InputAction.CallbackContext ctx)
+        {
+            ShowScoreboard(false);
+        }
+
+        void BeginSubmitNameRoutine()
+        {
+            if (!IsOwner || _identitySubmitted) return;
+            if (_identitySubmitCo != null) StopCoroutine(_identitySubmitCo);
+            _identitySubmitCo = StartCoroutine(CoSubmitPlayerIdentity());
+        }
+
+        IEnumerator CoSubmitPlayerIdentity()
+        {
+            const float timeoutSeconds = 6f;
+            float deadline = Time.unscaledTime + timeoutSeconds;
+
+            var ensureTask = Game.Services.PlayerIdentityState.EnsureIdentityAsync();
+            while (!ensureTask.IsCompleted && Time.unscaledTime < deadline)
+                yield return null;
+
+            while (IsOwner && !_identitySubmitted)
+            {
+                string alias = ResolvePreferredPlayerName();
+                string iconId = ResolvePreferredIconId();
+                if (!string.IsNullOrWhiteSpace(alias))
+                {
+                    SubmitPlayerIdentityServerRpc(alias, iconId);
+                    _identitySubmitted = true;
+                    yield break;
+                }
+
+                if (Time.unscaledTime >= deadline) break;
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
+
+            if (IsOwner && !_identitySubmitted)
+            {
+                string fallbackName = $"Player {OwnerClientId}";
+                string fallbackIcon = ResolvePreferredIconId();
+                SubmitPlayerIdentityServerRpc(fallbackName, fallbackIcon);
+                _identitySubmitted = true;
+            }
+        }
+
+        static string ResolvePreferredPlayerName()
+        {
+            var cached = Game.Services.PlayerIdentityState.LocalDisplayName;
+            if (!string.IsNullOrWhiteSpace(cached)) return cached;
+
+            try
+            {
+                var auth = AuthenticationService.Instance;
+                var lobby = SessionContext.CurrentLobby;
+                var playerId = auth != null ? auth.PlayerId : null;
+
+                if (lobby != null && !string.IsNullOrEmpty(playerId))
+                {
+                    var players = lobby.Players;
+                    if (players != null)
+                    {
+                        for (int i = 0; i < players.Count; i++)
+                        {
+                            var member = players[i];
+                            if (member == null || member.Id != playerId) continue;
+                            if (member.Data != null)
+                            {
+                                if (member.Data.TryGetValue("displayName", out var display) && display != null && !string.IsNullOrWhiteSpace(display.Value))
+                                    return display.Value;
+                                if (member.Data.TryGetValue("username", out var username) && username != null && !string.IsNullOrWhiteSpace(username.Value))
+                                    return username.Value;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PlayerNetwork] ResolvePreferredPlayerName failed: {ex.Message}");
+            }
+
+            return Game.Services.PlayerIdentityState.LocalDisplayName;
+        }
+
+        static string ResolvePreferredIconId()
+        {
+            if (!string.IsNullOrWhiteSpace(Game.Services.PlayerIdentityState.LocalIconId))
+                return Game.Services.PlayerIdentityState.LocalIconId;
+
+            try
+            {
+                var auth = AuthenticationService.Instance;
+                var lobby = SessionContext.CurrentLobby;
+                var playerId = auth != null ? auth.PlayerId : null;
+
+                if (lobby != null && !string.IsNullOrEmpty(playerId))
+                {
+                    var players = lobby.Players;
+                    if (players != null)
+                    {
+                        for (int i = 0; i < players.Count; i++)
+                        {
+                            var member = players[i];
+                            if (member == null || member.Id != playerId) continue;
+                            if (member.Data != null && member.Data.TryGetValue("profileIcon", out var icon) && icon != null && !string.IsNullOrWhiteSpace(icon.Value))
+                                return icon.Value;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PlayerNetwork] ResolvePreferredIconId failed: {ex.Message}");
+            }
+
+            return Game.Services.PlayerIdentityState.LocalIconId;
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString64Bytes iconId, ServerRpcParams rpcParams = default)
+        {
+            var sanitizedName = SanitizeAlias(alias);
+            if (sanitizedName.IsEmpty) return;
+            var sanitizedIcon = SanitizeIconId(iconId);
+            _playerName.Value = sanitizedName;
+            _playerIconId.Value = sanitizedIcon;
+        }
+
+        static FixedString64Bytes SanitizeAlias(FixedString64Bytes alias)
+        {
+            var raw = alias.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return default;
+
+            string cleaned = raw.Trim();
+            if (cleaned.Length > MaxDisplayNameLength)
+                cleaned = cleaned.Substring(0, MaxDisplayNameLength);
+            cleaned = cleaned.Replace('\n', ' ').Replace('\r', ' ');
+
+            Span<char> buffer = stackalloc char[cleaned.Length];
+            int len = 0;
+            for (int i = 0; i < cleaned.Length; i++)
+            {
+                char c = cleaned[i];
+                if (char.IsControl(c)) continue;
+                buffer[len++] = c;
+            }
+
+            cleaned = new string(buffer.Slice(0, len));
+            if (string.IsNullOrWhiteSpace(cleaned)) return default;
+            FixedString64Bytes result = cleaned;
+            return result;
+        }
+
+        static FixedString64Bytes SanitizeIconId(FixedString64Bytes iconId)
+        {
+            var raw = iconId.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return default;
+
+            string cleaned = raw.Trim();
+            if (cleaned.Length > MaxIconIdLength)
+                cleaned = cleaned.Substring(0, MaxIconIdLength);
+
+            Span<char> buffer = stackalloc char[cleaned.Length];
+            int len = 0;
+            for (int i = 0; i < cleaned.Length; i++)
+            {
+                char c = cleaned[i];
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.')
+                    buffer[len++] = c;
+            }
+
+            if (len == 0) return default;
+            return new FixedString64Bytes(new string(buffer.Slice(0, len)));
         }
 
         void LateUpdate()
         {
             if (!IsOwner) return;
-            if (_inputPaused) { UpdateUI(); return; }
             if (_isoCam == null && _camBindTries < 60) { _camBindTries++; TryBindCamera(); }
+            if (_scoreboard == null && _scoreboardBindTries < 120) { _scoreboardBindTries++; TryBindScoreboard(); }
+            if (_inputPaused) { UpdateUI(); return; }
         }
 
         void Update()
@@ -458,6 +1087,7 @@ void OnActiveSlotChanged()
             if (_inputPaused)
             {
                 var v0 = _rb.linearVelocity; v0.x = 0f; v0.z = 0f; _rb.linearVelocity = v0;
+                _rb.angularVelocity = Vector3.zero;
                 return;
             }
 
@@ -798,6 +1428,59 @@ void OnActiveSlotChanged()
                 if (_renderers[i]) _renderers[i].enabled = visible;
         }
 
+        // Force local model fully visible (guards against any fade components).
+        void EnsureLocalModelVisible()
+        {
+            var span = GetModelRenderersSpan();
+            if (span.Length == 0) return;
+            var mpb = new MaterialPropertyBlock();
+            for (int i = 0; i < span.Length; i++)
+            {
+                var r = span[i];
+                if (!r) continue;
+                r.GetPropertyBlock(mpb);
+                // Push alpha to 1 on common color slots.
+                if (r.sharedMaterial && r.sharedMaterial.HasProperty("_BaseColor"))
+                {
+                    var c = r.sharedMaterial.GetColor("_BaseColor"); c.a = 1f;
+                    mpb.SetColor("_BaseColor", c);
+                }
+                if (r.sharedMaterial && r.sharedMaterial.HasProperty("_Color"))
+                {
+                    var c2 = r.sharedMaterial.GetColor("_Color"); c2.a = 1f;
+                    mpb.SetColor("_Color", c2);
+                }
+                r.SetPropertyBlock(mpb);
+            }
+        }
+
+        void OnPlayerNameValueChanged(FixedString64Bytes _, FixedString64Bytes current)
+        {
+            if (current.IsEmpty) return;
+            CacheIdentityFor(OwnerClientId, current.ToString(), null);
+        }
+
+        void OnPlayerIconValueChanged(FixedString128Bytes _, FixedString128Bytes current)
+        {
+            if (current.IsEmpty) return;
+            CacheIdentityFor(OwnerClientId, null, current.ToString());
+        }
+
+        void CacheLocalIdentitySnapshot()
+        {
+            var name = Game.Services.PlayerIdentityState.LocalDisplayName;
+            var icon = Game.Services.PlayerIdentityState.LocalIconId;
+            CacheIdentityFor(OwnerClientId, name, icon);
+        }
+
+        static void CacheIdentityFor(ulong clientId, string name, string iconId)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+                s_lastKnownNames[clientId] = name.Trim();
+            if (!string.IsNullOrWhiteSpace(iconId))
+                s_lastKnownIconIds[clientId] = iconId.Trim();
+        }
+
         void SetCollidersEnabled(bool enabled)
         {
             if (_colliders == null || _colliders.Length == 0)
@@ -813,7 +1496,71 @@ void OnActiveSlotChanged()
         public float GetHealth() => _health.Value;
         public void SetHealth(float health)
         {
-            if (IsServer) _health.Value = health;
+            if (IsServer) _health.Value = Mathf.Clamp(health, 0f, 100f);
+        }
+
+        public CombatStats GetCombatStats() => _combatStats.Value;
+
+        public void ApplyHealthDelta(float delta, PlayerNetwork attacker)
+        {
+            if (!IsServer) return;
+            if (Mathf.Approximately(delta, 0f)) return;
+
+            float previous = _health.Value;
+            float target = Mathf.Clamp(previous + delta, 0f, 100f);
+            if (Mathf.Approximately(previous, target)) return;
+
+            _health.Value = target;
+
+            bool tookDamage = delta < 0f;
+            int damageInt = tookDamage ? Mathf.RoundToInt(-delta) : 0;
+            bool died = previous > 0f && target <= 0f;
+
+            if (died)
+            {
+                var victimStats = _combatStats.Value;
+                victimStats.deaths = SafeAddUShort(victimStats.deaths, 1);
+                _combatStats.Value = victimStats;
+            }
+
+            if (attacker && attacker != this && tookDamage)
+            {
+                attacker.RegisterDamageCredit(damageInt, died);
+            }
+
+            if (died)
+            {
+                NotifyKilledServer(attacker, Mathf.Max(0f, -delta));
+            }
+        }
+
+        internal void RegisterDamageCredit(int damageAmount, bool registerKill)
+        {
+            if (!IsServer) return;
+            if (damageAmount <= 0 && !registerKill) return;
+
+            var stats = _combatStats.Value;
+            if (damageAmount > 0)
+                stats.damage = SafeAddInt(stats.damage, damageAmount);
+            if (registerKill)
+                stats.kills = SafeAddUShort(stats.kills, 1);
+            _combatStats.Value = stats;
+        }
+
+        static ushort SafeAddUShort(ushort current, int delta)
+        {
+            int sum = current + delta;
+            if (sum < 0) return 0;
+            if (sum > ushort.MaxValue) return ushort.MaxValue;
+            return (ushort)sum;
+        }
+
+        static int SafeAddInt(int current, int delta)
+        {
+            long sum = (long)current + delta;
+            if (sum < int.MinValue) return int.MinValue;
+            if (sum > int.MaxValue) return int.MaxValue;
+            return (int)sum;
         }
 
         /// Server helper to auto-equip primary at round start.

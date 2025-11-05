@@ -1,8 +1,13 @@
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Netcode;
+using Game.Net; // use existing GroundClampServer
+// Resolve type without fully qualifying everywhere.
 using UnityEngine;
 using TMPro;
+using UnityEngine.Rendering;
+using UnityEngine.UI;
+using Game.Services;
 
 namespace Game.Net
 {
@@ -11,11 +16,11 @@ namespace Game.Net
         Waiting = 0,
         Countdown = 1,
         FlyIn = 2,
-        SpawnSelect = 3,
         Playing = 4,
         RoundEnd = 5,
         MatchEnd = 6
     }
+// Remove unused SpawnSelect state. Explicit values keep network stability.
 
     [DefaultExecutionOrder(-9000)]
     public sealed class Match1v1Controller : NetworkBehaviour
@@ -37,6 +42,12 @@ namespace Game.Net
         [SerializeField] private TMP_Text scoreTextB;
         [SerializeField] private TMP_Text roundNumberText;
 
+    [Header("Player Icons")]
+    [SerializeField] private Image teamAPlayerIcon;
+    [SerializeField] private Image teamBPlayerIcon;
+    [SerializeField] private Sprite defaultPlayerIcon;
+    [SerializeField] private bool hidePlayerIconWhenMissing = true;
+
         [Header("Win Panel")]
         [SerializeField] private CanvasGroup winPanel;
         [SerializeField] private TMP_Text winnerText;
@@ -53,17 +64,16 @@ namespace Game.Net
         [SerializeField, Tooltip("Optional lightweight visual used if no PlayerNetwork exists yet.")]
         private GameObject cinematicStandInPrefab;   // visual-only prefab (no NetworkObject)
 
-        [Header("Spawn Select")]
-        [SerializeField] private GameObject spawnCursorPrefab;
-        [SerializeField] private Vector3 spawnCameraPosition = new Vector3(0, 50, -20);
-        [SerializeField] private Vector3 spawnCameraLookAt = new Vector3(0, 0, 0);
+// Removed old spawn-select UI and camera fields.
 
         [Header("Timings")]
         [SerializeField, Min(1f)] private int countdownSeconds = 3;
         [SerializeField, Min(3f)] private float cinematicSeconds = 3.5f;
-        [SerializeField, Min(3f)] private float spawnSelectSeconds = 10f;
-        [SerializeField, Min(10f)] private float roundDurationSeconds = 90f;
-        [SerializeField, Min(2f)] private float roundEndDelaySeconds = 3f;
+        [SerializeField, Min(0f)] private float roundDurationSeconds = 90f;
+
+        [Header("Pre-Round")]
+        [SerializeField, Min(1)] private int preRoundCountdownSeconds = 3;
+        [SerializeField, Min(0f)] private float roundEndDelaySeconds = 0f;
 
         [Header("Win Conditions")]
         [SerializeField, Min(1)] private int winsNeeded = 5;
@@ -81,24 +91,20 @@ namespace Game.Net
         [SerializeField] private TMP_Text _requiredPlayersUI;
         [SerializeField, Min(2)] private int requiredPlayers = 2;
 
-        [Header("Intro Pan")]
-        [SerializeField] Transform mapPanStart;
-        [SerializeField] Transform mapPanEnd;
-        [SerializeField, Min(0.1f)] float mapPanSeconds = 3f;
+        Coroutine _cineCo;   // track coroutines so we can stop safely
 
-        Coroutine _cineCo, _panCo;   // track coroutines so we can stop safely
+// Removed map pan used only by selection flow.
 
-        [Header("Spawn Select Camera Target")]
-        [SerializeField] Transform spawnSelectLookTarget;
+// Removed unused spawn-select camera target.
 
-        [Header("Spawn Camera Framing")]
-        [SerializeField, Min(0.5f)] float spawnCamBackMultiplier = 1.8f;
-        [SerializeField, Min(0f)]   float spawnCamMinBack        = 22f;
-        [SerializeField, Min(0f)]   float spawnCamHeightMin      = 35f;
-        [SerializeField, Min(0.1f)] float spawnCamHeightMultiplier = 3.0f;
-        [SerializeField] Transform  spawnCamBackRef; // Optional: use this transform’s forward for “behind” direction
+// Removed legacy fade-for-selection fields.
 
-        bool _didIntroPanThisRound;
+// Cache for restore after select
+        bool _preSelectOrtho;
+        float _preSelectOrthoSize;
+
+// Removed legacy spawn-select framing settings.
+
         private readonly NetworkVariable<MatchState> _state = new();
         private readonly NetworkVariable<int> _playerCount = new();
         private readonly NetworkVariable<int> _roundNumber = new();
@@ -109,17 +115,14 @@ namespace Game.Net
 
         // Server state
         private readonly Dictionary<ulong, TeamId> _teams = new();
-        private readonly Dictionary<ulong, Vector3> _chosenSpawns = new();
-        private float _spawnDeadlineServer;
+        // removed _chosenSpawns
+        // removed _spawnDeadlineServer
         private bool _firstRound = true;
         private float _roundStartTimeServer;
 
         // Client state
-        private bool _selecting;
-        private Bounds _myAreaBounds;
-        private float _spawnDeadlineLocal;
-        private Coroutine _flyCo, _selectCo, _uiCo;
-        private GameObject _spawnCursor;
+        // removed _selecting, _myAreaBounds, _myAreaBlocked, _myTeam, _spawnDeadlineLocal, _selectCo, _spawnCursor
+        private Coroutine _flyCo, _uiCo;
         private GameObject _shipInstance;
 
         // Camera
@@ -138,6 +141,14 @@ namespace Game.Net
                 RecountPlayers();
                 AssignTeamsIfNeeded();
                 TryStartFlow();
+
+                // Install LOS system on server.
+                LosVisibilitySystem.Install(
+                    networkManager: NetworkManager,
+                    losRadiusMeters: 12f,
+                    fadeSeconds: 1f,
+                    occluderMask: LayerMask.GetMask("Occluder", "OccluderExtra")
+                );
             }
 
             _state.OnValueChanged += (_, __) => RefreshUI();
@@ -154,11 +165,14 @@ namespace Game.Net
 
                 if (returnToLobbyButton)
                     returnToLobbyButton.onClick.AddListener(OnReturnToLobby);
+
+                InvokeRepeating(nameof(RefreshAlwaysOnIcons), 0.5f, 1.0f);
             }
         }
 
         public override void OnNetworkDespawn()
         {
+            StopCinematicClientRpc();
             if (IsServer)
             {
                 NetworkManager.OnClientConnectedCallback -= OnClientConnected;
@@ -167,6 +181,11 @@ namespace Game.Net
 
             if (returnToLobbyButton)
                 returnToLobbyButton.onClick.RemoveListener(OnReturnToLobby);
+
+            if (IsClient)
+                CancelInvoke(nameof(RefreshAlwaysOnIcons));
+
+            if (IsServer) LosVisibilitySystem.Shutdown();
         }
 
         void OnClientConnected(ulong clientId)
@@ -181,7 +200,7 @@ namespace Game.Net
         void OnClientDisconnected(ulong clientId)
         {
             _teams.Remove(clientId);
-            _chosenSpawns.Remove(clientId);
+            // removed _chosenSpawns.Remove(clientId);
             RecountPlayers();
             UpdateRequiredPlayersClientRpc(_playerCount.Value, requiredPlayers);
 
@@ -189,7 +208,7 @@ namespace Game.Net
             {
                 _state.Value = MatchState.Waiting;
                 BroadcastPauseAll(true);
-                _chosenSpawns.Clear();
+                // removed _chosenSpawns.Clear();
             }
         }
 
@@ -242,13 +261,13 @@ namespace Game.Net
             _winsTeamB.Value = 0;
             _suddenDeath.Value = false;
             _firstRound = true;
-            _didIntroPanThisRound = false;
 
             yield return StartRound();
         }
 
         IEnumerator StartRound()
         {
+            StopCinematicClientRpc();
             _state.Value = MatchState.Countdown;
             for (int i = countdownSeconds; i > 0; i--)
             {
@@ -272,30 +291,24 @@ namespace Game.Net
                 SetAllPlayersVisibleClientRpc(false);
             }
 
-            StartSpawnSelect();
-        }
-
-        void StartSpawnSelect()
-        {
-            _state.Value = MatchState.SpawnSelect;
-            _spawnDeadlineServer = Time.unscaledTime + spawnSelectSeconds;
-            _chosenSpawns.Clear();
-
-            foreach (var kv in _teams)
+            // Halftime side swap: from round > ceil(winsNeeded/2) we flip Team A/B spawn sides.
+            if (areas)
             {
-                var cid = kv.Key;
-                var b = areas.GetTeamCollider(kv.Value).bounds;
-                BeginSpawnSelectClientRpc(b.center, b.size, spawnSelectSeconds, ToClient(cid));
+                bool swap = _roundNumber.Value > Mathf.CeilToInt(winsNeeded / 2f);
+                areas.SetSwapSides(swap);
             }
 
-            StartCoroutine(CoWatchSpawnDeadline());
+            // No spawn-choose: immediately spawn both teams at random side points, then do a 3..2..1 and start.
+            SpawnAllAndStartRound();
         }
 
         [ClientRpc]
         void StartCinematicClientRpc()
         {
             if (!IsClient) return;
-            if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
+            if (_state.Value != MatchState.FlyIn) return;        // hard guard
+            if (_shipInstance) return;                           // do not replay if ship exists
+            if (_cineCo != null) StopCoroutine(_cineCo);
             _cineCo = StartCoroutine(CoFlyIn());
         }
 
@@ -413,134 +426,12 @@ namespace Game.Net
             if (_isoCam) _isoCam.enabled = true;
         }
 
-        [ClientRpc]
-        void BeginSpawnSelectClientRpc(Vector3 areaCenter, Vector3 areaSize, float seconds, ClientRpcParams p = default)
-        {
-            if (!IsClient) return;
-
-            _myAreaBounds = new Bounds(areaCenter, areaSize);
-            _spawnDeadlineLocal = Time.unscaledTime + seconds;
-            _selecting = true;
-
-            // Make sure highlight state is set immediately for round 1.
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
-
-            // Run the intro pan once, then open the spawn UI.
-            if (!_didIntroPanThisRound && mapPanStart && mapPanEnd && _cam)
-            {
-                _didIntroPanThisRound = true;
-                // Keep the ship until spawn-select begins. Only hide players/stand-ins and detach the camera.
-                PrepareCinematicForPanLocal();
-                StartCoroutine(CoIntroPanThenOpenSpawnUI());
-                return;
-            }
-
-            // No pan path: frame camera from bounds and open UI now.
-            FrameSpawnCamera(_myAreaBounds);
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
-
-            if (!_spawnCursor)
-            {
-                if (spawnCursorPrefab) _spawnCursor = Instantiate(spawnCursorPrefab);
-                else
-                {
-                    _spawnCursor = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    _spawnCursor.transform.localScale = new Vector3(1f, 0.2f, 1f);
-                    Destroy(_spawnCursor.GetComponent<Collider>());
-                    var rend = _spawnCursor.GetComponent<Renderer>();
-                    if (rend)
-                    {
-                        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                        rend.material = new Material(shader);
-                        rend.material.color = new Color(1f, 1f, 0f, 0.7f);
-                    }
-                }
-                _spawnCursor.SetActive(false);
-            }
-
-            if (_isoCam)
-            {
-                _originalFollow = _isoCam.follow;
-                _isoCam.enabled = false;
-            }
-            if (_cam)
-            {
-                _cam.transform.position = spawnCameraPosition;
-                if (spawnSelectLookTarget)
-                {
-                    var look = (spawnSelectLookTarget.position - _cam.transform.position).normalized;
-                    _cam.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
-                }
-                else
-                {
-                    _cam.transform.rotation = Quaternion.LookRotation((spawnCameraLookAt - spawnCameraPosition).normalized, Vector3.up);
-                }
-            }
-
-            if (_selectCo != null) StopCoroutine(_selectCo);
-            _selectCo = StartCoroutine(CoSpawnSelectTimer());
-        }
-
-        IEnumerator CoSpawnSelectTimer()
-        {
-            while (_selecting && Time.unscaledTime < _spawnDeadlineLocal)
-            {
-                if (spawnHintText)
-                {
-                    float remain = Mathf.Max(0f, _spawnDeadlineLocal - Time.unscaledTime);
-                    spawnHintText.text = $"Click to choose spawn ({remain:0}s)";
-                }
-                yield return null;
-            }
-            if (_selecting) EndSpawnSelect();
-        }
-
         void Update()
         {
             // Avoid nulls before NGO starts
             if (!Application.isPlaying) return;
 
-            if (_selecting && _cam)
-            {
-                var ray = _cam.ScreenPointToRay(Input.mousePosition);
-                Vector3 point = Vector3.zero;
-                bool valid = false;
-
-                if (Physics.Raycast(ray, out RaycastHit hit, 2000f, groundMask, QueryTriggerInteraction.Ignore))
-                {
-                    point = hit.point;
-                    valid = ContainsXZ(_myAreaBounds, point);
-                }
-                if (!valid)
-                {
-                    var plane = new Plane(Vector3.up, new Vector3(0, _myAreaBounds.center.y, 0));
-                    if (plane.Raycast(ray, out float dist))
-                    {
-                        point = ray.GetPoint(dist);
-                        valid = ContainsXZ(_myAreaBounds, point);
-                    }
-                }
-
-                if (valid)
-                {
-                    if (_spawnCursor)
-                    {
-                        _spawnCursor.transform.position = new Vector3(point.x, point.y + 0.5f, point.z);
-                        _spawnCursor.SetActive(true);
-                    }
-
-                    if (Input.GetMouseButtonDown(0))
-                    {
-                        ChooseSpawnServerRpc(point);
-                        EndSpawnSelect();
-                    }
-                }
-                else if (_spawnCursor)
-                {
-                    _spawnCursor.SetActive(false);
-                }
-            }
+            // removed spawn select logic
 
             if (IsClient && _state.Value == MatchState.Playing && roundTimerText)
             {
@@ -552,52 +443,55 @@ namespace Game.Net
             }
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        void ChooseSpawnServerRpc(Vector3 point, ServerRpcParams rpc = default)
-        {
-            if (!IsServer || _state.Value != MatchState.SpawnSelect) return;
-
-            ulong cid = rpc.Receive.SenderClientId;
-            if (!_teams.TryGetValue(cid, out var team)) return;
-
-            var b = areas.GetTeamCollider(team).bounds;
-            if (!ContainsXZ(b, point)) return;
-
-            // Store the exact XZ and let server snap Y to Ground on spawn.
-            _chosenSpawns[cid] = new Vector3(point.x, b.center.y, point.z);
-
-            if (_chosenSpawns.Count >= 2)
-                SpawnAllAndStartRound();
-        }
-
-        IEnumerator CoWatchSpawnDeadline()
-        {
-            yield return new WaitForSecondsRealtime(spawnSelectSeconds + 0.1f);
-            if (_state.Value == MatchState.SpawnSelect)
-                SpawnAllAndStartRound();
-        }
-
         void SpawnAllAndStartRound()
         {
+            if (!IsServer) return;
+
             if (!playerPrefab)
             {
                 Debug.LogError("[Match1v1] Player prefab not assigned on controller.");
                 return;
             }
 
-            // Spawn fresh PlayerObjects at chosen positions.
+            // Spawn fresh PlayerObjects at random fixed points (fallback to unblocked area sample).
             var ids = NetworkManager.ConnectedClientsIds;
             foreach (var cid in ids)
             {
                 if (cid == NetworkManager.ServerClientId) continue;
                 if (!_teams.TryGetValue(cid, out var team)) continue;
 
-                Vector3 point = _chosenSpawns.TryGetValue(cid, out var chosen)
-                    ? chosen
-                    : areas.GetRandomPoint(team);
+                Vector3 point = transform.position;
+
+                if (areas)
+                {
+                    // Prefer designer-defined side arrays; fallback to random unblocked inside team bounds.
+                    if (!areas.TryGetRandomFixedSpawn(team, out point))
+                        point = areas.GetRandomUnblockedPoint(team, 128);
+                }
 
                 SpawnFreshPlayerForClient(cid, point, team);
             }
+
+            // Keep players frozen/paused and visible while we run the 3..2..1 pre-round countdown.
+            SetAllPlayersVisibleClientRpc(true);
+
+            FreezeAllPlayers(true);
+            BroadcastPauseAll(true);
+
+            StopCoroutineSafe(ref _uiCo);
+            StartCoroutine(CoPreRoundCountdownThenStart());
+        }
+
+        IEnumerator CoPreRoundCountdownThenStart()
+        {
+            _state.Value = MatchState.Countdown;
+            for (int i = preRoundCountdownSeconds; i > 0; i--)
+            {
+                CountdownClientRpc(i);
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            CountdownClientRpc(0);
+            yield return new WaitForSecondsRealtime(0.25f);
 
             _state.Value = MatchState.Playing;
             // server-authoritative start/end; guard if server time not ready yet
@@ -608,7 +502,6 @@ namespace Game.Net
             SetAllPlayersVisibleClientRpc(true);
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
-            EndSpawnSelectForAllClientRpc();
 
             StartCoroutine(CoMonitorRound());
         }
@@ -620,7 +513,7 @@ namespace Game.Net
             var t = inst.transform;
 
             // Face neutral center.
-            Vector3 look = areas.GetNeutralCenter() - point;
+            Vector3 look = areas.GetNeutralCenter() - point; // neutral center now from unified split if enabled
             look.y = 0f;
             var rot = look.sqrMagnitude > 0.001f
                 ? Quaternion.LookRotation(look.normalized, Vector3.up)
@@ -628,13 +521,31 @@ namespace Game.Net
 
             t.SetPositionAndRotation(point, rot);
 
-            // Snap to Ground layer before spawning.
+            // Snap to Ground and, if obstructed by geometry, slide to nearest clear ground beside it.
             var capsule = inst.GetComponent<CapsuleCollider>();
-            GroundClampServer.SnapToGround(t, EffectiveGroundMask(), 0.02f, capsule, 10f, 50f);
+            var gmask = EffectiveGroundMask();
+            GroundClampServer.SnapToGround(t, gmask, 0.02f, capsule, 10f, 50f);
+
+            // If still intersecting, try nearest clear on ground
+            if (!GroundClampServer.TryFindNearestClearGround(t.position, out var clear, gmask, capsule, 0.02f, 10f, 50f, 4f, 6, 24))
+            {
+                // keep snapped position even if blocked; depenetration will resolve
+            }
+            else
+            {
+                t.position = clear;
+            }
+
+            // Ensure GroundClampServer exists on server to maintain clamp
+            if (!inst.GetComponent<GroundClampServer>())
+                inst.gameObject.AddComponent<GroundClampServer>();
 
             // Ensure prefab is registered then spawn.
             try { NetworkManager.AddNetworkPrefab(inst.gameObject); } catch { }
             inst.SpawnAsPlayerObject(clientId);
+
+            // Register with LOS server culling.
+            LosVisibilitySystem.Instance?.RegisterTarget(inst, team);
 
             // Initialize team and health post-spawn.
             var pn = inst.GetComponent<PlayerNetwork>();
@@ -643,6 +554,7 @@ namespace Game.Net
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
                 pn.ServerAutoEquipPrimary(); // force Primary on start
+                pn.ClearDeathRecapForOwner();
             }
 // Players spawn already holding Primary.
         }
@@ -696,15 +608,18 @@ namespace Game.Net
                     else roundWinner = -1; // draw
                 }
 
-                if (roundWinner != -1 || Time.time >= _roundEndTime.Value)
+                if (roundWinner != -1 || GetServerNowSafe() >= _roundEndTime.Value)
                 {
                     EndRound(roundWinner);
                     yield break;
                 }
 
-                yield return new WaitForSeconds(0.5f);
+                // Tighter polling so the round ends exactly at 0:00 (≤50ms jitter).
+                yield return new WaitForSeconds(0.05f);
             }
         }
+
+        // Use server clock consistently and increase polling rate so the round flips precisely at 0:00.
 
         void EndRound(int winnerTeam)
         {
@@ -715,11 +630,13 @@ namespace Game.Net
             else { _winsTeamA.Value++; _winsTeamB.Value++; } // draw => both get a point
 
             ShowRoundEndClientRpc(winnerTeam);
+            ClearDeathRecapsClientRpc();
             StartCoroutine(CoPostRoundFlow());
         }
 
         IEnumerator CoPostRoundFlow()
         {
+            StopCinematicClientRpc();
             yield return new WaitForSecondsRealtime(roundEndDelaySeconds);
 
             bool matchOver = false;
@@ -760,7 +677,9 @@ namespace Game.Net
 
         void EndMatch(TeamId winner)
         {
+            StopCinematicClientRpc();
             _state.Value = MatchState.MatchEnd;
+            ClearDeathRecapsClientRpc();
             ShowMatchEndClientRpc(winner);
         }
 
@@ -778,6 +697,12 @@ namespace Game.Net
         }
 
         [ClientRpc]
+        void ClearDeathRecapsClientRpc()
+        {
+            PlayerNetwork.InvokeHideDeathRecap();
+        }
+
+        [ClientRpc]
         void ShowMatchEndClientRpc(TeamId winner)
         {
             if (winPanel)
@@ -788,28 +713,37 @@ namespace Game.Net
             }
         }
 
-        [ClientRpc]
-        void EndSpawnSelectForAllClientRpc()
+        // Apply or restore transparency on configured objects
+        void ApplySelectTransparency(bool on)
         {
-            if (_selecting) EndSpawnSelect();
+            // Removed legacy fade-for-selection logic.
         }
 
-        void EndSpawnSelect()
+        // Minimal URP Lit toggle: Opaque<->Transparent
+        static void TryMakeTransparent(Material mat, bool on)
         {
-            _selecting = false;
-            ShowCanvas(spawnCanvas, false);
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Hidden, new Bounds());
+            if (!mat) return;
 
-            if (_spawnCursor)
+            // URP Lit: _Surface 0=Opaque, 1=Transparent
+            if (mat.HasProperty("_Surface"))
+                mat.SetFloat("_Surface", on ? 1f : 0f);
+
+            // Common blending toggles
+            if (on)
             {
-                Destroy(_spawnCursor);
-                _spawnCursor = null;
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
             }
-
-            if (_isoCam)
+            else
             {
-                _isoCam.follow = _originalFollow;
-                _isoCam.enabled = true;
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+                mat.SetInt("_ZWrite", 1);
+                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = -1; // let shader decide
             }
         }
 
@@ -824,6 +758,8 @@ namespace Game.Net
             return p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z;
         }
 
+        static TeamId OpposingTeam(TeamId team) => team == TeamId.A ? TeamId.B : TeamId.A;
+
         static Transform FindDeep(Transform root, string name)
         {
             if (!root || string.IsNullOrEmpty(name)) return null;
@@ -832,34 +768,17 @@ namespace Game.Net
             return null;
         }
 
-        // Camera framing from spawn area bounds.
-        // Places camera higher and centered behind the look target. Less side bias.
-        void FrameSpawnCamera(Bounds b)
+        // Helper: get precise ground height for cursor placement (uses the same ground mask)
+        float GroundYAt(Vector3 xz)
         {
-            if (!AcquireCameraSafe()) return;
-
-            Vector3 lookPos = spawnSelectLookTarget ? spawnSelectLookTarget.position : b.center;
-
-            // Back distance scales with area size
-            float maxExtent = Mathf.Max(b.extents.x, b.extents.z);
-            float back = Mathf.Max(spawnCamMinBack, maxExtent * spawnCamBackMultiplier);
-
-            // Height scales with area size; ensure a higher vantage
-            float height = Mathf.Max(spawnCamHeightMin, maxExtent * spawnCamHeightMultiplier);
-
-            // Choose a consistent "behind" direction:
-            // 1) Use explicit reference’s forward if provided
-            // 2) Else use spawnSelectLookTarget.forward
-            // 3) Else fall back to pan path direction or world +Z
-            Vector3 behindDir =
-                (spawnCamBackRef ? spawnCamBackRef.forward :
-                (spawnSelectLookTarget ? spawnSelectLookTarget.forward :
-                (mapPanEnd && mapPanStart ? (mapPanEnd.position - mapPanStart.position).normalized : Vector3.forward)));
-
-            // Place camera behind the look target, elevated
-            Vector3 pos = lookPos - behindDir.normalized * back + Vector3.up * height;
-            _cam.transform.SetPositionAndRotation(pos, Quaternion.LookRotation((lookPos - pos).normalized, Vector3.up));
+            var origin = new Vector3(xz.x, 80f + 500f, xz.z);
+            if (Physics.Raycast(origin, Vector3.down, out var hit, 5000f, groundMask, QueryTriggerInteraction.Ignore))
+                return hit.point.y;
+            return xz.y;
         }
+// Camera framing now fits full map with margin even on ultra-wide/tall aspects.
+
+
 
         // Remove any ship/stand-in leftovers and hide real player visuals until actual spawn.
         void ForceClearCinematicResidueLocal()
@@ -924,58 +843,34 @@ namespace Game.Net
             }
         }
 
-        IEnumerator CoIntroPanThenOpenSpawnUI()
-        {
-            if (_panCo != null) { StopCoroutine(_panCo); _panCo = null; }
-            if (!AcquireCameraSafe()) yield break;
+/// <summary>Client-side cinematic cleanup RPC and local helper.</summary>
+[ClientRpc]
+void StopCinematicClientRpc()
+{
+    if (!IsClient) return;
+    CleanupCinematicLocal(restoreCamera:true);
+}
 
-            // temporary disable iso cam while we pan
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
-#else
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
-#endif
-            if (_isoCam) _isoCam.enabled = false;
+void CleanupCinematicLocal(bool restoreCamera)
+{
+    if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
+    DetachCameraFromShip();
+    if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
+    if (_isoCam && restoreCamera) _isoCam.enabled = true;
+}
 
-            // position at start
-            _cam.transform.SetParent(null, true);
-            _cam.transform.position = mapPanStart ? mapPanStart.position : _cam.transform.position;
-            _cam.transform.rotation = mapPanStart ? mapPanStart.rotation : _cam.transform.rotation;
-
-            float t = 0f;
-            while (t < 1f)
-            {
-                if (!AcquireCameraSafe()) yield break;
-                t += Time.unscaledDeltaTime / Mathf.Max(0.001f, mapPanSeconds);
-                _cam.transform.position = Vector3.LerpUnclamped(mapPanStart.position, mapPanEnd.position, t);
-
-                // Always face the spawn-select look target during the pan if assigned
-                if (spawnSelectLookTarget)
-                {
-                    var dir = spawnSelectLookTarget.position - _cam.transform.position;
-                    dir.y = 0f;
-                    if (dir.sqrMagnitude > 1e-4f)
-                        _cam.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
-                }
-                else
-                {
-                    _cam.transform.rotation = Quaternion.SlerpUnclamped(mapPanStart.rotation, mapPanEnd.rotation, t);
-                }
-                yield return null;
-            }
-
-            // cut to spawn-select framing
-            // clear ship/stand-ins NOW that spawn-select begins, then frame and show UI
-            ClearCinematicShip();
-            FrameSpawnCamera(_myAreaBounds);
-            SpawnAreaHighlighter.SetMode(SpawnAreaHighlighter.Mode.Choosing, _myAreaBounds);
-            _panCo = null; // mark pan done
-
-            ShowCanvas(spawnCanvas, true);
-            if (spawnHintText) spawnHintText.text = "Click to choose spawn";
-        }
-
-        // Ensure a SeatMount exists under the ship and return it.
+/// <summary>Detach main camera from ship if it was parented.</summary>
+void DetachCameraFromShip()
+{
+    if (!_cam) _cam = Camera.main;
+    if (!_cam) return;
+    // If camera is parented under the ship, detach and restore last known transform.
+    if (_cam.transform && _cam.transform.parent != null && _shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
+    {
+        _cam.transform.SetParent(null, worldPositionStays:true);
+        _cam.transform.SetPositionAndRotation(_preCinematicCamPos, _preCinematicCamRot);
+    }
+}
         Transform EnsureSeatMount(Transform shipRoot, string mountName)
         {
             var t = FindDeep(shipRoot, mountName);
@@ -1111,6 +1006,62 @@ namespace Game.Net
 
             // Update required players UI
             if (_requiredPlayersUI) _requiredPlayersUI.text = requiredPlayers.ToString();
+
+            RefreshAlwaysOnIcons();
+        }
+
+        void RefreshAlwaysOnIcons()
+        {
+            if (!IsClient) return;
+
+            Sprite iconA = null;
+            Sprite iconB = null;
+
+            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < players.Length; i++)
+            {
+                var player = players[i];
+                if (!player) continue;
+
+                var sprite = ProfileIconLookup.Resolve(player.GetIconId());
+                if (!sprite) sprite = defaultPlayerIcon;
+
+                switch (player.GetTeam())
+                {
+                    case TeamId.A:
+                        if (iconA == null) iconA = sprite;
+                        break;
+                    case TeamId.B:
+                        if (iconB == null) iconB = sprite;
+                        break;
+                }
+            }
+
+            ApplyAlwaysOnIcon(teamAPlayerIcon, iconA);
+            ApplyAlwaysOnIcon(teamBPlayerIcon, iconB);
+        }
+
+        void ApplyAlwaysOnIcon(Image target, Sprite sprite)
+        {
+            if (!target) return;
+            if (sprite)
+            {
+                target.sprite = sprite;
+                target.enabled = true;
+                return;
+            }
+
+            if (defaultPlayerIcon)
+            {
+                target.sprite = defaultPlayerIcon;
+                target.enabled = true;
+            }
+            else
+            {
+                target.enabled = !hidePlayerIconWhenMissing;
+                if (!target.enabled)
+                    target.sprite = null;
+            }
         }
 
         static void ShowCanvas(CanvasGroup cg, bool show)
@@ -1163,13 +1114,6 @@ namespace Game.Net
             return !IsUnityNull(_cam);
         }
 
-        void DetachCameraFromShip()
-        {
-            if (IsUnityNull(_cam)) return;
-            if (_shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
-                _cam.transform.SetParent(null, true);
-        }
-
         static ClientRpcParams ToClient(ulong clientId) =>
             new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } };
 
@@ -1184,6 +1128,9 @@ namespace Game.Net
                 var po = cc.PlayerObject;
                 if (po && po.IsSpawned)
                 {
+                    // Unregister from LOS before destroying.
+                    LosVisibilitySystem.Instance?.UnregisterTarget(po);
+
                     po.Despawn(true); // destroy object on all peers
                 }
             }
@@ -1197,13 +1144,23 @@ namespace Game.Net
         }
 
         // Public method for external health updates
-        public void UpdatePlayerHealth(ulong clientId, float healthDelta)
+        public void UpdatePlayerHealth(ulong clientId, float healthDelta, ulong attackerClientId = ulong.MaxValue)
         {
             if (!IsServer) return;
             var player = NetworkManager.ConnectedClients.TryGetValue(clientId, out var cc) ? cc.PlayerObject?.GetComponent<PlayerNetwork>() : null;
             if (player == null) return;
-            float newHealth = Mathf.Clamp(player.GetHealth() + healthDelta, 0f, 100f);
-            player.SetHealth(newHealth);
+            PlayerNetwork killer = null;
+            if (attackerClientId != ulong.MaxValue && NetworkManager.ConnectedClients.TryGetValue(attackerClientId, out var killerClient))
+                killer = killerClient.PlayerObject ? killerClient.PlayerObject.GetComponent<PlayerNetwork>() : null;
+
+            player.ApplyHealthDelta(healthDelta, killer);
+        }
+
+        void StopCoroutineSafe(ref Coroutine co)
+        {
+            if (co != null) { StopCoroutine(co); co = null; }
         }
     }
+
+    // moved into Match1v1Controller class
 }

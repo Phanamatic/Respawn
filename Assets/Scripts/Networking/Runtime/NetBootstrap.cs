@@ -28,8 +28,11 @@ namespace Game.Net
         {
             if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null)
             {
+                // Redundant with NetworkConfigOptimizer but safe if that object is removed.
                 QualitySettings.vSyncCount = 0;
+                QualitySettings.maxQueuedFrames = 1;
                 Application.targetFrameRate = 60;
+                Application.runInBackground = true;
             }
 
             var args = new Args(Environment.GetCommandLineArgs());
@@ -201,6 +204,14 @@ namespace Game.Net
                 if (nm.NetworkConfig == null) nm.NetworkConfig = new NetworkConfig();
                 if (nm.NetworkConfig.NetworkTransport == null) nm.NetworkConfig.NetworkTransport = utp;
 
+                // Pin NGO tick (server + client). 128 is your fixedDeltaTime; keep them aligned.
+                nm.NetworkConfig.TickRate = 128;
+
+                // Configure Unity Transport for direct UDP with WAN-safe payload.
+                // Payload ~1200 bytes to respect typical internet MTU when headers are present.
+                utp.MaxPayloadSize = 1200;
+                // [DirectNet] Direct UDP C→S; MTU-safe payloads.
+
                 SanitizeNetworkPrefabs(nm);
 
                 // CLI
@@ -224,26 +235,52 @@ namespace Game.Net
                         string bind = args.GetStr("-bind", Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0");
                         int port = args.GetInt("-port", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp) ? lp : 7777);
 
-                        // Configure UTP to listen
-                        utp.SetConnectionData(bind, (ushort)port, bind);
+                        // Auto-port fallback (server): try requested port then walk up to MAX_PORT
+                        var cmd = new System.Collections.Generic.List<string>(System.Environment.GetCommandLineArgs());
 
-                        if (!nm.StartServer())
+                        var listenBind = System.Environment.GetEnvironmentVariable("BIND") ?? "0.0.0.0";
+                        ushort basePort = (ushort)(System.Environment.GetEnvironmentVariable("BASE_PORT") is string bp && ushort.TryParse(bp, out var bpp) ? bpp : 7777);
+                        ushort maxPort  = (ushort)(System.Environment.GetEnvironmentVariable("MAX_PORT")  is string mp && ushort.TryParse(mp, out var mpp) ? mpp : 7786);
+                        ushort initial  = (ushort)cmd.GetUShort("-port", basePort);
+
+                        var transport = (Unity.Netcode.Transports.UTP.UnityTransport)NetworkManager.Singleton.NetworkConfig.NetworkTransport;
+
+                        ushort chosen = 0;
+                        for (ushort p = initial; p <= maxPort; p++)
                         {
-                            Debug.LogError("[NetBootstrap] StartServer failed.");
+                            // Server listen bind
+                            transport.SetConnectionData(listenBind, p);   // address, port
+                            if (NetworkManager.Singleton.StartServer())
+                            {
+                                chosen = p;
+                                UnityEngine.Debug.Log($"[DirectNet] Bound {listenBind}:{chosen} (range {initial}-{maxPort})");
+                                break;
+                            }
+                            UnityEngine.Debug.LogWarning($"[DirectNet] Port {p} busy, trying next...");
+                        }
+
+                        if (chosen == 0)
+                        {
+                            UnityEngine.Debug.LogError($"[NetBootstrap] StartServer failed across range {initial}-{maxPort}. No free UDP port.");
                             return;
                         }
 
+                        // Read hosts for Lobby publish (if your advertiser uses them)
+                        var publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com");
+                        var lanHost    = cmd.Get("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
+                        // TODO: Publish PublicHost=publicHost, PublicPort=chosen, LanEndpoint=$"{lanHost}:{chosen}", Region=<ZA>.
+
                         // Build lobby metadata for discovery only
-                        string publicHost = args.GetStr("-publicHost", Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
-                        int publicPort = args.GetInt("-publicPort", int.TryParse(Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var pp) ? pp : port);
+                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
+                        int publicPort = (int)cmd.GetUShort("-publicPort", chosen);
                         // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
-                        string lanHost = args.GetStr("-lanHost", Environment.GetEnvironmentVariable("LAN_HOST") ?? bind);
+                        lanHost = cmd.Get("-lanHost", System.Environment.GetEnvironmentVariable("LAN_HOST") ?? listenBind);
                         if (lanHost == "0.0.0.0" || lanHost == "127.0.0.1")
                         {
                             var auto = ResolveLocalIPv4();
                             if (!string.IsNullOrWhiteSpace(auto)) lanHost = auto;
                         }
-                        int lanPort = args.GetInt("-lanPort", int.TryParse(Environment.GetEnvironmentVariable("LAN_PORT"), out var lp2) ? lp2 : port);
+                        int lanPort = (int)cmd.GetUShort("-lanPort", chosen);
 
                         var lobbyName = $"{type}_{Guid.NewGuid():N}".Substring(0, 15);
                         var lobbyOptions = new CreateLobbyOptions
@@ -268,7 +305,10 @@ namespace Game.Net
 
                         SessionContext.SetSession(lobby.Id, "");
                         SessionContext.SetLobby(lobby);
+                        Debug.Log("[Bootstrap] FixedUpdate=" + Time.fixedDeltaTime + " vSyncCount=" + QualitySettings.vSyncCount);
                         Debug.Log($"[DirectNet] Hosting {type}. LobbyId={lobby.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort} Region={region}");
+
+                        // Adds [Bootstrap] tag and reports timing.
 
                         StartCoroutine(LobbyHeartbeat(lobby.Id));
                     }

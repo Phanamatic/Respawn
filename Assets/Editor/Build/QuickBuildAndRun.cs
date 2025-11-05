@@ -105,27 +105,56 @@ public static class QuickBuildAndRun
 
     [MenuItem("Build/Quick/Run Seeds/Run Lobby")]
     public static void RunLobbySeed() =>
-        RunServer(ArgsForServer("lobby", 16, SceneLobby, DefaultEnv, "lobby_seed.log"));
+        RunServer(ArgsForServer("lobby", 16, SceneLobby, DefaultEnv, "lobby_seed.log", 7777, 7777));
 
     [MenuItem("Build/Quick/Run Seeds/Run 1v1")]
     public static void Run1v1Seed() =>
-        RunServer(ArgsForServer("1v1", 2, Scene1v1, DefaultEnv, "1v1_seed.log"));
+        RunServer(ArgsForServer("1v1", 2, Scene1v1, DefaultEnv, "1v1_seed.log", 7778, 7778));
 
     [MenuItem("Build/Quick/Run Seeds/Run 2v2")]
     public static void Run2v2Seed() =>
-        RunServer(ArgsForServer("2v2", 4, Scene2v2, DefaultEnv, "2v2_seed.log"));
+        RunServer(ArgsForServer("2v2", 4, Scene2v2, DefaultEnv, "2v2_seed.log", 7780, 7780));
+
+    [MenuItem("Build/Quick/Run Preset/Run Local Pack (Lobby x1, 1v1 x2, 2v2 x1)")]
+    public static void RunLocalPack()
+    {
+        // Lobby x1 on 7777
+        RunServer(ArgsForServer("lobby", 16, SceneLobby,  DefaultEnv, "lobby_7777.log", 7777, 7777));
+
+        // 1v1 x2 on 7778 & 7779
+        RunServer(ArgsForServer("1v1",  2,  Scene1v1,     DefaultEnv, "1v1_7778.log",  7778, 7778));
+        RunServer(ArgsForServer("1v1",  2,  Scene1v1,     DefaultEnv, "1v1_7779.log",  7779, 7779));
+
+        // 2v2 x1 on 7780
+        RunServer(ArgsForServer("2v2",  4,  Scene2v2,     DefaultEnv, "2v2_7780.log",  7780, 7780));
+    }
+    // New preset spawns exactly 1 Lobby, 2×1v1, 1×2v2 with fixed ports.
+
+    [MenuItem("Build/Quick/Run Seeds/Run Lobby x10 (7777-7786)")]
+    public static void RunLobbyRange10()
+    {
+        for (int port = 7777; port <= 7786; port++)
+            RunServer(ArgsForServer("lobby", 16, SceneLobby, DefaultEnv, $"lobby_{port}.log", port, port));
+    }
+    // Each menu item now launches with a unique port; the range command spawns 10 lobby servers.
 
     [MenuItem("Build/Quick/Run Seeds/Run All")]
     public static void RunAllSeeds() { RunLobbySeed(); Run1v1Seed(); Run2v2Seed(); }
 
-    // Direct hosting: bind+port, publish region only as metadata.
-    private static string ArgsForServer(string type, int max, string scene, string env, string logfile)
+    // Direct hosting: bind+port, publish explicit LAN/Public endpoints used by clients (no Relay).
+    private static string ArgsForServer(string type, int max, string scene, string env, string logfile, int port, int publicPort = 0)
     {
-        var pub = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1";
-        var lan = Environment.GetEnvironmentVariable("LAN_HOST") ?? "0.0.0.0";
-        return $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} -bind 0.0.0.0 -port 7777 -publicHost {pub} -lanHost {lan} -logfile .\\{logfile}";
+        var publicHost = Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1";
+        var lanHost    = Environment.GetEnvironmentVariable("LAN_HOST")    ?? "0.0.0.0";
+        var pubPort    = publicPort > 0 ? publicPort : port;
+
+        return $"-batchmode -nographics -mpsHost -serverType {type} -max {max} -scene {scene} -env {env} -profile {ServerProfile} -region {DefaultRegion} " +
+               $"-bind 0.0.0.0 -port {port} " +
+               $"-lanHost {lanHost} -lanPort {port} " +
+               $"-publicHost {publicHost} -publicPort {pubPort} " +
+               $"-logfile .\\{logfile}";
     }
-    // [DirectNet] Without -mpsHost NetBootstrap idles and won't create the Lobby.
+    // Each server binds a unique port and advertises matching LAN/Public ports to Lobby metadata.
 
     private static void RunServer(string args)
     {
