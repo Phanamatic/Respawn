@@ -444,30 +444,33 @@ namespace Game.Net
                 return @default;
             }
 
-            private static string ResolveLocalLanIPv4()
+            private static string ResolveLocalLanIPv4PreferLan()
             {
+                // Prefer 192.168.x.x, then 10.x.x.x, then 172.16–31.x.x
                 try
                 {
-                    var all = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
-                    foreach (var nic in all)
+                    var matches = new System.Collections.Generic.List<string>();
+                    foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
                     {
                         if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
-                        var ipProps = nic.GetIPProperties();
-                        foreach (var ua in ipProps.UnicastAddresses)
+                        foreach (var ua in nic.GetIPProperties().UnicastAddresses)
                         {
-                            var ip = ua.Address;
-                            if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                            var ip = ua.Address; if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
                             var s = ip.ToString();
-                            if (s.StartsWith("192.168.") || s.StartsWith("10.") || s.StartsWith("172.16.") || s.StartsWith("172.17.") ||
-                                s.StartsWith("172.18.") || s.StartsWith("172.19.") || s.StartsWith("172.2") || s.StartsWith("172.3"))
-                                return s;
+                            if (s.StartsWith("192.168.")) matches.Add(s);
+                            else if (s.StartsWith("10.")) matches.Add(s);
+                            else if (s.StartsWith("172.16.") || s.StartsWith("172.17.") || s.StartsWith("172.18.") || s.StartsWith("172.19.") ||
+                                     s.StartsWith("172.2")   || s.StartsWith("172.3")) matches.Add(s);
                         }
                     }
+                    foreach (var s in matches) if (s.StartsWith("192.168.")) return s;
+                    foreach (var s in matches) if (s.StartsWith("10.")) return s;
+                    foreach (var s in matches) return s;
                 }
-                catch {}
+                catch { }
                 return null;
             }
-            // Dev: best-effort private IPv4 pick for LAN advertisement.
+            // Dev: deterministic pick so Hyper-V/Tailscale 172.x doesn’t win over your real 192.168.x NIC.
 
             private System.Collections.IEnumerator HeadlessServerFlow()
             // Use the non-generic IEnumerator for Unity coroutines.
@@ -479,14 +482,15 @@ namespace Game.Net
                 string region          = GetArg("-region", System.Environment.GetEnvironmentVariable("REGION") ?? "ZA");
 
                 // Server endpoints (prefer env vars; fall back to DDNS + fixed LAN)
-                string publicHost = System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? GetArg("-publicHost", "respawnserver.tplinkdns.com");
+                string publicHost = GetArg("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com");
                 int    publicPort = int.TryParse(System.Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var p1) ? p1 : int.Parse(GetArg("-port", "7777"));
-                string lanHost    = System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? GetArg("-lanHost", "192.168.0.150");
+                string lanHost    = GetArg("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
                 int    lanPort    = int.TryParse(System.Environment.GetEnvironmentVariable("LAN_PORT"), out var p2) ? p2 : publicPort;
 
-                // Resolve a real LAN IP if someone passed 0.0.0.0 (not connectable)
+                // Never advertise loopback / wildcard
+                if (publicHost == "127.0.0.1") publicHost = "respawnserver.tplinkdns.com";
                 if (string.IsNullOrWhiteSpace(lanHost) || lanHost == "0.0.0.0")
-                    lanHost = ResolveLocalLanIPv4() ?? "192.168.0.150";
+                    lanHost = ResolveLocalLanIPv4PreferLan() ?? "192.168.0.150";
 
                 // Normalized server kind (used for S1 indexing)
                 string serverTypeArg = GetArg("-serverType", "lobby").ToLowerInvariant();
@@ -496,6 +500,7 @@ namespace Game.Net
                     "2v2" => "2v2",
                     _     => "Lobby"
                 };
+                // Dev: don’t let loopback sneak back in; compute Lobby/1v1/2v2 once and reuse.
 
                 // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
                 if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)

@@ -461,6 +461,25 @@ namespace Game.Net
             s_MinQueryIntervalSeconds = 3.5;
 
             s_LobbyCache = task.Result.Results ?? new List<Lobby>();
+
+            // Client-side hygiene: keep only valid Lobby entries with usable endpoints and de-dup by PublicHost:PublicPort
+            var filtered = new List<Lobby>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var l in s_LobbyCache)
+            {
+                if (l.Data == null) continue;
+                if (!l.Data.TryGetValue("ServerType", out var kind) || !string.Equals(kind.Value, "Lobby", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!l.Data.TryGetValue("PublicHost", out var host) || !l.Data.TryGetValue("PublicPort", out var port))
+                    continue;
+                if (string.IsNullOrWhiteSpace(host.Value) || host.Value == "127.0.0.1") // skip loopback
+                    continue;
+                var key = $"{host.Value}:{port.Value}";
+                if (seen.Add(key)) filtered.Add(l);
+            }
+            s_LobbyCache = filtered;
+
+            // Now show the *filtered* count
             s_LobbyCacheAt = Time.unscaledTimeAsDouble;
 
             // If the filtered query returned nothing, run a one-shot, unfiltered diagnostic.
@@ -471,6 +490,7 @@ namespace Game.Net
                 if (openLobbiesText) openLobbiesText.text = $"Open Lobbies (0) • Check Project/Env";
             }
             SetOpenCountText(s_LobbyCache);
+            // Dev: fixes “Open Lobbies (6)” by ignoring duplicates and loopback-published entries.
         }
 
         // Single diagnostic pass: no filters, logs what we can see.
