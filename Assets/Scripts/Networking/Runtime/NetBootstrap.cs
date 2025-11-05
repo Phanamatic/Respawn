@@ -214,6 +214,12 @@ namespace Game.Net
 
                 // Pin NGO tick (server + client). 128 is your fixedDeltaTime; keep them aligned.
                 nm.NetworkConfig.TickRate = 128;
+                // Parity with client Optimizer in case it hasn't run yet on server.
+                nm.NetworkConfig.RpcHashSize = HashSize.VarIntFourBytes;
+                nm.NetworkConfig.EnableSceneManagement = true;
+                nm.NetworkConfig.ForceSamePrefabs = true;
+                // [DirectNet] Keep config hash identical across client/server early.
+                // Matches client-side Optimizer defaults to avoid handshake rejects.
 
                 // Configure Unity Transport for direct UDP with WAN-safe payload.
                 // Payload ~1200 bytes to respect typical internet MTU when headers are present.
