@@ -609,7 +609,13 @@ namespace Game.Net
             {
                 if (!Application.isBatchMode && !HasArg("-nographics")) return;
                 TryDisableRenderPipelineAsset();
-                if (FindObjectOfType<HeadlessCameraDisabler>() != null) return;
+                HeadlessCameraDisabler existing = null;
+#if UNITY_2023_1_OR_NEWER || UNITY_6000_0_OR_NEWER
+                existing = UnityEngine.Object.FindFirstObjectByType<HeadlessCameraDisabler>(FindObjectsInactive.Include);
+#else
+                existing = UnityEngine.Object.FindObjectOfType<HeadlessCameraDisabler>();
+#endif
+                if (existing != null) return;
 
                 var go = new GameObject("HeadlessCameraDisabler")
                 {
@@ -625,7 +631,11 @@ namespace Game.Net
                 {
                     SceneManager.sceneLoaded += OnSceneLoaded;
                     RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+#if UNITY_2023_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+                    RenderPipelineManager.beginContextRendering += OnBeginContextRendering;
+#else
                     RenderPipelineManager.beginFrameRendering += OnBeginFrameRendering;
+#endif
                     DisableAllCameras();
                 }
 
@@ -633,7 +643,11 @@ namespace Game.Net
                 {
                     SceneManager.sceneLoaded -= OnSceneLoaded;
                     RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+#if UNITY_2023_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+                    RenderPipelineManager.beginContextRendering -= OnBeginContextRendering;
+#else
                     RenderPipelineManager.beginFrameRendering -= OnBeginFrameRendering;
+#endif
                 }
 
                 static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -646,6 +660,16 @@ namespace Game.Net
                     DisableCamera(camera);
                 }
 
+#if UNITY_2023_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+                static void OnBeginContextRendering(ScriptableRenderContext context, List<Camera> cameras)
+                {
+                    if (cameras == null) return;
+                    for (int i = 0; i < cameras.Count; i++)
+                    {
+                        DisableCamera(cameras[i]);
+                    }
+                }
+#else
                 static void OnBeginFrameRendering(ScriptableRenderContext context, Camera[] cameras)
                 {
                     if (cameras != null)
@@ -656,6 +680,7 @@ namespace Game.Net
                         }
                     }
                 }
+#endif
 
                 static void DisableAllCameras()
                 {

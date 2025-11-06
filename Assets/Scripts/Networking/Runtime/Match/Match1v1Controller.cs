@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Unity.Netcode;
 using Game.Net; // use existing GroundClampServer
 // Resolve type without fully qualifying everywhere.
@@ -122,7 +123,7 @@ namespace Game.Net
 
         // Client state
         // removed _selecting, _myAreaBounds, _myAreaBlocked, _myTeam, _spawnDeadlineLocal, _selectCo, _spawnCursor
-        private Coroutine _flyCo, _uiCo;
+    private Coroutine _flyCo, _uiCo, _iconWarmupCo;
         private GameObject _shipInstance;
 
         // Camera
@@ -159,6 +160,8 @@ namespace Game.Net
 
             if (IsClient)
             {
+                var identityTask = Game.Services.PlayerIdentityState.EnsureIdentityAsync();
+
                 _cam = Camera.main;
                 if (_cam) _isoCam = _cam.GetComponent<IsometricCamera>();
                 RefreshUI();
@@ -166,6 +169,10 @@ namespace Game.Net
                 if (returnToLobbyButton)
                     returnToLobbyButton.onClick.AddListener(OnReturnToLobby);
 
+                StopCoroutineSafe(ref _iconWarmupCo);
+                _iconWarmupCo = StartCoroutine(CoAwaitIdentity(identityTask));
+
+                RefreshAlwaysOnIcons();
                 InvokeRepeating(nameof(RefreshAlwaysOnIcons), 0.5f, 1.0f);
             }
         }
@@ -183,7 +190,10 @@ namespace Game.Net
                 returnToLobbyButton.onClick.RemoveListener(OnReturnToLobby);
 
             if (IsClient)
+            {
                 CancelInvoke(nameof(RefreshAlwaysOnIcons));
+                StopCoroutineSafe(ref _iconWarmupCo);
+            }
 
             if (IsServer) LosVisibilitySystem.Shutdown();
         }
@@ -817,7 +827,6 @@ namespace Game.Net
             }
         }
 
-        // Destroy ship and any client-only stand-ins once spawn-select begins.
         void ClearCinematicShip()
         {
             DetachCameraFromShip();
@@ -922,7 +931,39 @@ void DetachCameraFromShip()
         void SetAllPlayersVisibleClientRpc(bool visible)
         {
             var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            foreach (var pl in players) if (pl) pl.SetVisible(visible);
+            if (players == null || players.Length == 0) return;
+
+            PlayerNetwork local = null;
+            for (int i = 0; i < players.Length; i++)
+            {
+                var pl = players[i];
+                if (!pl) continue;
+                if (pl.IsOwner)
+                {
+                    local = pl;
+                    break;
+                }
+            }
+
+            var localTeam = local ? local.GetTeam() : TeamId.A;
+
+            for (int i = 0; i < players.Length; i++)
+            {
+                var pl = players[i];
+                if (!pl) continue;
+
+                bool sameTeam = local && pl.GetTeam() == localTeam;
+                bool affect = pl.IsOwner || sameTeam;
+
+                if (visible)
+                {
+                    if (affect) pl.SetVisible(true);
+                }
+                else
+                {
+                    pl.SetVisible(false);
+                }
+            }
         }
 
         // Live "players joined" UI update
@@ -1039,6 +1080,21 @@ void DetachCameraFromShip()
 
             ApplyAlwaysOnIcon(teamAPlayerIcon, iconA);
             ApplyAlwaysOnIcon(teamBPlayerIcon, iconB);
+        }
+
+        IEnumerator CoAwaitIdentity(Task identityTask)
+        {
+            if (identityTask == null) yield break;
+            while (!identityTask.IsCompleted)
+                yield return null;
+
+            // Consume exception to avoid unobserved fault, but continue refreshing icons.
+            if (identityTask.IsFaulted && identityTask.Exception != null)
+            {
+                Debug.LogWarning($"[Match1v1] Identity preload failed: {identityTask.Exception.GetBaseException().Message}");
+            }
+
+            RefreshAlwaysOnIcons();
         }
 
         void ApplyAlwaysOnIcon(Image target, Sprite sprite)

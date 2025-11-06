@@ -12,8 +12,9 @@ namespace Game.Net
     public static class CloudSaveClient
     {
         // Use simple, compliant key (alphanumeric only).
-    const string Key = "LoadoutV1";
-    const string StatsKey = "MatchStatsV1";
+        const string Key = "LoadoutV1";
+        const string StatsKey = "MatchStatsV1";
+        static readonly string[] LegacyKeys = { "game.loadout.v1", "player.loadout" };
 
         public static async Task<PlayerLoadout> LoadLoadoutAsync(PlayerLoadout fallback)
         {
@@ -21,28 +22,34 @@ namespace Game.Net
             {
                 await EnsureReadyAsync();
 
-                var keys = new HashSet<string> { Key, "game.loadout.v1", "player.loadout" }; // backward-compat
-                var resp = await CloudSaveService.Instance.Data.Player.LoadAsync(keys);
-
-                // pick first present key
-                foreach (var k in keys)
+                var primaryKeys = new HashSet<string> { Key };
+                var resp = await CloudSaveService.Instance.Data.Player.LoadAsync(primaryKeys);
+                if (resp != null && resp.TryGetValue(Key, out var item))
                 {
-                    if (resp != null && resp.TryGetValue(k, out var item))
-                    {
-                        var json = item.Value.GetAsString();
-                        if (string.IsNullOrWhiteSpace(json)) continue;
+                    if (TryParseLoadout(item.Value.GetAsString(), fallback, out var parsed))
+                        return parsed;
+                }
 
-                        var dto = JsonUtility.FromJson<LoadoutDTO>(json);
-                        var lo = new PlayerLoadout
+                var all = await CloudSaveService.Instance.Data.Player.LoadAllAsync();
+                if (all != null)
+                {
+                    for (int i = 0; i < LegacyKeys.Length; i++)
+                    {
+                        var legacyKey = LegacyKeys[i];
+                        if (string.IsNullOrEmpty(legacyKey)) continue;
+                        if (!all.TryGetValue(legacyKey, out var legacyItem) || legacyItem?.Value == null) continue;
+
+                        if (TryParseLoadout(legacyItem.Value.GetAsString(), fallback, out var migrated))
                         {
-                            Primary   = Enum.TryParse(dto.primary,   true, out PrimaryType p)   ? p : fallback.Primary,
-                            Secondary = Enum.TryParse(dto.secondary, true, out SecondaryType s) ? s : fallback.Secondary,
-                            Utility   = Enum.TryParse(dto.utility,   true, out UtilityType u)   ? u : fallback.Utility
-                        };
-                        if ((byte)lo.Utility > (byte)UtilityType.Stun) lo.Utility = UtilityType.Grenade;
-                        return lo;
+                            await SaveLoadoutAsync(migrated);
+                            return migrated;
+                        }
                     }
                 }
+            }
+            catch (Unity.Services.CloudSave.CloudSaveValidationException ve)
+            {
+                Debug.LogWarning($"[CloudSave] Load skipped (validation): {ve.Reason} {ve.Message} {FormatValidationDetails(ve)}");
             }
             catch (Exception e)
             {
@@ -180,6 +187,51 @@ namespace Game.Net
             if (sum < 0) return 0;
             if (sum > int.MaxValue) return int.MaxValue;
             return (int)sum;
+        }
+
+        static bool TryParseLoadout(string json, PlayerLoadout fallback, out PlayerLoadout loadout)
+        {
+            loadout = fallback;
+            if (string.IsNullOrWhiteSpace(json)) return false;
+
+            try
+            {
+                var dto = JsonUtility.FromJson<LoadoutDTO>(json);
+                if (string.IsNullOrWhiteSpace(dto.primary) && string.IsNullOrWhiteSpace(dto.secondary) && string.IsNullOrWhiteSpace(dto.utility))
+                    return false;
+
+                var parsed = new PlayerLoadout
+                {
+                    Primary   = Enum.TryParse(dto.primary,   true, out PrimaryType p)   ? p : fallback.Primary,
+                    Secondary = Enum.TryParse(dto.secondary, true, out SecondaryType s) ? s : fallback.Secondary,
+                    Utility   = Enum.TryParse(dto.utility,   true, out UtilityType u)   ? u : fallback.Utility
+                };
+
+                if ((byte)parsed.Utility > (byte)UtilityType.Stun) parsed.Utility = UtilityType.Grenade;
+                loadout = parsed;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CloudSave] Failed to parse loadout JSON: {ex.Message}");
+                return false;
+            }
+        }
+
+        static string FormatValidationDetails(Unity.Services.CloudSave.CloudSaveValidationException ve)
+        {
+            if (ve?.Details == null || ve.Details.Count == 0) return string.Empty;
+
+            var parts = new List<string>(ve.Details.Count);
+            for (int i = 0; i < ve.Details.Count; i++)
+            {
+                var d = ve.Details[i];
+                if (d == null) continue;
+                string key = !string.IsNullOrEmpty(d.Key) ? d.Key : d.Field;
+                string msg = d.Messages != null && d.Messages.Count > 0 ? string.Join(";", d.Messages) : string.Empty;
+                parts.Add($"{key}: {msg}");
+            }
+            return string.Join(" | ", parts);
         }
 
         // Initializes Services and ensures authentication before Cloud Save calls.

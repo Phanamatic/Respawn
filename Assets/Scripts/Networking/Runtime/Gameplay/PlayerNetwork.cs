@@ -244,8 +244,11 @@ namespace Game.Net
                 TrySnapToGroundImmediate();
                 ResolveInitialPenetration();
 
-                // Lock physics rotation on all axes; mouse aim will set yaw explicitly.
-                if (_rb) _rb.constraints |= RigidbodyConstraints.FreezeRotationY;
+                if (_rb)
+                {
+                    _rb.constraints &= ~(RigidbodyConstraints.FreezeRotationY);
+                    _rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+                }
 
                 SetPhase(initialPhase);
                 if (initialPhase == PlayerPhase.Match)
@@ -346,8 +349,8 @@ namespace Game.Net
             _rb.useGravity = true;
             _rb.interpolation = RigidbodyInterpolation.None;
             _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-            // Prevent physics-induced yaw. Mouse aim drives rotation.
-            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationY | RigidbodyConstraints.FreezeRotationZ;
+            // Prevent physics-induced tipping while allowing scripted yaw.
+            _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
 
             var root = modelRoot ? modelRoot : transform;
             _renderers = root.GetComponentsInChildren<Renderer>(true);
@@ -672,6 +675,7 @@ namespace Game.Net
 void RequestSwitchSlot(byte slot)
 {
     if (_inputPaused) return;
+    if (_phase != PlayerPhase.Match) return;
     if (slot > 3) return;
     RequestSwitchSlotServerRpc(slot);
 }
@@ -679,6 +683,7 @@ void RequestSwitchSlot(byte slot)
 [ServerRpc]
 void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
 {
+    if (_phase != PlayerPhase.Match) return;
     if (slot > 3) return;
 
     // Min interval
@@ -1103,9 +1108,27 @@ void OnActiveSlotChanged()
             if (_cam)
             {
                 var ray = _cam.ScreenPointToRay(_inMouse);
+                Vector3 aimPoint = transform.position;
+                bool aimResolved = false;
+
                 if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
                 {
-                    var dir = hit.point - transform.position; dir.y = 0f;
+                    aimPoint = hit.point;
+                    aimResolved = true;
+                }
+                else
+                {
+                    var plane = new Plane(Vector3.up, transform.position);
+                    if (plane.Raycast(ray, out float enter))
+                    {
+                        aimPoint = ray.GetPoint(enter);
+                        aimResolved = true;
+                    }
+                }
+
+                if (aimResolved)
+                {
+                    var dir = aimPoint - transform.position; dir.y = 0f;
                     if (dir.sqrMagnitude > 0.0001f)
                         yaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
                 }
@@ -1129,7 +1152,9 @@ void OnActiveSlotChanged()
 
             if (_isDashing)
             {
-                transform.rotation = Quaternion.Euler(0f, _dashYaw, 0f);
+                var dashRot = Quaternion.Euler(0f, _dashYaw, 0f);
+                if (_rb) _rb.MoveRotation(dashRot);
+                transform.rotation = dashRot;
 
                 float tNorm = Mathf.Clamp01((now - _dashStartTime) / dashDuration);
                 float sPrime = 0.5f * Mathf.PI * Mathf.Sin(Mathf.PI * tNorm);
@@ -1159,13 +1184,17 @@ void OnActiveSlotChanged()
             wish.y = 0f;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0f, yaw, 0f), 1080f * dt);
+            var targetRot = Quaternion.Euler(0f, yaw, 0f);
+            var nextRot = Quaternion.RotateTowards(transform.rotation, targetRot, 1080f * dt);
+            if (_rb) _rb.MoveRotation(nextRot);
+            transform.rotation = nextRot;
 
             float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
             var vel = _rb.linearVelocity;
             vel.x = wish.x * speedMove;
             vel.z = wish.z * speedMove;
             _rb.linearVelocity = vel;
+            _rb.angularVelocity = Vector3.zero;
 
             if (useLegacyStateReplication && Time.frameCount % 4 == 0) // ~15 Hz when enabled
             {

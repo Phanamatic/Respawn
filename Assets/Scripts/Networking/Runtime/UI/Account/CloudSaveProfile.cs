@@ -9,7 +9,8 @@ namespace Game.Services
     /// Cloud Save helpers for profile data.
     public static class CloudSaveProfile
     {
-        const string KeyProfileIcon = "profile_icon"; // no dots
+    const string KeyProfileIcon = "profile_icon"; // no dots
+    const string LegacyKeyProfileIcon = "profile.icon";
 
         public static async Task<bool> SaveProfileIconAsync(string iconId)
         {
@@ -33,13 +34,12 @@ namespace Game.Services
                 // First try new key.
                 var keys = new HashSet<string> { KeyProfileIcon };
                 var res = await CloudSaveService.Instance.Data.Player.LoadAsync(keys);
-                if (res.TryGetValue(KeyProfileIcon, out Item item))
+                if (res != null && res.TryGetValue(KeyProfileIcon, out Item item))
                     return item.Value.GetAsString();
 
                 // Migration: fallback to old dotted key if it exists, then re-save to new key.
-                var legacy = new HashSet<string> { "profile.icon" };
-                var oldRes = await CloudSaveService.Instance.Data.Player.LoadAsync(legacy);
-                if (oldRes.TryGetValue("profile.icon", out Item old) && old.Value != null)
+                var all = await CloudSaveService.Instance.Data.Player.LoadAllAsync();
+                if (all != null && all.TryGetValue(LegacyKeyProfileIcon, out Item old) && old.Value != null)
                 {
                     var val = old.Value.GetAsString();
                     await SaveProfileIconAsync(val);
@@ -48,7 +48,20 @@ namespace Game.Services
             }
             catch (Unity.Services.CloudSave.CloudSaveValidationException ve)
             {
-                Debug.LogWarning($"[CloudSaveProfile] LoadProfileIcon validation: {ve.Reason}");
+                string details = string.Empty;
+                if (ve.Details != null && ve.Details.Count > 0)
+                {
+                    var parts = new List<string>(ve.Details.Count);
+                    for (int i = 0; i < ve.Details.Count; i++)
+                    {
+                        var d = ve.Details[i];
+                        if (d == null) continue;
+                        string msg = d.Messages != null && d.Messages.Count > 0 ? string.Join(";", d.Messages) : null;
+                        parts.Add($"key={d.Key ?? d.Field}: {msg}");
+                    }
+                    details = string.Join(" | ", parts);
+                }
+                Debug.LogWarning($"[CloudSaveProfile] LoadProfileIcon validation: {ve.Reason} {ve.Message} {details}");
             }
             catch (System.Exception e)
             {
