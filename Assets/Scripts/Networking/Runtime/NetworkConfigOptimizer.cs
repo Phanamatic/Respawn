@@ -42,6 +42,27 @@ namespace Game.Net
             ApplyPhysicsAndFps();
         }
 
+        private System.Collections.IEnumerator WaitAndApply()
+        {
+            const float timeout = 20f;
+            float t = 0f;
+            NetworkManager nm = null;
+            while (t < timeout && (nm = NetworkManager.Singleton) == null)
+            {
+                t += Time.unscaledDeltaTime;
+                yield return null;
+            }
+            if (nm == null)
+            {
+                Debug.LogError("[NetworkConfigOptimizer] Timed out waiting for NetworkManager.");
+                yield break;
+            }
+            // Now that NM exists, apply the same tweaks the client gets.
+            ApplyNetworkOptimizations();
+            ApplyPhysicsAndFps();
+        }
+        // Ensures Optimizer actually runs on the dedicated server once NM appears.
+
         private void ApplyPhysicsAndFps()
         {
             // Shooter baseline: 60 Hz physics regardless of net tick.
@@ -86,7 +107,9 @@ namespace Game.Net
 
             if (nm == null)
             {
-                Debug.LogError("[NetworkConfigOptimizer] No NetworkManager found!");
+                // Headless/server boots load NetworkManager later (bootstrap scene).
+                // Defer application instead of bailing, so server and client configs match.
+                StartCoroutine(WaitAndApply());
                 return;
             }
 

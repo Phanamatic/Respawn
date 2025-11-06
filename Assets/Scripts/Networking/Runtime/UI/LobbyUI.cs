@@ -6,6 +6,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -207,8 +209,9 @@ namespace Game.Net
         }
 
         // ---------- Play actions (Unity Lobby matchmaking with direct endpoints) ----------
-        private void QueueFor1v1() => StartCoroutine(JoinMatch("OneVOne"));
-        private void QueueFor2v2() => StartCoroutine(JoinMatch("TwoVTwo"));
+    private void QueueFor1v1() => StartCoroutine(JoinMatch("1v1"));
+    private void QueueFor2v2() => StartCoroutine(JoinMatch("2v2"));
+    // Match the S1 values our servers publish ("1v1"/"2v2"), not "OneVOne"/"TwoVTwo".
 
         private IEnumerator JoinMatch(string serverType)
         {
@@ -225,7 +228,8 @@ namespace Game.Net
                 yield break;
             }
 
-            SetPlayStatus($"Finding {(serverType == "OneVOne" ? "1v1" : "2v2")} match...");
+            SetPlayStatus($"Finding {serverType} match...");
+            // Keep label in sync with actual filter value.
 
             // Query Unity Lobby service for matches
             List<Lobby> availableMatches = null;
@@ -260,7 +264,7 @@ namespace Game.Net
 
             if (availableMatches == null || availableMatches.Count == 0)
             {
-                SetPlayStatus($"No {(serverType == "OneVOne" ? "1v1" : "2v2")} matches available.");
+                SetPlayStatus($"No {serverType} matches available.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
@@ -273,12 +277,7 @@ namespace Game.Net
             var nm = NetworkManager.Singleton;
             var utp = nm.GetComponent<UnityTransport>();
 
-            // Disconnect from current server if connected
-            if (nm.IsConnectedClient)
-            {
-                nm.Shutdown();
-                while (nm.IsConnectedClient) yield return null;
-            }
+            // Full handoff handled inside ReconnectAndConnect(); no pre-shutdown here.
 
             // Do NOT join lobby. Use public endpoint advertised by server.
             if (bestMatch.Data == null)
@@ -306,16 +305,44 @@ namespace Game.Net
             string publicHost = publicHostData.Value;
             int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
 
-            IEnumerator TryConnect(string host, int prt, float seconds)
+            SessionContext.SetDirectEndpoint(publicHost, publicPort, lanEp);
+
+            IEnumerator ReconnectAndConnect(string host, int prt, float seconds)
             {
-                utp.SetConnectionData(host, (ushort)prt);
-                if (!nm.StartClient())
+                // 1) Ensure old connection is *fully* stopped (not just IsConnectedClient=false).
+                if (nm.IsListening || nm.IsClient || nm.IsServer)
                 {
-                    yield break;
+                    nm.Shutdown();
+                    float t0 = 5f;
+                    while ((nm.IsListening || nm.ShutdownInProgress) && t0 > 0f)
+                    {
+                        t0 -= Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+                    yield return null; // one extra frame for UTP cleanup
                 }
+
+                // 2) Prefer IPv4 to avoid edge cases on some ISPs/routers.
+                string target = host;
+                try
+                {
+                    if (!System.Net.IPAddress.TryParse(host, out var ip) ||
+                        ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+                    {
+                        var addrs = System.Net.Dns.GetHostAddresses(host);
+                        foreach (var a in addrs)
+                            if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) { target = a.ToString(); break; }
+                    }
+                } catch {}
+
+                // 3) Connect cleanly to the new endpoint.
+                utp.SetConnectionData(target, (ushort)prt);
+                if (!nm.StartClient()) yield break;
+
                 float t = seconds;
                 while (!nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
             }
+            // Prevents "Cannot start Client while an instance is already running" by waiting for IsListening=false before StartClient().
 
             // Prefer LAN endpoint if provided. Fallback to PublicHost.
             bool connected = false;
@@ -326,16 +353,16 @@ namespace Game.Net
                 var lp = (parts.Length > 1 && int.TryParse(parts[1], out var v)) ? v : publicPort;
 
                 SetPlayStatus($"Connecting (LAN) {lh}:{lp}...");
-                yield return StartCoroutine(TryConnect(lh, lp, 5f));
+                yield return StartCoroutine(ReconnectAndConnect(lh, lp, 5f));
                 connected = nm.IsConnectedClient;
-                if (!connected) { nm.Shutdown(); }
             }
 
             if (!connected)
             {
                 SetPlayStatus($"Connecting {publicHost}:{publicPort}...");
-                yield return StartCoroutine(TryConnect(publicHost, publicPort, 10f));
+                yield return StartCoroutine(ReconnectAndConnect(publicHost, publicPort, 10f));
             }
+            // Use the new handoff path for both LAN and public attempts.
 
             if (nm.IsConnectedClient)
             {

@@ -48180,7 +48180,6 @@ MonoBehaviour:
   orthographicSize: 23
   perspectiveFov: 50
   follow: {fileID: 0}
-  losOccluder: {fileID: 712823786}
 --- !u!114 &712823785
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -48332,6 +48331,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2839d38b03eea6f40bd29e604f960bdd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  playModeOnly: 1
+  allowParentRendererLookup: 0
+  minOccluderAlpha: 0.3
+  useCircularCutout: 1
+  cutoutRadius: 0.12
+  cutoutFeather: 0.06
+  cutoutAlpha: 0.3
+  cutoutReleaseDelay: 0.1
   target: {fileID: 0}
   targetRenderersOverride: []
   occluderLayers:
@@ -106737,6 +106744,8 @@ MonoBehaviour:
   sprintLabel: {fileID: 1347166192}
   dashFill: {fileID: 79687380}
   dashLabel: {fileID: 238846462}
+  healthFill: {fileID: 0}
+  healthLabel: {fileID: 0}
 --- !u!43 &1945551983
 Mesh:
   m_ObjectHideFlags: 0
