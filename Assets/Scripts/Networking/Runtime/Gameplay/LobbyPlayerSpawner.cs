@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Unity.Netcode;
 
 namespace Game.Net
@@ -32,47 +33,63 @@ namespace Game.Net
 
         void OnEnable()
         {
-            if (!NM || !NM.IsServer) return;
             NM.OnServerStarted += OnServerStarted;
             NM.OnClientConnectedCallback += OnClientConnected;
-            if (NM.SceneManager != null) NM.SceneManager.OnSceneEvent += OnSceneEvent;
-            RefreshSpawnPoints();
+            SceneManager.sceneLoaded += OnSceneLoaded;
         }
 
         void OnDisable()
         {
-            if (!NM) return;
-            NM.OnServerStarted -= OnServerStarted;
-            NM.OnClientConnectedCallback -= OnClientConnected;
-            if (NM.SceneManager != null) NM.SceneManager.OnSceneEvent -= OnSceneEvent;
+            if (NM != null)
+            {
+                NM.OnServerStarted -= OnServerStarted;
+                NM.OnClientConnectedCallback -= OnClientConnected;
+            }
+            SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
-        void OnServerStarted()
+        private void OnServerStarted()
         {
-            RefreshSpawnPoints();
-            foreach (var cid in NM.ConnectedClientsIds)
-                if (cid != NetworkManager.ServerClientId) TrySpawn(cid, "ServerStarted");
+            if (!NM.IsServer) return;
+            // Force-spawn for any clients that were already connected when this scene loaded.
+            foreach (var kvp in NM.ConnectedClientsIds)
+                TrySpawn(kvp, "ServerStarted");
         }
 
-        void OnClientConnected(ulong clientId)
+        private void OnSceneLoaded(Scene s, LoadSceneMode mode)
         {
-            if (clientId == NetworkManager.ServerClientId) return;
+            if (!NM || !NM.IsServer) return;
+            if (s.name == "Lobby")
+            {
+                foreach (var id in NM.ConnectedClientsIds)
+                    TrySpawn(id, "SceneLoaded");
+            }
+        }
+
+        private void OnClientConnected(ulong clientId)
+        {
             TrySpawn(clientId, "ClientConnected");
-        }
-
-        void OnSceneEvent(SceneEvent e)
-        {
-            if (e.SceneEventType != SceneEventType.SynchronizeComplete) return;
-            if (e.ClientId == NetworkManager.ServerClientId) return;
-            RefreshSpawnPoints();
-            TrySpawn(e.ClientId, $"SyncComplete:{e.SceneName}");
         }
 
         void TrySpawn(ulong clientId, string reason)
         {
             if (!NM.IsServer) return;
-            if (!playerPrefab) { Debug.LogError("[LobbyPlayerSpawner] Assign a Player prefab."); return; }
 
+            // Resolve prefab: serialized field first, then NetworkConfig.PlayerPrefab
+            var prefab = playerPrefab;
+            if (!prefab)
+            {
+                var cfgPlayer = (NM != null && NM.NetworkConfig != null) ? NM.NetworkConfig.PlayerPrefab : null;
+                if (cfgPlayer) prefab = cfgPlayer.GetComponent<NetworkObject>();
+            }
+
+            if (!prefab)
+            {
+                Debug.LogError("[LobbyPlayerSpawner] No Player prefab set. Assign it on the spawner or set NetworkConfig.PlayerPrefab (and ensure it is in NetworkPrefabs).");
+                return;
+            }
+
+            // Already has a PlayerObject? Do nothing.
             if (NM.ConnectedClients.TryGetValue(clientId, out var cc) && cc.PlayerObject && cc.PlayerObject.IsSpawned)
                 return;
 
@@ -80,7 +97,7 @@ namespace Game.Net
 
             var pose = GetSpawnPose();
 
-            var inst = Instantiate(playerPrefab, pose.pos, pose.rot);
+            var inst = Instantiate(prefab, pose.pos, pose.rot);
 
             // Ground and depenetrate before Spawn()
             var capsule = inst.GetComponent<CapsuleCollider>();

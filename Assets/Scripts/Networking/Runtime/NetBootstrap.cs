@@ -18,6 +18,9 @@ using Unity.Services.Lobbies.Models;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.NetworkInformation;
+#if UNITY_RENDER_PIPELINE_HDRP
+using UnityEngine.Rendering.HighDefinition;
+#endif
 
 namespace Game.Net
 {
@@ -172,7 +175,15 @@ namespace Game.Net
                 }
                 Debug.Log("[NetBootstrap] UGS initialized successfully.");
 
-                // Wait for NetworkManager + UnityTransport
+                // Headless server path: load scene, start NGO server, then publish a lobby.
+                if (Application.isBatchMode || HasArg("-headless") || HasArg("-serverName"))
+                {
+                    StartCoroutine(HeadlessServerFlow());
+                    // Do not continue into any client path below.
+                    return;
+                }
+
+                // ... (original client/editor flow continues)
                 NetworkManager nm = null;
                 UnityTransport utp = null;
 
@@ -206,6 +217,12 @@ namespace Game.Net
 
                 // Pin NGO tick (server + client). 128 is your fixedDeltaTime; keep them aligned.
                 nm.NetworkConfig.TickRate = 128;
+                // Parity with client Optimizer in case it hasn't run yet on server.
+                nm.NetworkConfig.RpcHashSize = HashSize.VarIntFourBytes;
+                nm.NetworkConfig.EnableSceneManagement = true;
+                nm.NetworkConfig.ForceSamePrefabs = true;
+                // [DirectNet] Keep config hash identical across client/server early.
+                // Matches client-side Optimizer defaults to avoid handshake rejects.
 
                 // Configure Unity Transport for direct UDP with WAN-safe payload.
                 // Payload ~1200 bytes to respect typical internet MTU when headers are present.
@@ -270,8 +287,9 @@ namespace Game.Net
                         var lanHost    = cmd.Get("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
                         // TODO: Publish PublicHost=publicHost, PublicPort=chosen, LanEndpoint=$"{lanHost}:{chosen}", Region=<ZA>.
 
-                        // Build lobby metadata for discovery only
-                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "127.0.0.1");
+                        // Build lobby metadata for discovery only (do not fall back to loopback)
+                        // Keep previously resolved publicHost (DDNS/env/CLI), only override if explicitly passed again.
+                        publicHost = cmd.Get("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? publicHost);
                         int publicPort = (int)cmd.GetUShort("-publicPort", chosen);
                         // Prefer explicit -lanHost or LAN_HOST. If not set and bind is 0.0.0.0/loopback, auto-detect a real IPv4.
                         lanHost = cmd.Get("-lanHost", System.Environment.GetEnvironmentVariable("LAN_HOST") ?? listenBind);
@@ -417,6 +435,298 @@ namespace Game.Net
                     Debug.LogWarning("[NetBootstrap] Prefab sanitize skipped: " + e.Message);
                 }
             }
+
+            static bool HasArg(string flag)
+            {
+                var args = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < args.Length; i++)
+                    if (string.Equals(args[i], flag, System.StringComparison.OrdinalIgnoreCase))
+                        return true;
+                return false;
+            }
+            static string GetArg(string key, string @default = "")
+            {
+                var args = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < args.Length - 1; i++)
+                    if (string.Equals(args[i], key, System.StringComparison.OrdinalIgnoreCase))
+                        return args[i + 1];
+                return @default;
+            }
+
+            private static string ResolveLocalLanIPv4PreferLan()
+            {
+                // Prefer 192.168.x.x, then 10.x.x.x, then 172.16–31.x.x
+                try
+                {
+                    var matches = new System.Collections.Generic.List<string>();
+                    foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                        foreach (var ua in nic.GetIPProperties().UnicastAddresses)
+                        {
+                            var ip = ua.Address; if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                            var s = ip.ToString();
+                            if (s.StartsWith("192.168.")) matches.Add(s);
+                            else if (s.StartsWith("10.")) matches.Add(s);
+                            else if (s.StartsWith("172.16.") || s.StartsWith("172.17.") || s.StartsWith("172.18.") || s.StartsWith("172.19.") ||
+                                     s.StartsWith("172.2")   || s.StartsWith("172.3")) matches.Add(s);
+                        }
+                    }
+                    foreach (var s in matches) if (s.StartsWith("192.168.")) return s;
+                    foreach (var s in matches) if (s.StartsWith("10.")) return s;
+                    foreach (var s in matches) return s;
+                }
+                catch { }
+                return null;
+            }
+            // Dev: deterministic pick so Hyper-V/Tailscale 172.x doesn’t win over your real 192.168.x NIC.
+
+            private System.Collections.IEnumerator HeadlessServerFlow()
+            // Use the non-generic IEnumerator for Unity coroutines.
+            {
+                // 1) Decide scenes & server metadata
+                string sceneName       = GetArg("-scene", "Lobby");          // gameplay scene (Lobby/Match_1v1/Match_2v2)
+                string bootstrapScene  = GetArg("-bootstrapScene", "Account"); // holds the NetworkManager (DontDestroyOnLoad)
+                string serverName      = GetArg("-serverName", $"{sceneName}_{GetArg("-port", "7777")}");
+                string region          = GetArg("-region", System.Environment.GetEnvironmentVariable("REGION") ?? "ZA");
+
+                // Server endpoints (prefer env vars; fall back to DDNS + fixed LAN)
+                string publicHost = GetArg("-publicHost", System.Environment.GetEnvironmentVariable("PUBLIC_HOST") ?? "respawnserver.tplinkdns.com");
+                int    publicPort = int.TryParse(System.Environment.GetEnvironmentVariable("PUBLIC_PORT"), out var p1) ? p1 : int.Parse(GetArg("-port", "7777"));
+                string lanHost    = GetArg("-lanHost",    System.Environment.GetEnvironmentVariable("LAN_HOST")    ?? "192.168.0.150");
+                int    lanPort    = int.TryParse(System.Environment.GetEnvironmentVariable("LAN_PORT"), out var p2) ? p2 : publicPort;
+
+                // Never advertise loopback / wildcard
+                if (publicHost == "127.0.0.1") publicHost = "respawnserver.tplinkdns.com";
+                if (string.IsNullOrWhiteSpace(lanHost) || lanHost == "0.0.0.0")
+                    lanHost = ResolveLocalLanIPv4PreferLan() ?? "192.168.0.150";
+
+                // Normalized server kind (used for S1 indexing)
+                string serverTypeArg = GetArg("-serverType", "lobby").ToLowerInvariant();
+                string lobbyKind = serverTypeArg switch
+                {
+                    "1v1" => "1v1",
+                    "2v2" => "2v2",
+                    _     => "Lobby"
+                };
+                // Dev: don’t let loopback sneak back in; compute Lobby/1v1/2v2 once and reuse.
+
+                EnsureHeadlessRenderingDisabled();
+
+                // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
+                if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)
+                {
+                    Debug.Log($"[Bootstrap] Loading bootstrap scene (with NetworkManager): {bootstrapScene}");
+                    yield return UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(bootstrapScene, UnityEngine.SceneManagement.LoadSceneMode.Single);
+                }
+
+                // 3) Wait for NetworkManager from the bootstrap scene
+                float t0 = Time.realtimeSinceStartup;
+                while (NetworkManager.Singleton == null && Time.realtimeSinceStartup - t0 < 10f)
+                    yield return null;
+
+                if (NetworkManager.Singleton == null)
+                {
+                    Debug.LogError("[Bootstrap] No NetworkManager found after loading bootstrap scene. Server cannot start.");
+                    yield break;
+                }
+
+                // Make extra sure it survives the next scene load (in case the prefab isn't already NNDO).
+                DontDestroyOnLoad(NetworkManager.Singleton.gameObject);
+
+                // 4) Load the target gameplay scene AFTER NetworkManager exists
+                if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != sceneName)
+                {
+                    Debug.Log($"[Bootstrap] Loading server gameplay scene: {sceneName}");
+                    yield return UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(sceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
+                }
+
+                // Apply UTP listen bind/port (server)
+                var utp = NetworkManager.Singleton.NetworkConfig.NetworkTransport as Unity.Netcode.Transports.UTP.UnityTransport;
+                if (utp != null)
+                {
+                    // Bind to all adapters on given port; payload MTU ~1200 WAN-safe
+                    ushort port = (ushort)publicPort;
+                    utp.SetConnectionData("0.0.0.0", port, "0.0.0.0");
+                    utp.MaxSendQueueSize = 1024 * 1024;
+                    utp.MaxPacketQueueSize = 1024;
+                }
+
+                Debug.Log("[Bootstrap] Starting NGO Server…");
+                if (!NetworkManager.Singleton.StartServer())
+                {
+                    Debug.LogError("[Bootstrap] Failed to start NGO Server.");
+                    yield break;
+                }
+
+                // Confirm we're actually running as server before advertising.
+                if (!NetworkManager.Singleton.IsServer)
+                {
+                    Debug.LogError("[Bootstrap] Not in server mode after StartServer(). Aborting lobby advertise.");
+                    yield break;
+                }
+
+                // 4) Create/advertise a Lobby with endpoint keys
+
+                // Compose data directly here to avoid stale copies.
+                var data = new Dictionary<string, Unity.Services.Lobbies.Models.DataObject>
+                {
+                    // IMPORTANT: Use IndexOptions.S1 & S2 so client Query(S1 == "Lobby") works,
+                    // and so 1v1/2v2 don't pollute the Lobby list.
+                    ["ServerType"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, lobbyKind, Unity.Services.Lobbies.Models.DataObject.IndexOptions.S1),
+                    ["Region"]     = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, region,     Unity.Services.Lobbies.Models.DataObject.IndexOptions.S2),
+                    ["PublicHost"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicHost),
+                    ["PublicPort"] = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, publicPort.ToString()),
+                    ["LanEndpoint"]= new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, $"{lanHost}:{lanPort}"),
+                    ["Build"]      = new(Unity.Services.Lobbies.Models.DataObject.VisibilityOptions.Public, Application.version ?? "dev"),
+                };
+                var createOpts = new CreateLobbyOptions { IsPrivate = false, Data = data };
+
+                int maxPlayers = int.TryParse(GetArg("-max", "32"), out var m) ? m : 32;
+
+                Lobby lobby = null;
+
+                // Kick off async create and yield until it finishes (coroutine-friendly).
+                var createTask = Unity.Services.Lobbies.LobbyService.Instance.CreateLobbyAsync(serverName, maxPlayers, createOpts);
+                while (!createTask.IsCompleted) yield return null;
+
+                if (createTask.Exception != null)
+                {
+                    var ex = createTask.Exception.InnerException ?? createTask.Exception;
+                    Debug.LogError($"[DirectNet] CreateLobby failed: {ex.Message}");
+                    yield break;
+                }
+
+                lobby = createTask.Result;
+                Debug.Log($"[DirectNet] Hosting Lobby. LobbyId={lobby?.Id} {publicHost}:{publicPort} LAN {lanHost}:{lanPort} • S1={lobbyKind} S2={region}");
+
+                // 5) Heartbeat while running
+                if (!string.IsNullOrEmpty(lobby?.Id))
+                    StartCoroutine(LobbyHeartbeatLoop(lobby.Id));
+            }
+
+            static void EnsureHeadlessRenderingDisabled()
+            {
+                if (!Application.isBatchMode && !HasArg("-nographics")) return;
+                TryDisableRenderPipelineAsset();
+                if (FindObjectOfType<HeadlessCameraDisabler>() != null) return;
+
+                var go = new GameObject("HeadlessCameraDisabler")
+                {
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                DontDestroyOnLoad(go);
+                go.AddComponent<HeadlessCameraDisabler>();
+            }
+
+            private sealed class HeadlessCameraDisabler : MonoBehaviour
+            {
+                void OnEnable()
+                {
+                    SceneManager.sceneLoaded += OnSceneLoaded;
+                    RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering += OnBeginFrameRendering;
+                    DisableAllCameras();
+                }
+
+                void OnDisable()
+                {
+                    SceneManager.sceneLoaded -= OnSceneLoaded;
+                    RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering -= OnBeginFrameRendering;
+                }
+
+                static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+                {
+                    DisableAllCameras();
+                }
+
+                static void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
+                {
+                    DisableCamera(camera);
+                }
+
+                static void OnBeginFrameRendering(ScriptableRenderContext context, Camera[] cameras)
+                {
+                    if (cameras != null)
+                    {
+                        for (int i = 0; i < cameras.Length; i++)
+                        {
+                            DisableCamera(cameras[i]);
+                        }
+                    }
+                }
+
+                static void DisableAllCameras()
+                {
+                    var cameras = Resources.FindObjectsOfTypeAll<Camera>();
+                    for (int i = 0; i < cameras.Length; i++)
+                    {
+                        DisableCamera(cameras[i]);
+                    }
+                }
+
+                static void DisableCamera(Camera camera)
+                {
+                    if (!camera) return;
+                    camera.enabled = false;
+    #if UNITY_RENDER_PIPELINE_HDRP
+                    var hd = camera.GetComponent<HDAdditionalCameraData>();
+                    if (hd) hd.enabled = false;
+    #endif
+                }
+            }
+
+            static void TryDisableRenderPipelineAsset()
+            {
+                try
+                {
+                    if (GraphicsSettings.defaultRenderPipeline != null)
+                        GraphicsSettings.defaultRenderPipeline = null;
+
+                    var qualityCount = QualitySettings.names?.Length ?? 0;
+                    int originalQuality = QualitySettings.GetQualityLevel();
+                    bool qualityChanged = false;
+                    for (int i = 0; i < qualityCount; i++)
+                    {
+                        if (QualitySettings.GetRenderPipelineAssetAt(i) != null)
+                        {
+                            QualitySettings.SetQualityLevel(i, false);
+                            QualitySettings.renderPipeline = null;
+                            qualityChanged = true;
+                        }
+                    }
+                    if (qualityChanged && originalQuality >= 0 && originalQuality < qualityCount)
+                        QualitySettings.SetQualityLevel(originalQuality, false);
+#if UNITY_RENDER_PIPELINE_HDRP
+                    var hdrpGlobal = HDRenderPipelineGlobalSettings.instance;
+                    if (hdrpGlobal != null)
+                    {
+                        hdrpGlobal.frameSettingsHistory.Clear();
+                    }
+#endif
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Bootstrap] Failed to disable SRP for headless: {ex.Message}");
+                }
+            }
+
+            // Wrapper to use async Lobby API inside coroutine flow.
+            private System.Threading.Tasks.Task<Lobby> awaitable_CreateLobby(string name, int max, CreateLobbyOptions opts)
+                => Unity.Services.Lobbies.LobbyService.Instance.CreateLobbyAsync(name, max, opts);
+
+            private System.Collections.IEnumerator LobbyHeartbeatLoop(string lobbyId)
+            // Use the non-generic IEnumerator for Unity coroutines.
+            {
+                var wait = new WaitForSecondsRealtime(15f);
+                while (!string.IsNullOrEmpty(lobbyId))
+                {
+                    var task = Unity.Services.Lobbies.LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
+                    while (!task.IsCompleted) yield return null;
+                    yield return wait;
+                }
+            }
         }
     }
 
@@ -468,7 +778,10 @@ namespace Game.Net
                 }
 
                 IsReady = true;
+                // Extra banner for quick server/client side-by-side comparison.
                 Debug.Log($"[UGS] Init OK. ProjectId={Application.cloudProjectId}, Env={environmentName}, Profile={profile}, PlayerId={AuthenticationService.Instance.PlayerId}");
+                // Keep a short tag so it's easy to grep in logs.
+                Debug.Log($"[Bootstrap] UGS: ProjectId={Application.cloudProjectId} Env={environmentName} Profile={profile}");
             }
             catch (Exception ex)
             {

@@ -59,6 +59,18 @@ namespace Game.Net
             return baseSeconds * f;
         }
 
+        void Awake()
+        {
+            // Disable the entire menu when running headless/batch so server builds don't run client UI.
+            if (Application.isBatchMode || SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+            {
+                var canvases = GetComponentsInChildren<Canvas>(true);
+                foreach (var c in canvases) c.enabled = false;
+                enabled = false;
+                return;
+            }
+        }
+
         private void OnEnable()
         {
             if (playButton) playButton.onClick.AddListener(OnPlayClicked);
@@ -235,6 +247,20 @@ namespace Game.Net
                 SetStatus("Invalid lobby");
                 Done(false);
                 yield break;
+            }
+
+            // Ignore obviously un-routable endpoints coming from a remote server
+            if (publicHostData.Value == "127.0.0.1")
+            {
+                Debug.LogWarning("[MainMenu] Lobby advertised 127.0.0.1; skipping (remote client).");
+                SetStatus("Server address invalid");
+                Done(false);
+                yield break;
+            }
+            if (!string.IsNullOrEmpty(lanEp) && lanEp.StartsWith("0.0.0.0"))
+            {
+                Debug.LogWarning("[MainMenu] Lobby advertised LAN 0.0.0.0; ignoring LAN endpoint.");
+                lanEp = null;
             }
 
             string publicHost = publicHostData.Value;
@@ -435,8 +461,63 @@ namespace Game.Net
             s_MinQueryIntervalSeconds = 3.5;
 
             s_LobbyCache = task.Result.Results ?? new List<Lobby>();
+
+            // Client-side hygiene: keep only valid Lobby entries with usable endpoints and de-dup by PublicHost:PublicPort
+            var filtered = new List<Lobby>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var l in s_LobbyCache)
+            {
+                if (l.Data == null) continue;
+                if (!l.Data.TryGetValue("ServerType", out var kind) || !string.Equals(kind.Value, "Lobby", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!l.Data.TryGetValue("PublicHost", out var host) || !l.Data.TryGetValue("PublicPort", out var port))
+                    continue;
+                if (string.IsNullOrWhiteSpace(host.Value) || host.Value == "127.0.0.1") // skip loopback
+                    continue;
+                var key = $"{host.Value}:{port.Value}";
+                if (seen.Add(key)) filtered.Add(l);
+            }
+            s_LobbyCache = filtered;
+
+            // Now show the *filtered* count
             s_LobbyCacheAt = Time.unscaledTimeAsDouble;
+
+            // If the filtered query returned nothing, run a one-shot, unfiltered diagnostic.
+            if ((s_LobbyCache == null || s_LobbyCache.Count == 0))
+            {
+                StartCoroutine(DiagnosticLobbyScanOnce());
+                // Nudge the UI so the user knows to check project/env.
+                if (openLobbiesText) openLobbiesText.text = $"Open Lobbies (0) • Check Project/Env";
+            }
             SetOpenCountText(s_LobbyCache);
+            // Dev: fixes “Open Lobbies (6)” by ignoring duplicates and loopback-published entries.
+        }
+
+        // Single diagnostic pass: no filters, logs what we can see.
+        private IEnumerator DiagnosticLobbyScanOnce()
+        {
+            yield return ThrottleLobbyRead();
+            var diag = new QueryLobbiesOptions { Count = 10 };
+            var t = LobbyService.Instance.QueryLobbiesAsync(diag);
+            yield return new WaitUntil(() => t.IsCompleted);
+            ReleaseLobbyReadSlot();
+
+            if (t.Exception != null) yield break;
+
+            var list = t.Result.Results ?? new List<Lobby>();
+            if (list.Count > 0)
+            {
+                Debug.Log($"[MainMenu] Diagnostic: {list.Count} lobby/lobbies visible in project {Application.cloudProjectId}.");
+                foreach (var l in list)
+                {
+                    string s1 = l.Data != null && l.Data.TryGetValue("ServerType", out var d1) ? d1.Value : "(none)";
+                    string s2 = l.Data != null && l.Data.TryGetValue("Region", out var d2) ? d2.Value : "(none)";
+                    int joined = (l.MaxPlayers >= 0 && l.AvailableSlots >= 0)
+                        ? (l.MaxPlayers - l.AvailableSlots)
+                        : (l.Players != null ? l.Players.Count : 0);
+                    Debug.Log($"[MainMenu] • {l.Name} Id={l.Id} Slots={joined}/{l.MaxPlayers} S1(ServerType)={s1} S2(Region)={s2}");
+                }
+            }
         }
 
         private void SetOpenCountText(List<Lobby> lobbies)
