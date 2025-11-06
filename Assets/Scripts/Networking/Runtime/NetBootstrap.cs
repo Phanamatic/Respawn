@@ -608,6 +608,7 @@ namespace Game.Net
             static void EnsureHeadlessRenderingDisabled()
             {
                 if (!Application.isBatchMode && !HasArg("-nographics")) return;
+                TryDisableRenderPipelineAsset();
                 if (FindObjectOfType<HeadlessCameraDisabler>() != null) return;
 
                 var go = new GameObject("HeadlessCameraDisabler")
@@ -624,6 +625,7 @@ namespace Game.Net
                 {
                     SceneManager.sceneLoaded += OnSceneLoaded;
                     RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering += OnBeginFrameRendering;
                     DisableAllCameras();
                 }
 
@@ -631,6 +633,7 @@ namespace Game.Net
                 {
                     SceneManager.sceneLoaded -= OnSceneLoaded;
                     RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering -= OnBeginFrameRendering;
                 }
 
                 static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -641,6 +644,17 @@ namespace Game.Net
                 static void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
                 {
                     DisableCamera(camera);
+                }
+
+                static void OnBeginFrameRendering(ScriptableRenderContext context, Camera[] cameras)
+                {
+                    if (cameras != null)
+                    {
+                        for (int i = 0; i < cameras.Length; i++)
+                        {
+                            DisableCamera(cameras[i]);
+                        }
+                    }
                 }
 
                 static void DisableAllCameras()
@@ -660,6 +674,41 @@ namespace Game.Net
                     var hd = camera.GetComponent<HDAdditionalCameraData>();
                     if (hd) hd.enabled = false;
     #endif
+                }
+            }
+
+            static void TryDisableRenderPipelineAsset()
+            {
+                try
+                {
+                    if (GraphicsSettings.defaultRenderPipeline != null)
+                        GraphicsSettings.defaultRenderPipeline = null;
+
+                    var qualityCount = QualitySettings.names?.Length ?? 0;
+                    int originalQuality = QualitySettings.GetQualityLevel();
+                    bool qualityChanged = false;
+                    for (int i = 0; i < qualityCount; i++)
+                    {
+                        if (QualitySettings.GetRenderPipelineAssetAt(i) != null)
+                        {
+                            QualitySettings.SetQualityLevel(i, false);
+                            QualitySettings.renderPipeline = null;
+                            qualityChanged = true;
+                        }
+                    }
+                    if (qualityChanged && originalQuality >= 0 && originalQuality < qualityCount)
+                        QualitySettings.SetQualityLevel(originalQuality, false);
+#if UNITY_RENDER_PIPELINE_HDRP
+                    var hdrpGlobal = HDRenderPipelineGlobalSettings.instance;
+                    if (hdrpGlobal != null)
+                    {
+                        hdrpGlobal.frameSettingsHistory.Clear();
+                    }
+#endif
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Bootstrap] Failed to disable SRP for headless: {ex.Message}");
                 }
             }
 
