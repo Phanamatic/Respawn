@@ -1137,6 +1137,7 @@ void OnActiveSlotChanged()
                 Vector3 aimPoint = transform.position;
                 bool aimResolved = false;
 
+                // Raycast to find world position under mouse cursor
                 if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
                 {
                     aimPoint = hit.point;
@@ -1144,6 +1145,7 @@ void OnActiveSlotChanged()
                 }
                 else
                 {
+                    // Fallback to plane intersection at player height
                     var plane = new Plane(Vector3.up, transform.position);
                     if (plane.Raycast(ray, out float enter))
                     {
@@ -1154,9 +1156,15 @@ void OnActiveSlotChanged()
 
                 if (aimResolved)
                 {
-                    var dir = aimPoint - transform.position; dir.y = 0f;
+                    // Calculate direction from player to mouse position on ground
+                    var dir = aimPoint - transform.position;
+                    dir.y = 0f; // Keep rotation horizontal only
+                    
+                    // Only update rotation if direction is significant
                     if (dir.sqrMagnitude > 0.0001f)
+                    {
                         yaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
+                    }
                 }
             }
 
@@ -1210,10 +1218,10 @@ void OnActiveSlotChanged()
             wish.y = 0f;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
+            // Instant rotation to face mouse cursor (no interpolation)
             var targetRot = Quaternion.Euler(0f, yaw, 0f);
-            var nextRot = Quaternion.RotateTowards(transform.rotation, targetRot, 1080f * dt);
-            if (_rb) _rb.MoveRotation(nextRot);
-            transform.rotation = nextRot;
+            if (_rb) _rb.MoveRotation(targetRot);
+            transform.rotation = targetRot;
 
             float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
             var vel = _rb.linearVelocity;

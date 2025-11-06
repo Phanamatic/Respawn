@@ -29,7 +29,7 @@ public sealed class LineOfSightOccluder : MonoBehaviour
     [Range(0.02f, 0.5f)] public float cutoutRadius = 0.12f;
     [Range(0.005f, 0.3f)] public float cutoutFeather = 0.06f; // soft edge
     [Range(0.1f, 1f)] public float cutoutAlpha = 0.30f;       // 0.30 = ~70% transparent inside circle
-    [Min(0f)] public float cutoutReleaseDelay = 0.1f;
+    [Min(0f)] public float cutoutReleaseDelay = 0.05f;        // Reduced to minimize flashing
 
     // Shader property ids
     static readonly int _LosCenterId = Shader.PropertyToID("_LosCenter");
@@ -98,6 +98,7 @@ sealed class DepthState
 {
     public Material[] mats;
     public int[] origSortingPriority;
+    public int[] origRenderQueue;
     public int origSortingOrder;
     public float[] origZWrite, origTZWrite, origPrepass;
     public bool initialized;
@@ -230,6 +231,7 @@ void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, floa
     }
     else
     {
+        // Renderer already being managed - update cutout and extend hold time
         f.active = false;
         f.isCutout = true;
     }
@@ -250,6 +252,8 @@ void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, floa
     f.toA = 1f;
     f.t = 0f;
     f.dur = 0f;
+    
+    // Extend hold time each frame it's hit to prevent flashing
     f.holdUntil = Time.unscaledTime + cutoutReleaseDelay;
 
     _current[r] = f;
@@ -400,25 +404,34 @@ void _RestoreMissing()
 
         if (useCircularCutout)
         {
-            // Clear cutout on renderers not hit this frame
+            // Keep cutout active for holdUntil duration to prevent flashing
             var f = _current[r];
             if (f.isCutout && Time.unscaledTime < f.holdUntil)
             {
+                // Still within hold period - keep the cutout active
                 _current[r] = f;
                 continue;
             }
+            
+            // Hold period expired - smoothly clear the cutout
             if (f.mpb == null) f.mpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(f.mpb);
             f.mpb.SetFloat(_LosRadiusId, 0f);
             f.mpb.SetFloat(_LosFeatherId, 0f);
             f.mpb.SetFloat(_CutAlphaId, 1f);
             r.SetPropertyBlock(f.mpb);
+            f.isCutout = false;
             _current.Remove(r);
             EnsureOccluderNoDepth(r, false);
         }
         else if (_current.TryGetValue(r, out var f2))
         {
+            // Smooth fade back to opaque for non-cutout mode
             f2.fromA = ReadCurrentAlpha(ref f2);
-            f2.toA = 1f; f2.t = 0f; f2.dur = Mathf.Max(0.0001f, fadeInSeconds);
+            f2.toA = 1f;
+            f2.t = 0f;
+            f2.dur = Mathf.Max(0.0001f, fadeInSeconds);
+            f2.active = true;
             _current[r] = f2;
         }
     }
@@ -457,6 +470,7 @@ static void r_GetBlock(ref Faded f)
         {
             st.mats = r.materials; // instanced
             st.origSortingPriority = new int[st.mats.Length];
+            st.origRenderQueue = new int[st.mats.Length];
             st.origZWrite = new float[st.mats.Length];
             st.origTZWrite = new float[st.mats.Length];
             st.origPrepass = new float[st.mats.Length];
@@ -465,6 +479,7 @@ static void r_GetBlock(ref Faded f)
                 var m = st.mats[i];
                 if (!m) continue;
                 st.origSortingPriority[i] = m.HasProperty(SortingPriorityId) ? m.GetInt(SortingPriorityId) : 0;
+                st.origRenderQueue[i]     = m.renderQueue;
                 st.origZWrite[i]          = m.HasProperty(ZWriteId) ? m.GetFloat(ZWriteId) : 0f;
                 st.origTZWrite[i]         = m.HasProperty(TransparentZWriteId) ? m.GetFloat(TransparentZWriteId) : 0f;
                 st.origPrepass[i]         = m.HasProperty(EnableTransparentDepthPrepassId) ? m.GetFloat(EnableTransparentDepthPrepassId) : 0f;
@@ -477,22 +492,33 @@ static void r_GetBlock(ref Faded f)
 
         if (faded)
         {
+            // Disable depth write and adjust render queue for transparent rendering
             for (int i = 0; i < st.mats.Length; i++)
             {
                 var m = st.mats[i];
                 if (!m) continue;
+                
+                // Disable all depth writing to ensure player behind is visible
                 if (m.HasProperty(ZWriteId)) m.SetFloat(ZWriteId, 0f);
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, 0f);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, 0f);
-                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -50);
-                // Ensure draw after player for correct blend order in transparent queue.
+                
+                // Lower sorting priority so transparent occluders draw AFTER opaque player
+                if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -100);
+                
+                // Force transparent render queue (3000+) to ensure it draws after geometry
+                int originalQueue = m.renderQueue;
+                if (m.renderQueue < 3000)
+                {
+                    m.renderQueue = 3000; // Transparent queue start
+                }
             }
-            r.sortingOrder = 50;  // Higher sortingOrder to draw later if needed for custom passes.
+            r.sortingOrder = -100;  // Negative to draw before other transparents
             st.appliedFaded = true;
-            // Adjust sortingOrder to positive for later draw if renderer.sortingOrder affects order.
         }
         else
         {
+            // Restore original settings
             for (int i = 0; i < st.mats.Length; i++)
             {
                 var m = st.mats[i];
@@ -501,6 +527,9 @@ static void r_GetBlock(ref Faded f)
                 if (m.HasProperty(TransparentZWriteId)) m.SetFloat(TransparentZWriteId, st.origTZWrite[i]);
                 if (m.HasProperty(EnableTransparentDepthPrepassId)) m.SetFloat(EnableTransparentDepthPrepassId, st.origPrepass[i]);
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, st.origSortingPriority[i]);
+                
+                // Restore original render queue
+                m.renderQueue = st.origRenderQueue[i];
             }
             r.sortingOrder = st.origSortingOrder;
             st.appliedFaded = false;

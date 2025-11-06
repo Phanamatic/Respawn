@@ -20,6 +20,8 @@ TagManager:
   - Train Map 1
   - No Spawn
   - No spawn
+  - SFX
+  - Ground
   layers:
   - Default
   - TransparentFX

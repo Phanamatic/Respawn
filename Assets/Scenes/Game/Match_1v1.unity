@@ -17691,9 +17691,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: aea0f4fcf9b72144f9dbdb954d31e9a2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  reloadFill: {fileID: 1158520690}
-  ammoText: {fileID: 468614788}
-  weaponName: {fileID: 1312203315}
+  primaryReloadFill: {fileID: 1158520690}
+  primaryAmmoText: {fileID: 468614788}
+  primaryWeaponName: {fileID: 1312203315}
+  secondaryReloadFill: {fileID: 1158520690}
+  secondaryAmmoText: {fileID: 468614788}
+  secondaryWeaponName: {fileID: 1312203315}
+  meleeWeaponName: {fileID: 1312203315}
+  utilityAmmoText: {fileID: 468614788}
+  utilityWeaponName: {fileID: 1312203315}
 --- !u!4 &214724278
 Transform:
   m_ObjectHideFlags: 0
@@ -157315,6 +157321,10 @@ PrefabInstance:
     - target: {fileID: 7999454970968901398, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 7999454970968901398, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Ground
       objectReference: {fileID: 0}
     - target: {fileID: 8008238674261975030, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh

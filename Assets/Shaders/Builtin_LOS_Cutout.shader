@@ -11,12 +11,12 @@ Shader "Game/Builtin_LOS_Cutout"
     }
     SubShader
     {
-    Tags { "RenderType"="Opaque" }
-    LOD 100
+        Tags { "RenderType"="Transparent" "Queue"="Transparent" }
+        LOD 100
 
-    Blend Off
-    ZWrite On
-    Cull Back
+        Blend SrcAlpha OneMinusSrcAlpha
+        ZWrite Off
+        Cull Back
 
         Pass
         {
@@ -55,8 +55,17 @@ Shader "Game/Builtin_LOS_Cutout"
 
             fixed4 frag (v2f i) : SV_Target
             {
+                // Calculate viewport position for cutout
+                float2 vpPos = (i.clip.xy / i.clip.w) * 0.5 + 0.5;
+                float2 diff = vpPos - _LosCenter.xy;
+                float dist = length(diff);
+                
+                // Smooth circular cutout
+                float cutout = smoothstep(_LosRadius - _LosFeather, _LosRadius, dist);
+                float finalAlpha = lerp(_CutAlpha, 1.0, cutout);
+                
                 fixed4 albedo = tex2D(_BaseMap, i.uv) * _BaseColor;
-                return fixed4(albedo.rgb, 1);
+                return fixed4(albedo.rgb, albedo.a * finalAlpha);
             }
             ENDCG
         }

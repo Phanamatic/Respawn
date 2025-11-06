@@ -12,12 +12,12 @@ Shader "Game/HDRP_LOS_Cutout_Simple"
 
     SubShader
     {
-        // Key: tag SRP to HDRP, but use simple CG includes that work everywhere.
-    Tags { "RenderPipeline"="HDRenderPipeline" "RenderType"="Opaque" }
+        // Transparent rendering to allow occluders to fade
+        Tags { "RenderPipeline"="HDRenderPipeline" "RenderType"="Transparent" "Queue"="Transparent" }
 
-    ZWrite On
-    Cull Back
-    Blend Off
+        ZWrite Off
+        Cull Back
+        Blend SrcAlpha OneMinusSrcAlpha
 
         Pass
         {
@@ -60,8 +60,17 @@ Shader "Game/HDRP_LOS_Cutout_Simple"
 
             fixed4 frag (v2f i) : SV_Target
             {
+                // Calculate viewport position for cutout
+                float2 vpPos = (i.clip.xy / i.clip.w) * 0.5 + 0.5;
+                float2 diff = vpPos - _LosCenter.xy;
+                float dist = length(diff);
+                
+                // Smooth circular cutout
+                float cutout = smoothstep(_LosRadius - _LosFeather, _LosRadius, dist);
+                float finalAlpha = lerp(_CutAlpha, 1.0, cutout);
+                
                 fixed4 albedo = tex2D(_BaseMap, i.uv) * _BaseColor;
-                return fixed4(albedo.rgb, 1);
+                return fixed4(albedo.rgb, albedo.a * finalAlpha);
             }
             ENDCG
         }

@@ -6,39 +6,36 @@ using UnityEngine;
 
 namespace Game.Net.Weapons
 {
-    /// Server-authoritative primary weapon controller living on the player.
+    /// Server-authoritative secondary weapon controller living on the player.
     [RequireComponent(typeof(NetworkObject))]
-    public sealed class WeaponPrimaryController : NetworkBehaviour
+    public sealed class WeaponSecondaryController : NetworkBehaviour
     {
         [Header("Refs")]
         [SerializeField] PlayerWeaponSockets sockets;
 
         [Header("UI Replication")]
         public NetworkVariable<int> magazineAmmo = new(writePerm: NetworkVariableWritePermission.Server);
-        public NetworkVariable<int> reserveAmmo  = new(writePerm: NetworkVariableWritePermission.Server);
+        public NetworkVariable<int> reserveAmmo = new(writePerm: NetworkVariableWritePermission.Server);
         public NetworkVariable<bool> isReloading = new(writePerm: NetworkVariableWritePermission.Server);
         public NetworkVariable<float> reloadProgress = new(writePerm: NetworkVariableWritePermission.Server); // 0..1
         public NetworkVariable<FixedString64Bytes> equippedWeaponName = new(writePerm: NetworkVariableWritePermission.Server);
 
-        GunStats _stats;           // current gun
-        [SerializeField] GunStats assaultRifleStats;
-        [SerializeField] GunStats smgStats;
-        [SerializeField] GunStats lmgStats;
-        [SerializeField] GunStats shotgunStats;
-        [SerializeField] GunStats sniperStats;
+        SecondaryStats _stats;           // current gun
+        [SerializeField] SecondaryStats pistolStats;
+        [SerializeField] SecondaryStats machinePistolStats;
 
         float _fireCooldown;
         float _reloadRemain;       // seconds left when paused
         bool _reloadPaused;
 
-        // Replicate selected primary type so clients can build local view
-        readonly NetworkVariable<byte> _netPrimaryType =
+        // Replicate selected secondary type so clients can build local view
+        readonly NetworkVariable<byte> _netSecondaryType =
             new NetworkVariable<byte>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
         // Local-only visuals
         WeaponView _view;
         Game.Net.PlayerNetwork _player;
-        bool _hasEquippedPrimary;
+        bool _hasEquippedSecondary;
 
         const int InfiniteReserve = -1;
         const float ProjectileLifetimeSeconds = 3f;
@@ -49,18 +46,18 @@ namespace Game.Net.Weapons
         }
 
         // ====== API ======
-        public void Equip(Game.Net.PrimaryType primaryType, GunStats stats)
+        public void Equip(Game.Net.SecondaryType secondaryType, SecondaryStats stats)
         {
-            if (!IsServer) { RequestEquipServerRpc((byte)primaryType); } // validate server-side
-            else ServerEquip(primaryType, stats);
+            if (!IsServer) { RequestEquipServerRpc((byte)secondaryType); }
+            else ServerEquip(secondaryType, stats);
         }
 
-        public void OnSprintChanged(bool on)   { if (isReloading.Value) _reloadPaused = on; }
-        public void OnDashChanged(bool on)     { if (isReloading.Value) _reloadPaused = on; }
+        public void OnSprintChanged(bool on) { if (isReloading.Value) _reloadPaused = on; }
+        public void OnDashChanged(bool on) { if (isReloading.Value) _reloadPaused = on; }
 
         public void FireHeld(bool on)
         {
-            if (!IsOwner) return; // input from owner only
+            if (!IsOwner) return;
             if (on) RequestFireStartServerRpc(); else RequestFireStopServerRpc();
         }
 
@@ -71,16 +68,16 @@ namespace Game.Net.Weapons
         }
 
         // ====== Server logic ======
-        [ServerRpc] void RequestEquipServerRpc(byte primary) { ServerEquip((Game.Net.PrimaryType)primary, null); }
+        [ServerRpc] void RequestEquipServerRpc(byte secondary) { ServerEquip((Game.Net.SecondaryType)secondary, null); }
 
-        void ServerEquip(Game.Net.PrimaryType t, GunStats provided)
+        void ServerEquip(Game.Net.SecondaryType t, SecondaryStats provided)
         {
-            _netPrimaryType.Value = (byte)t;
+            _netSecondaryType.Value = (byte)t;
             var nextStats = provided ?? LookupAssigned(t) ?? GetDefaults(t);
             if (nextStats == null)
             {
                 _stats = null;
-                _hasEquippedPrimary = false;
+                _hasEquippedSecondary = false;
                 magazineAmmo.Value = 0;
                 reserveAmmo.Value = 0;
                 isReloading.Value = false;
@@ -92,18 +89,18 @@ namespace Game.Net.Weapons
                 return;
             }
 
-            bool newGun = !_hasEquippedPrimary || _stats == null || _stats.type != nextStats.type;
+            bool newGun = !_hasEquippedSecondary || _stats == null || _stats.type != nextStats.type;
             _stats = nextStats;
 
             if (newGun)
             {
                 magazineAmmo.Value = Mathf.Max(0, _stats.magazineSize);
-                reserveAmmo.Value  = InfiniteReserve;
+                reserveAmmo.Value = InfiniteReserve;
                 isReloading.Value = false;
                 reloadProgress.Value = 0f;
                 equippedWeaponName.Value = t.ToString();
                 _reloadRemain = 0f;
-                _hasEquippedPrimary = true;
+                _hasEquippedSecondary = true;
             }
 
             _fireCooldown = 0f;
@@ -113,7 +110,7 @@ namespace Game.Net.Weapons
         }
 
         [ServerRpc] void RequestFireStartServerRpc(ServerRpcParams p = default) { _firing = true; }
-        [ServerRpc] void RequestFireStopServerRpc(ServerRpcParams p = default)  { _firing = false; }
+        [ServerRpc] void RequestFireStopServerRpc(ServerRpcParams p = default) { _firing = false; }
 
         [ServerRpc] void RequestReloadServerRpc(ServerRpcParams p = default)
         {
@@ -215,7 +212,6 @@ namespace Game.Net.Weapons
                     proj.ConfigureServer(_stats.bulletSpeed, ProjectileLifetimeSeconds, _stats.damage, OwnerClientId, ownerTeam, owner);
                 }
                 if (nob) nob.Spawn(true);
-// Prevents immediate despawn-on-self-hit and makes bullets visibly travel.
             }
         }
 
@@ -246,12 +242,12 @@ namespace Game.Net.Weapons
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
-            var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
-            if (primaryType == Game.Net.PrimaryType.None)
+            var secondaryType = (Game.Net.SecondaryType)_netSecondaryType.Value;
+            if (secondaryType == Game.Net.SecondaryType.None)
             {
                 return;
             }
-            var localStats = LookupAssigned(primaryType) ?? GetDefaults(primaryType);
+            var localStats = LookupAssigned(secondaryType) ?? GetDefaults(secondaryType);
 
             if (!sockets)
             {
@@ -265,12 +261,12 @@ namespace Game.Net.Weapons
             }
             if (localStats == null || !localStats.weaponViewPrefab)
             {
-                Debug.LogWarning($"[Weapons] No WeaponView prefab set for {primaryType}. Assign GunStats.weaponViewPrefab.");
+                Debug.LogWarning($"[Weapons] No WeaponView prefab set for {secondaryType}. Assign SecondaryStats.weaponViewPrefab.");
                 return;
             }
 
             var go = Instantiate(localStats.weaponViewPrefab);
-            go.name = $"{primaryType}_View(Local)";
+            go.name = $"{secondaryType}_View(Local)";
             _view = go.GetComponent<WeaponView>();
 
             var t = go.transform;
@@ -289,56 +285,44 @@ namespace Game.Net.Weapons
         }
 
         // ====== Defaults if no SO assigned ======
-        static readonly Dictionary<Game.Net.PrimaryType, GunStats> _defaults = new();
+        static readonly Dictionary<Game.Net.SecondaryType, SecondaryStats> _defaults = new();
 
-        GunStats LookupAssigned(Game.Net.PrimaryType t)
+        SecondaryStats LookupAssigned(Game.Net.SecondaryType t)
         {
             return t switch
             {
-                Game.Net.PrimaryType.AR => assaultRifleStats,
-                Game.Net.PrimaryType.SMG => smgStats,
-                Game.Net.PrimaryType.LMG => lmgStats,
-                Game.Net.PrimaryType.Shotgun => shotgunStats,
-                Game.Net.PrimaryType.Sniper => sniperStats,
+                Game.Net.SecondaryType.Pistol => pistolStats,
+                Game.Net.SecondaryType.MachinePistol => machinePistolStats,
                 _ => null
             };
         }
 
-        GunStats GetDefaults(Game.Net.PrimaryType t)
+        SecondaryStats GetDefaults(Game.Net.SecondaryType t)
         {
-            if (t == Game.Net.PrimaryType.None) return null;
+            if (t == Game.Net.SecondaryType.None) return null;
             if (_defaults.TryGetValue(t, out var s)) return s;
 
-            var g = ScriptableObject.CreateInstance<GunStats>();
+            var g = ScriptableObject.CreateInstance<SecondaryStats>();
             g.type = t;
 
             switch (t)
             {
-                case Game.Net.PrimaryType.AR:
-                    g.magazineSize = 30; g.reserveSize = 30; g.automatic = true; g.fireRate = 10f; g.damage = 12f; g.bulletSpeed = 42f; g.reloadSeconds = 2.0f; break;
-                case Game.Net.PrimaryType.SMG:
-                    g.magazineSize = 25; g.reserveSize = 25; g.automatic = true; g.fireRate = 12f; g.damage = 9f;  g.bulletSpeed = 38f; g.reloadSeconds = 1.8f; break;
-                case Game.Net.PrimaryType.LMG:
-                    g.magazineSize = 60; g.reserveSize = 60; g.automatic = true; g.fireRate = 9f;  g.damage = 11f; g.bulletSpeed = 40f; g.reloadSeconds = 4.5f; break;
-                case Game.Net.PrimaryType.Shotgun:
-                    g.magazineSize = 8;  g.reserveSize = 8;  g.automatic = false; g.fireRate = 1.1f; g.damage = 9f;  g.pellets = 8; g.spreadDegrees = 8f; g.bulletSpeed = 32f; g.reloadSeconds = 3.2f; break;
-                case Game.Net.PrimaryType.Sniper:
-                    g.magazineSize = 5;  g.reserveSize = 5;  g.automatic = false; g.fireRate = 0.8f; g.damage = 60f; g.bulletSpeed = 60f; g.reloadSeconds = 3.0f; break;
+                case Game.Net.SecondaryType.Pistol:
+                    g.magazineSize = 12; g.reserveSize = 24; g.automatic = false; g.fireRate = 4f; g.damage = 25f; g.bulletSpeed = 40f; g.reloadSeconds = 1.5f; break;
+                case Game.Net.SecondaryType.MachinePistol:
+                    g.magazineSize = 20; g.reserveSize = 40; g.automatic = true; g.fireRate = 8f; g.damage = 15f; g.bulletSpeed = 38f; g.reloadSeconds = 1.8f; break;
                 default:
-                    g.magazineSize = 30; g.reserveSize = 30; g.automatic = true; g.fireRate = 10f; g.damage = 12f; g.bulletSpeed = 40f; g.reloadSeconds = 2.0f; break;
+                    g.magazineSize = 12; g.reserveSize = 24; g.automatic = false; g.fireRate = 4f; g.damage = 25f; g.bulletSpeed = 40f; g.reloadSeconds = 1.5f; break;
             }
 
-            // Do NOT create runtime network prefabs; clients won't have the hash.
-// Require a proper asset assigned and registered in NetworkManager.
             if (!g.projectilePrefab)
             {
                 Debug.LogError($"[Weapons] Missing projectile prefab for {t}. Assign a prefab asset and register it in NetworkManager → Network Prefabs.");
             }
 
-            // WeaponView must be a real prefab (with meshes) assigned on the GunStats.
             if (!g.weaponViewPrefab)
             {
-                Debug.LogWarning($"[Weapons] Missing WeaponView prefab for {t}. Assign GunStats.weaponViewPrefab.");
+                Debug.LogWarning($"[Weapons] Missing WeaponView prefab for {t}. Assign SecondaryStats.weaponViewPrefab.");
             }
 
             _defaults[t] = g;

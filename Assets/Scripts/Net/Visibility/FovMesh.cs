@@ -25,6 +25,8 @@ public sealed class FovMesh : MonoBehaviour
     public Color visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
     [Range(0.02f, 1f)] public float visualEdgeSoftness = 0.35f;
     [Range(0f, 0.2f)] public float visualHeightOffset = 0.03f;
+    [Tooltip("Additional height above ground to prevent Z-fighting")]
+    public float groundHeightOffset = 0.05f;
 
     const float EyeHeight = 1.2f;
     const float RebuildHz = 12f;
@@ -154,8 +156,29 @@ public sealed class FovMesh : MonoBehaviour
                 _visualMpb.SetFloat(_VisualEdgeId, Mathf.Max(0.02f, visualEdgeSoftness));
                 _visualMpb.SetFloat(_RadiusId, Mathf.Max(0.1f, radiusMeters));
                 _visualRenderer.SetPropertyBlock(_visualMpb);
+                
+                // Position visual just above ground
                 if (_visualGO)
-                    _visualGO.transform.localPosition = new Vector3(0f, visualHeightOffset, 0f);
+                {
+                    var centerWS = follow ? follow.position : transform.position;
+                    float groundY = centerWS.y;
+                    
+                    // Raycast to find ground
+                    if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out RaycastHit groundHit, 100f, LayerMask.GetMask("Ground")))
+                    {
+                        groundY = groundHit.point.y;
+                    }
+                    else if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out groundHit, 100f))
+                    {
+                        if (groundHit.collider.CompareTag("Ground"))
+                        {
+                            groundY = groundHit.point.y;
+                        }
+                    }
+                    
+                    float localGroundOffset = groundY - centerWS.y + visualHeightOffset;
+                    _visualGO.transform.localPosition = new Vector3(0f, localGroundOffset, 0f);
+                }
             }
         }
         else if (_visualGO && _visualGO.activeSelf)
@@ -179,6 +202,24 @@ public sealed class FovMesh : MonoBehaviour
         var centerWS = follow ? follow.position : transform.position;
         var eyeWS = centerWS + Vector3.up * EyeHeight;
 
+        // Raycast down to find the ground height
+        float groundY = centerWS.y;
+        if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out RaycastHit groundHit, 100f, LayerMask.GetMask("Ground")))
+        {
+            groundY = groundHit.point.y + groundHeightOffset;
+        }
+        else
+        {
+            // Fallback: try with default layer if "Ground" layer doesn't exist
+            if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out groundHit, 100f))
+            {
+                if (groundHit.collider.CompareTag("Ground"))
+                {
+                    groundY = groundHit.point.y + groundHeightOffset;
+                }
+            }
+        }
+
         int n = Mathf.Clamp(rayCount, 16, 220);
     _verts.Clear();
     _tris.Clear();
@@ -188,7 +229,8 @@ public sealed class FovMesh : MonoBehaviour
         float step = 360f / n;
 
         // Mesh vertices must be in LOCAL space.
-    _verts.Add(new Vector3(0f, 0.05f, 0f)); // center at player origin
+        // Center vertex at ground height
+    _verts.Add(new Vector3(0f, groundY - centerWS.y, 0f)); // center at ground level
 
         for (int i = 0; i < n; i++)
         {
@@ -201,8 +243,8 @@ public sealed class FovMesh : MonoBehaviour
                 endWS = hit.point;
             }
 
-            // Keep the ring on the ground plane near the player pivot.
-            var endOnPlaneWS = new Vector3(endWS.x, centerWS.y + 0.05f, endWS.z);
+            // Place the ring vertices at ground height
+            var endOnPlaneWS = new Vector3(endWS.x, groundY, endWS.z);
             var endLS = transform.InverseTransformPoint(endOnPlaneWS);
             _verts.Add(endLS);
         }

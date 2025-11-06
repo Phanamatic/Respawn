@@ -9,51 +9,154 @@ namespace Game.UI.HUD
     /// Attach to a HUD canvas. Assign fields in Inspector.
     public sealed class HudWeaponUI : MonoBehaviour
     {
-        [SerializeField] Image reloadFill;     // type = Filled
-        [SerializeField] TMP_Text ammoText;
-        [SerializeField] TMP_Text weaponName;
+        [Header("Primary Weapon")]
+        [SerializeField] Image primaryReloadFill;     // type = Filled
+        [SerializeField] TMP_Text primaryAmmoText;
+        [SerializeField] TMP_Text primaryWeaponName;
 
-        WeaponPrimaryController _wp;
+        [Header("Secondary Weapon")]
+        [SerializeField] Image secondaryReloadFill;
+        [SerializeField] TMP_Text secondaryAmmoText;
+        [SerializeField] TMP_Text secondaryWeaponName;
+
+        [Header("Melee Weapon")]
+        [SerializeField] TMP_Text meleeWeaponName;
+
+        [Header("Utility Weapon")]
+        [SerializeField] TMP_Text utilityAmmoText;
+        [SerializeField] TMP_Text utilityWeaponName;
+
+        WeaponPrimaryController _primary;
+        WeaponSecondaryController _secondary;
+        WeaponMeleeController _melee;
+        WeaponUtilityController _utility;
 
         void Start()
         {
-            if (reloadFill) reloadFill.enabled = false;
-            if (ammoText) { ammoText.enabled = false; ammoText.text = ""; }
-            if (weaponName) { weaponName.enabled = false; weaponName.text = ""; }
-            FindController();
+            HideAll();
+            FindControllers();
         }
 
         void Update()
         {
-            if (!_wp) { FindController(); return; }
+            if (!_primary) { FindControllers(); return; }
 
-            // Show only when a weapon is actually equipped
-            bool equipped = _wp != null;
-            if (weaponName) weaponName.enabled = equipped;
-            if (ammoText)   ammoText.enabled   = equipped;
+            UpdatePrimaryUI();
+            UpdateSecondaryUI();
+            UpdateMeleeUI();
+            UpdateUtilityUI();
+        }
 
-            if (reloadFill)
+        void UpdatePrimaryUI()
+        {
+            if (!_primary) return;
+
+            bool equipped = _primary.equippedWeaponName.Value.Length > 0;
+            if (primaryWeaponName)
             {
-                reloadFill.fillAmount = _wp.isReloading.Value ? _wp.reloadProgress.Value : 0f;
-                reloadFill.enabled = _wp.isReloading.Value;
+                primaryWeaponName.enabled = equipped;
+                if (equipped) primaryWeaponName.text = _primary.equippedWeaponName.Value.ToString();
             }
-
-            if (ammoText)
+            if (primaryAmmoText)
             {
-                int magazine = Mathf.Max(0, _wp.magazineAmmo.Value);
-                int reserve = _wp.reserveAmmo.Value;
-                string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
-                ammoText.text = $"{magazine.ToString("D3")}/{reserveText}";
+                primaryAmmoText.enabled = equipped;
+                if (equipped)
+                {
+                    int magazine = Mathf.Max(0, _primary.magazineAmmo.Value);
+                    int reserve = _primary.reserveAmmo.Value;
+                    string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
+                    primaryAmmoText.text = $"{magazine.ToString("D3")}/{reserveText}";
+                }
             }
+            if (primaryReloadFill)
+            {
+                primaryReloadFill.fillAmount = _primary.isReloading.Value ? _primary.reloadProgress.Value : 0f;
+                primaryReloadFill.enabled = _primary.isReloading.Value;
+            }
+        }
+
+        void UpdateSecondaryUI()
+        {
+            if (!_secondary) return;
+
+            bool equipped = _secondary.equippedWeaponName.Value.Length > 0;
+            if (secondaryWeaponName)
+            {
+                secondaryWeaponName.enabled = equipped;
+                if (equipped) secondaryWeaponName.text = _secondary.equippedWeaponName.Value.ToString();
+            }
+            if (secondaryAmmoText)
+            {
+                secondaryAmmoText.enabled = equipped;
+                if (equipped)
+                {
+                    int magazine = Mathf.Max(0, _secondary.magazineAmmo.Value);
+                    int reserve = _secondary.reserveAmmo.Value;
+                    string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
+                    secondaryAmmoText.text = $"{magazine.ToString("D3")}/{reserveText}";
+                }
+            }
+            if (secondaryReloadFill)
+            {
+                secondaryReloadFill.fillAmount = _secondary.isReloading.Value ? _secondary.reloadProgress.Value : 0f;
+                secondaryReloadFill.enabled = _secondary.isReloading.Value;
+            }
+        }
+
+        void UpdateMeleeUI()
+        {
+            if (!_melee) return;
+
+            bool equipped = _melee.equippedWeaponName.Value.Length > 0;
+            if (meleeWeaponName)
+            {
+                meleeWeaponName.enabled = equipped;
+                if (equipped) meleeWeaponName.text = _melee.equippedWeaponName.Value.ToString();
+            }
+        }
+
+        void UpdateUtilityUI()
+        {
+            if (!_utility) return;
+
+            bool equipped = _utility.equippedWeaponName.Value.Length > 0;
+            if (utilityWeaponName)
+            {
+                utilityWeaponName.enabled = equipped;
+                if (equipped) utilityWeaponName.text = _utility.equippedWeaponName.Value.ToString();
+            }
+            if (utilityAmmoText)
+            {
+                utilityAmmoText.enabled = equipped;
+                if (equipped) utilityAmmoText.text = $"x{_utility.ammoCount.Value}";
+            }
+        }
+
+        void HideAll()
+        {
+            if (primaryReloadFill) primaryReloadFill.enabled = false;
+            if (primaryAmmoText) { primaryAmmoText.enabled = false; primaryAmmoText.text = ""; }
+            if (primaryWeaponName) { primaryWeaponName.enabled = false; primaryWeaponName.text = ""; }
+
+            if (secondaryReloadFill) secondaryReloadFill.enabled = false;
+            if (secondaryAmmoText) { secondaryAmmoText.enabled = false; secondaryAmmoText.text = ""; }
+            if (secondaryWeaponName) { secondaryWeaponName.enabled = false; secondaryWeaponName.text = ""; }
+
+            if (meleeWeaponName) { meleeWeaponName.enabled = false; meleeWeaponName.text = ""; }
+
+            if (utilityAmmoText) { utilityAmmoText.enabled = false; utilityAmmoText.text = ""; }
+            if (utilityWeaponName) { utilityWeaponName.enabled = false; utilityWeaponName.text = ""; }
         }
 // Hides equip texts unless equipped; reload image only when reloading.
 
-        void FindController()
+        void FindControllers()
         {
             var local = NetworkManager.Singleton ? NetworkManager.Singleton.SpawnManager?.GetLocalPlayerObject() : null;
             if (!local) return;
-            _wp = local.GetComponent<WeaponPrimaryController>();
-            if (_wp && weaponName) weaponName.text = "Primary";
+            _primary = local.GetComponent<WeaponPrimaryController>();
+            _secondary = local.GetComponent<WeaponSecondaryController>();
+            _melee = local.GetComponent<WeaponMeleeController>();
+            _utility = local.GetComponent<WeaponUtilityController>();
         }
     }
 }
