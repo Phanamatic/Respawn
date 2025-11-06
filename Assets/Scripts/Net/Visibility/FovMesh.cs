@@ -24,7 +24,7 @@ public sealed class FovMesh : MonoBehaviour
     public bool showVisual = true;
     public Color visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
     [Range(0.02f, 1f)] public float visualEdgeSoftness = 0.35f;
-    [Range(0f, 0.2f)] public float visualHeightOffset = 0.03f;
+    [Range(0f, 2f)] public float visualHeightOffset = 0.99f;
     [Tooltip("Additional height above ground to prevent Z-fighting")]
     public float groundHeightOffset = 0.05f;
 

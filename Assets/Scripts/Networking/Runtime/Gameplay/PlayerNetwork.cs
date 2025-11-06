@@ -177,6 +177,8 @@ namespace Game.Net
         public event System.Action<bool> DashChanged;
         InputAction _aSlot1, _aSlot2, _aSlot3, _aThrow;
         Vector2 _inMove, _inMouse; bool _inSprint;
+        float _targetYaw; // Cached yaw from mouse position
+        bool _hasValidYaw; // Track if we have a valid yaw from mouse
 
         float _stamina; float _sprintRegenResumeAt;
 
@@ -1082,6 +1084,46 @@ void OnActiveSlotChanged()
             _inMouse  = _aMouse?.ReadValue<Vector2>() ?? Vector2.zero;
             _inSprint = _aSprint != null && _aSprint.IsPressed();
 
+            // Calculate target yaw from mouse position every frame for responsiveness
+            if (_cam)
+            {
+                var ray = _cam.ScreenPointToRay(_inMouse);
+                Vector3 aimPoint = transform.position;
+                bool aimResolved = false;
+
+                // Raycast to find world position under mouse cursor
+                if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
+                {
+                    aimPoint = hit.point;
+                    aimResolved = true;
+                }
+                else
+                {
+                    // Fallback to plane intersection at player height
+                    var plane = new Plane(Vector3.up, transform.position);
+                    if (plane.Raycast(ray, out float enter))
+                    {
+                        aimPoint = ray.GetPoint(enter);
+                        aimResolved = true;
+                    }
+                }
+
+                if (aimResolved)
+                {
+                    // Calculate direction from player to mouse position on ground
+                    // This is the direction the weapon muzzle should point
+                    var dir = aimPoint - transform.position;
+                    dir.y = 0f; // Keep rotation horizontal only (Y-axis rotation)
+                    
+                    // Only update rotation if direction is significant
+                    if (dir.sqrMagnitude > 0.0001f)
+                    {
+                        _targetYaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
+                        _hasValidYaw = true;
+                    }
+                }
+            }
+
             UpdateUI();
         }
 
@@ -1130,43 +1172,9 @@ void OnActiveSlotChanged()
                 right = _cam.transform.right; right.y = 0f; right = right.sqrMagnitude > 1e-4f ? right.normalized : Vector3.right;
             }
 
-            float yaw = transform.eulerAngles.y;
-            if (_cam)
-            {
-                var ray = _cam.ScreenPointToRay(_inMouse);
-                Vector3 aimPoint = transform.position;
-                bool aimResolved = false;
-
-                // Raycast to find world position under mouse cursor
-                if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
-                {
-                    aimPoint = hit.point;
-                    aimResolved = true;
-                }
-                else
-                {
-                    // Fallback to plane intersection at player height
-                    var plane = new Plane(Vector3.up, transform.position);
-                    if (plane.Raycast(ray, out float enter))
-                    {
-                        aimPoint = ray.GetPoint(enter);
-                        aimResolved = true;
-                    }
-                }
-
-                if (aimResolved)
-                {
-                    // Calculate direction from player to mouse position on ground
-                    var dir = aimPoint - transform.position;
-                    dir.y = 0f; // Keep rotation horizontal only
-                    
-                    // Only update rotation if direction is significant
-                    if (dir.sqrMagnitude > 0.0001f)
-                    {
-                        yaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
-                    }
-                }
-            }
+            // Use the yaw calculated in Update() for instant mouse-to-rotation
+            // This ensures player always faces mouse cursor (weapon muzzle points at cursor)
+            float yaw = _hasValidYaw ? _targetYaw : transform.eulerAngles.y;
 
             if (!_isDashing && now <= _dashQueuedUntil && now >= _dashReadyAt)
             {
