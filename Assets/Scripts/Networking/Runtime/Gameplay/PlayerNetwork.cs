@@ -316,7 +316,7 @@ namespace Game.Net
 
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
-                SetInputPaused(_phase == PlayerPhase.Lobby);
+                _inputPaused = false;
 
                 UpdateHealthUI(_health.Value);
                 _statsLastPersisted = default;
@@ -1390,14 +1390,10 @@ void OnActiveSlotChanged()
                 SetFrozenServer(false);
             }
 
-            ApplyPhaseClientRpc(phase);
-        }
-
-        [ClientRpc]
-        void ApplyPhaseClientRpc(PlayerPhase phase)
-        {
-            _phase = phase;
-            if (IsOwner) SetInputPaused(phase == PlayerPhase.Lobby);
+            if (IsOwner)
+            {
+                _inputPaused = false;
+            }
         }
 
         // ------- Freeze / Visibility -------

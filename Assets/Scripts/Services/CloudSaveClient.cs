@@ -47,6 +47,7 @@ namespace Game.Net
             catch (Exception e)
             {
                 Debug.LogWarning($"[CloudSave] Load skipped: {e.Message}");
+                Debug.Log($"[CloudSave] Load stack: {e}");
             }
             return fallback;
         }
