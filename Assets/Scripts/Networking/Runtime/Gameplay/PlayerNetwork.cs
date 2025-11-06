@@ -41,6 +41,7 @@ namespace Game.Net
 
         // Local cache for quick checks
         Game.Net.PlayerLoadout _myLoadout = Game.Net.PlayerLoadout.Default;
+        PlayerPhase _phase = PlayerPhase.Lobby;
 
         // Simple server rate-limits
         float _lastSwitchServerTime, _lastThrowServerTime;
@@ -208,6 +209,8 @@ namespace Game.Net
                 _capsule = GetComponent<CapsuleCollider>();
             }
 
+            _phase = initialPhase;
+
             _identitySubmitted = false;
             if (_identitySubmitCo != null)
             {
@@ -254,11 +257,6 @@ namespace Game.Net
                 {
                     SetFrozenServer(false);
                 }
-            }
-
-            if (IsServer)
-            {
-                ServerAutoEquipPrimary();
             }
 
             if (IsOwner)
@@ -318,7 +316,7 @@ namespace Game.Net
 
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
-                SetInputPaused(false);
+                SetInputPaused(_phase == PlayerPhase.Lobby);
 
                 UpdateHealthUI(_health.Value);
                 _statsLastPersisted = default;
@@ -886,7 +884,7 @@ void OnActiveSlotChanged()
                 string iconId = ResolvePreferredIconId();
                 if (!string.IsNullOrWhiteSpace(alias))
                 {
-                    SubmitPlayerIdentityServerRpc(alias, iconId);
+                    SubmitPlayerIdentityServerRpc(alias, iconId ?? string.Empty);
                     _identitySubmitted = true;
                     yield break;
                 }
@@ -899,7 +897,7 @@ void OnActiveSlotChanged()
             {
                 string fallbackName = $"Player {OwnerClientId}";
                 string fallbackIcon = ResolvePreferredIconId();
-                SubmitPlayerIdentityServerRpc(fallbackName, fallbackIcon);
+                SubmitPlayerIdentityServerRpc(fallbackName, fallbackIcon ?? string.Empty);
                 _identitySubmitted = true;
             }
         }
@@ -1200,6 +1198,11 @@ void OnActiveSlotChanged()
 #endif
 
             // TODO: hook your weapon/inventory system here using _netLoadout.Value.ToModel()
+
+            if (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo)
+            {
+                ServerAutoEquipPrimary();
+            }
         }
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)
@@ -1373,7 +1376,28 @@ void OnActiveSlotChanged()
 
         void SetPhase(PlayerPhase phase)
         {
-            if (phase == PlayerPhase.Lobby && IsServer) SetFrozenServer(false);
+            _phase = phase;
+
+            if (phase == PlayerPhase.Match)
+            {
+                if (IsServer && (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo))
+                {
+                    ServerAutoEquipPrimary();
+                }
+            }
+            else if (phase == PlayerPhase.Lobby && IsServer)
+            {
+                SetFrozenServer(false);
+            }
+
+            ApplyPhaseClientRpc(phase);
+        }
+
+        [ClientRpc]
+        void ApplyPhaseClientRpc(PlayerPhase phase)
+        {
+            _phase = phase;
+            if (IsOwner) SetInputPaused(phase == PlayerPhase.Lobby);
         }
 
         // ------- Freeze / Visibility -------
@@ -1567,13 +1591,22 @@ void OnActiveSlotChanged()
         public void ServerAutoEquipPrimary()
         {
             if (!IsServer) return;
-            _activeSlot.Value = 0; // Primary
             var wp = GetComponent<Game.Net.Weapons.WeaponPrimaryController>();
-            if (wp != null)
+            if (!wp) return;
+
+            var net = _netLoadout.Value;
+            var pt = (PrimaryType)net.primary;
+
+            if (pt == PrimaryType.None)
             {
-                var pt = (PrimaryType)_netLoadout.Value.primary;
-                wp.Equip(pt, null); // server path equips and rebuilds views
+                pt = PlayerLoadout.Default.Primary;
+                if (pt == PrimaryType.None) return;
+                net.primary = (byte)pt;
+                _netLoadout.Value = net;
             }
+
+            _activeSlot.Value = 0; // Primary
+            wp.Equip(pt, null); // server path equips and rebuilds views
         }
 
         void SetSprint(bool on)

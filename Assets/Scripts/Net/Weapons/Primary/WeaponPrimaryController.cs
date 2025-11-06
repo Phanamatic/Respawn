@@ -75,6 +75,20 @@ namespace Game.Net.Weapons
         {
             _netPrimaryType.Value = (byte)t;
             var nextStats = provided ?? LookupAssigned(t) ?? GetDefaults(t);
+            if (nextStats == null)
+            {
+                _stats = null;
+                _hasEquippedPrimary = false;
+                magazineAmmo.Value = 0;
+                reserveAmmo.Value = 0;
+                isReloading.Value = false;
+                reloadProgress.Value = 0f;
+                _reloadRemain = 0f;
+                _fireCooldown = 0f;
+                RebuildLocalViewClientRpc();
+                return;
+            }
+
             bool newGun = !_hasEquippedPrimary || _stats == null || _stats.type != nextStats.type;
             _stats = nextStats;
 
@@ -226,8 +240,13 @@ namespace Game.Net.Weapons
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
             if (_view) Destroy(_view.gameObject);
+            _view = null;
 
             var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
+            if (primaryType == Game.Net.PrimaryType.None)
+            {
+                return;
+            }
             var localStats = LookupAssigned(primaryType) ?? GetDefaults(primaryType);
 
             if (!sockets)
@@ -283,6 +302,7 @@ namespace Game.Net.Weapons
 
         GunStats GetDefaults(Game.Net.PrimaryType t)
         {
+            if (t == Game.Net.PrimaryType.None) return null;
             if (_defaults.TryGetValue(t, out var s)) return s;
 
             var g = ScriptableObject.CreateInstance<GunStats>();

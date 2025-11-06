@@ -18,6 +18,9 @@ using Unity.Services.Lobbies.Models;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.NetworkInformation;
+#if UNITY_RENDER_PIPELINE_HDRP
+using UnityEngine.Rendering.HighDefinition;
+#endif
 
 namespace Game.Net
 {
@@ -508,6 +511,8 @@ namespace Game.Net
                 };
                 // Dev: don’t let loopback sneak back in; compute Lobby/1v1/2v2 once and reuse.
 
+                EnsureHeadlessRenderingDisabled();
+
                 // 2) Ensure the bootstrap (Account) scene is loaded so NetworkManager exists & persists
                 if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != bootstrapScene)
                 {
@@ -598,6 +603,113 @@ namespace Game.Net
                 // 5) Heartbeat while running
                 if (!string.IsNullOrEmpty(lobby?.Id))
                     StartCoroutine(LobbyHeartbeatLoop(lobby.Id));
+            }
+
+            static void EnsureHeadlessRenderingDisabled()
+            {
+                if (!Application.isBatchMode && !HasArg("-nographics")) return;
+                TryDisableRenderPipelineAsset();
+                if (FindObjectOfType<HeadlessCameraDisabler>() != null) return;
+
+                var go = new GameObject("HeadlessCameraDisabler")
+                {
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                DontDestroyOnLoad(go);
+                go.AddComponent<HeadlessCameraDisabler>();
+            }
+
+            private sealed class HeadlessCameraDisabler : MonoBehaviour
+            {
+                void OnEnable()
+                {
+                    SceneManager.sceneLoaded += OnSceneLoaded;
+                    RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering += OnBeginFrameRendering;
+                    DisableAllCameras();
+                }
+
+                void OnDisable()
+                {
+                    SceneManager.sceneLoaded -= OnSceneLoaded;
+                    RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+                    RenderPipelineManager.beginFrameRendering -= OnBeginFrameRendering;
+                }
+
+                static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+                {
+                    DisableAllCameras();
+                }
+
+                static void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
+                {
+                    DisableCamera(camera);
+                }
+
+                static void OnBeginFrameRendering(ScriptableRenderContext context, Camera[] cameras)
+                {
+                    if (cameras != null)
+                    {
+                        for (int i = 0; i < cameras.Length; i++)
+                        {
+                            DisableCamera(cameras[i]);
+                        }
+                    }
+                }
+
+                static void DisableAllCameras()
+                {
+                    var cameras = Resources.FindObjectsOfTypeAll<Camera>();
+                    for (int i = 0; i < cameras.Length; i++)
+                    {
+                        DisableCamera(cameras[i]);
+                    }
+                }
+
+                static void DisableCamera(Camera camera)
+                {
+                    if (!camera) return;
+                    camera.enabled = false;
+    #if UNITY_RENDER_PIPELINE_HDRP
+                    var hd = camera.GetComponent<HDAdditionalCameraData>();
+                    if (hd) hd.enabled = false;
+    #endif
+                }
+            }
+
+            static void TryDisableRenderPipelineAsset()
+            {
+                try
+                {
+                    if (GraphicsSettings.defaultRenderPipeline != null)
+                        GraphicsSettings.defaultRenderPipeline = null;
+
+                    var qualityCount = QualitySettings.names?.Length ?? 0;
+                    int originalQuality = QualitySettings.GetQualityLevel();
+                    bool qualityChanged = false;
+                    for (int i = 0; i < qualityCount; i++)
+                    {
+                        if (QualitySettings.GetRenderPipelineAssetAt(i) != null)
+                        {
+                            QualitySettings.SetQualityLevel(i, false);
+                            QualitySettings.renderPipeline = null;
+                            qualityChanged = true;
+                        }
+                    }
+                    if (qualityChanged && originalQuality >= 0 && originalQuality < qualityCount)
+                        QualitySettings.SetQualityLevel(originalQuality, false);
+#if UNITY_RENDER_PIPELINE_HDRP
+                    var hdrpGlobal = HDRenderPipelineGlobalSettings.instance;
+                    if (hdrpGlobal != null)
+                    {
+                        hdrpGlobal.frameSettingsHistory.Clear();
+                    }
+#endif
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Bootstrap] Failed to disable SRP for headless: {ex.Message}");
+                }
             }
 
             // Wrapper to use async Lobby API inside coroutine flow.
