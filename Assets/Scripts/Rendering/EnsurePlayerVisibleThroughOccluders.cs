@@ -41,6 +41,9 @@ public sealed class EnsurePlayerVisibleThroughOccluders : MonoBehaviour
             var r = renderers[i];
             if (!r) continue;
 
+            // Ensure this character is never dropped by dynamic occlusion culling.
+            if (r.allowOcclusionWhenDynamic) r.allowOcclusionWhenDynamic = false;
+
             // Push material knobs if available.
             var mats = r.sharedMaterials;
             for (int m = 0; m < mats.Length; m++)

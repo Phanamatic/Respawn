@@ -1058,16 +1058,29 @@ void DetachCameraFromShip()
             Sprite iconA = null;
             Sprite iconB = null;
 
-            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            for (int i = 0; i < players.Length; i++)
+            // Drive icons from connected clients (persistent), not from spawned PlayerNetwork instances (LOS can despawn).
+            var ids = NetworkManager.ConnectedClientsIds;
+            for (int i = 0; i < ids.Count; i++)
             {
-                var player = players[i];
-                if (!player) continue;
+                var cid = ids[i];
+                if (cid == NetworkManager.ServerClientId) continue;
 
-                var sprite = ProfileIconLookup.Resolve(player.GetIconId());
+                // Resolve team from the authoritative team map if available, otherwise fall back to live object (if present)
+                TeamId team;
+                if (!_teams.TryGetValue(cid, out team))
+                {
+                    var pn = NetworkManager.ConnectedClients.TryGetValue(cid, out var cc)
+                        ? cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null
+                        : null;
+                    team = pn ? pn.GetTeam() : TeamId.A;
+                }
+
+                // Use last-known icon id cached in PlayerNetwork (persists across despawns)
+                var iconId = PlayerNetwork.GetCachedIconId(cid);
+                var sprite = ProfileIconLookup.Resolve(iconId);
                 if (!sprite) sprite = defaultPlayerIcon;
 
-                switch (player.GetTeam())
+                switch (team)
                 {
                     case TeamId.A:
                         if (iconA == null) iconA = sprite;
@@ -1081,6 +1094,7 @@ void DetachCameraFromShip()
             ApplyAlwaysOnIcon(teamAPlayerIcon, iconA);
             ApplyAlwaysOnIcon(teamBPlayerIcon, iconB);
         }
+// Icons now ignore LOS-culling; they only change when a client connects/disconnects or identity changes.
 
         IEnumerator CoAwaitIdentity(Task identityTask)
         {

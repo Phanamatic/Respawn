@@ -296,6 +296,10 @@ namespace Game.Net
                 // Force local model fully visible each spawn (guards against any fade components).
                 EnsureLocalModelVisible();
 
+                // Ensure primary is equipped on the owning client even if activeSlot started at 0 (no OnValueChanged event).
+                // This issues an owner-side Equip() which routes to the server for validation.
+                OnActiveSlotChanged();
+
                 // Enforce visibility through transparent occluders.
                 var vis = GetComponent<EnsurePlayerVisibleThroughOccluders>();
                 if (!vis) vis = gameObject.AddComponent<EnsurePlayerVisibleThroughOccluders>();
@@ -622,6 +626,24 @@ namespace Game.Net
             return null;
         }
 
+        /// <summary>
+        /// Lookup last-known icon for any client id. Falls back to a live PlayerNetwork if present.
+        /// </summary>
+        public static string GetCachedIconId(ulong clientId)
+        {
+            if (s_lastKnownIconIds.TryGetValue(clientId, out var icon) && !string.IsNullOrWhiteSpace(icon))
+                return icon;
+
+            var nm = NetworkManager.Singleton;
+            if (nm != null && nm.ConnectedClients.TryGetValue(clientId, out var cc))
+            {
+                var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+                if (pn != null) return pn.GetIconId();
+            }
+            return null;
+        }
+        // Exposes the existing identity cache so UI can show icons even when the player object is culled.
+
         internal void NotifyKilledServer(PlayerNetwork killer, float damageAmount)
         {
             if (!IsServer) return;
@@ -827,7 +849,11 @@ void OnActiveSlotChanged()
                 var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
                 los.target = transform;
 
+// Prevent baked/dynamic occlusion from hiding players behind now-transparent occluders.
+                _cam.useOcclusionCulling = false;
+
                 FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
+// Disables camera occlusion culling when LOS transparency is active so faded occluders can't fully hide the player.
             }
         }
 
@@ -1412,6 +1438,10 @@ void OnActiveSlotChanged()
                 if (IsServer && (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo))
                 {
                     ServerAutoEquipPrimary();
+                }
+                if (IsOwner)
+                {
+                    OnActiveSlotChanged();
                 }
             }
             else if (phase == PlayerPhase.Lobby && IsServer)

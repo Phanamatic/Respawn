@@ -276,6 +276,10 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     {
         if (!r) return;
 
+        // Toggle dynamic occlusion participation for this occluder based on faded state.
+        // When faded, it should not occlude anything via occlusion culling.
+        r.allowOcclusionWhenDynamic = !faded;
+
         if (!_depthCache.TryGetValue(r, out var st))
         {
             st = new DepthState();
