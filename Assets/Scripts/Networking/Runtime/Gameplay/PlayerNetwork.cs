@@ -1085,9 +1085,8 @@ namespace Game.Net
             _inMouse = _aMouse?.ReadValue<Vector2>() ?? Vector2.zero;
             // Read inputs
             _inSprint = _aSprint != null && _aSprint.IsPressed();
-            // Reset per-frame so we always allow the fallback (ray/plane) to solve yaw when the screen-space delta is tiny
+            // Reset per-frame so fallback (ray/plane) can solve yaw when inside the deadzone
             _hasValidYaw = false;
-            // Brief dev comment: this avoids getting "stuck" on an old yaw when the cursor is inside the deadzone.
 
             // Calculate target yaw from mouse position every frame for responsiveness
             if (_cam)
@@ -1108,8 +1107,8 @@ namespace Game.Net
                         Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right,   Vector3.up).normalized;
                         Vector3 camFwdXZ   = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
 
+                        // Screen X -> camera right; screen Y -> camera *forward* (not up) on ground plane
                         Vector3 dir = camRightXZ * delta.x + camFwdXZ * delta.y;
-                        // Brief dev comment: screen Y should map to camera-forward on the ground plane (not camera-up), especially for isometric pitch.
                         dir.y = 0f;
                         if (dir.sqrMagnitude > 0.0001f)
                         {
@@ -1130,6 +1129,8 @@ namespace Game.Net
                         }
                     }
                 }
+
+                // Brief dev comment: unify screen-space aim across the class to avoid mixed input paths.
 
                 // Fallback: ray/plane aim if screen-space didn’t resolve
                 if (!_hasValidYaw)
@@ -1290,8 +1291,10 @@ namespace Game.Net
             {
                 float cur = transform.eulerAngles.y;
                 float next = Mathf.LerpAngle(cur, _targetYaw, rotationLerpSpeed * dt);
-                // Brief dev comment: use FixedUpdate’s dt for consistent smoothing.
-                var e = transform.eulerAngles; e.y = next; transform.eulerAngles = e;
+
+                var q = Quaternion.Euler(0f, next, 0f);
+                transform.rotation = q;
+                if (_rb && !_rb.isKinematic) _rb.MoveRotation(q); // play nice with physics
             }
             // Rotation application remains universal; the source of _targetYaw differs by role.
             // Brief dev comment: universal application keeps visuals consistent and lets server broadcast via NetworkTransform.

@@ -539,7 +539,7 @@ MonoBehaviour:
     m_Bits: 8
   aimMask:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 8
   aimUsingScreenSpace: 1
   screenAimMinPixels: 6
   groundSnapUp: 2
