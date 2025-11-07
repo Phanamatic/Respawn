@@ -484,11 +484,11 @@ AudioSource:
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 8300000, guid: 634fd2386f608f743a3bf95b5604cafa, type: 3}
+  m_Resource: {fileID: 8300000, guid: 1f14a047d3c8f404cad28443ae2e255d, type: 3}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
-  Loop: 1
+  Loop: 0
   Mute: 0
   Spatialize: 0
   SpatializePostEffects: 0
@@ -695,14 +695,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   nextSceneName: MainMenu
   minLoadTime: 5
-  maxLoadTime: 7
+  maxLoadTime: 10
   fillImage: {fileID: 885116236}
   tipsText: {fileID: 1307833340}
   numberOfFillStages: 7
   rotationSpeed: 50
   pauseAt95Duration: 0.2
   finalSmoothDuration: 0.5
-  tipChangeInterval: 3
+  tipChangeInterval: 3.5
   tips:
   - Stay on the move to avoid enemy fire!
   - Use cover wisely - it can save your life.

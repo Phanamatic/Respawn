@@ -59,10 +59,13 @@ namespace UI.Scripts
 
         private void Start()
         {
+            // Reload volumes from PlayerPrefs to ensure we have latest settings
+            LoadVolumes();
+
             // Find and register all audio sources in the scene
             RefreshAudioSources();
 
-            // Continuously scan for new audio sources every frame
+            // Continuously scan for new audio sources every 0.5 seconds
             InvokeRepeating(nameof(RefreshAudioSources), 1f, 0.5f);
         }
 
@@ -90,6 +93,9 @@ namespace UI.Scripts
         /// </summary>
         public void RefreshAudioSources()
         {
+            // Reload volumes from PlayerPrefs before applying to ensure we're using latest settings
+            LoadVolumes();
+
             // Find all GameObjects with Music tag (only if tag exists)
             try
             {

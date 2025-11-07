@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: c41dbe6213c6b1b47b71d60998c947e6
+guid: f3a31adf96004ee40a017775984615d5
 TextureImporter:
   internalIDToNameTable: []
   externalObjects: {}
@@ -97,89 +97,45 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: Panels_0
+      name: download (9) 1_0
       rect:
         serializedVersion: 2
-        x: 28
-        y: 254
-        width: 227
-        height: 152
+        x: 208
+        y: 231
+        width: 487
+        height: 553
       alignment: 0
-      pivot: {x: 0, y: 0}
+      pivot: {x: 0.5, y: 0.5}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: 99aa6ef479d3b164d84e52756a17fbf8
-      internalID: 1819744989
+      spriteID: 5870813922484014899a35fd25e503ea
+      internalID: -923492031
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: Panels_1
+      name: download (9) 1_1
       rect:
         serializedVersion: 2
-        x: 252
-        y: 256
-        width: 228
-        height: 153
+        x: 870
+        y: 231
+        width: 484
+        height: 551
       alignment: 0
-      pivot: {x: 0, y: 0}
+      pivot: {x: 0.5, y: 0.5}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: e06f3ef1e4d08bf4b9572d7cc90797dd
-      internalID: 1265740603
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: Panels_2
-      rect:
-        serializedVersion: 2
-        x: 26
-        y: 91
-        width: 228
-        height: 156
-      alignment: 0
-      pivot: {x: 0, y: 0}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: 0
-      bones: []
-      spriteID: 39d70df20579d1943b92726a255c5450
-      internalID: -644029702
-      vertices: []
-      indices: 
-      edges: []
-      weights: []
-    - serializedVersion: 2
-      name: Panels_3
-      rect:
-        serializedVersion: 2
-        x: 251
-        y: 92
-        width: 229
-        height: 155
-      alignment: 0
-      pivot: {x: 0, y: 0}
-      border: {x: 0, y: 0, z: 0, w: 0}
-      customData: 
-      outline: []
-      physicsShape: []
-      tessellationDetail: 0
-      bones: []
-      spriteID: 8dccc7378d4055d4eafb6ce8e03c733e
-      internalID: 2145300152
+      spriteID: b52b2cd5f19d8114ab8306e210125104
+      internalID: -2016692365
       vertices: []
       indices: 
       edges: []
@@ -188,7 +144,7 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: bd668649312e9054f94683c96689142b
+    spriteID: 7db7c287096d9374da2d00ca9d463268
     internalID: 0
     vertices: []
     indices: 
@@ -198,10 +154,8 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      Panels_0: 1819744989
-      Panels_1: 1265740603
-      Panels_2: -644029702
-      Panels_3: 2145300152
+      download (9) 1_0: -923492031
+      download (9) 1_1: -2016692365
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

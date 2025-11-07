@@ -171,35 +171,79 @@ namespace UI.Scripts
                 AddClickToggleToSliderHandle(vsyncSlider);
             }
 
-            // Sound - Setup listeners
+            // Sound - Setup listeners with interaction fix
             if (masterVolumeSlider != null)
+            {
+                EnsureSliderInteractableAtZero(masterVolumeSlider);
                 masterVolumeSlider.onValueChanged.AddListener((value) =>
                 {
                     SetMasterVolume(value);
                     UpdateSliderHandleColor(masterVolumeHandle, value);
                 });
+            }
 
             if (musicVolumeSlider != null)
+            {
+                EnsureSliderInteractableAtZero(musicVolumeSlider);
                 musicVolumeSlider.onValueChanged.AddListener((value) =>
                 {
                     SetMusicVolume(value);
                     UpdateSliderHandleColor(musicVolumeHandle, value);
                 });
+            }
 
             if (sfxVolumeSlider != null)
+            {
+                EnsureSliderInteractableAtZero(sfxVolumeSlider);
                 sfxVolumeSlider.onValueChanged.AddListener((value) =>
                 {
                     SetSFXVolume(value);
                     UpdateSliderHandleColor(sfxVolumeHandle, value);
                 });
+            }
 
             // Accessibility
             if (mouseSensitivitySlider != null)
+            {
+                EnsureSliderInteractableAtZero(mouseSensitivitySlider);
                 mouseSensitivitySlider.onValueChanged.AddListener((value) =>
                 {
                     SetMouseSensitivity(value);
                     UpdateSliderHandleColor(mouseSensitivityHandle, value);
                 });
+            }
+        }
+
+        // Fix slider interaction at low values by ensuring fill area is clickable
+        private void EnsureSliderInteractableAtZero(Slider slider)
+        {
+            if (slider == null) return;
+
+            // Make the entire slider background clickable, not just the handle
+            var sliderTransform = slider.transform;
+
+            // Add a larger clickable area to the fill area
+            var fillArea = slider.fillRect?.parent?.GetComponent<RectTransform>();
+            if (fillArea != null)
+            {
+                // Ensure the fill area extends to cover the full slider
+                fillArea.anchorMin = new Vector2(0, 0);
+                fillArea.anchorMax = new Vector2(1, 1);
+                fillArea.offsetMin = Vector2.zero;
+                fillArea.offsetMax = Vector2.zero;
+            }
+
+            // Make sure handle has reasonable minimum size
+            if (slider.handleRect != null)
+            {
+                var handleImage = slider.handleRect.GetComponent<Image>();
+                if (handleImage != null)
+                {
+                    // Ensure handle is always visible and clickable
+                    var handleRectTransform = slider.handleRect;
+                    handleRectTransform.sizeDelta = new Vector2(Mathf.Max(handleRectTransform.sizeDelta.x, 20f), handleRectTransform.sizeDelta.y);
+                }
+            }
         }
 
         // ===== VIDEO SETTINGS =====
