@@ -124,8 +124,12 @@ public sealed class FovMesh : MonoBehaviour
         {
             transform.position = follow.position;
         }
-        if (transform.rotation != Quaternion.identity)
-            transform.rotation = Quaternion.identity;
+        
+        // Reset only the FOV child object rotations, NOT the player's rotation
+        if (_meshGO && _meshGO.transform.localRotation != Quaternion.identity)
+            _meshGO.transform.localRotation = Quaternion.identity;
+        if (_visualGO && _visualGO.transform.localRotation != Quaternion.identity)
+            _visualGO.transform.localRotation = Quaternion.identity;
 
         // update fill properties on material
         if (_mr != null)
