@@ -1135,54 +1135,37 @@ namespace Game.Net
                 // Fallback: ray/plane aim if screen-space didn’t resolve
                 if (!_hasValidYaw)
                 {
-                    if (Physics.Raycast(ray, out var hit, 500f, aimMask, QueryTriggerInteraction.Ignore))
+                    // Switch to mathematical plane intersection for robustness: always computes direction even without ground colliders.
+                    // Assumes flat ground at y=0; for uneven terrain, revert to Physics.Raycast with correct layers.
+                    Plane groundPlane = new Plane(Vector3.up, 0f);
+                    if (groundPlane.Raycast(ray, out float enter) && enter > 0f)
                     {
-                        Vector3 d = hit.point - transform.position; d.y = 0f;
-                        if (d.sqrMagnitude > 0.0001f)
+                        Vector3 hit = ray.GetPoint(enter);
+                        Vector3 to = hit - transform.position;
+                        to.y = 0f;
+                        float sqr = to.sqrMagnitude;
+                        // Approximate pixel deadzone in world space (tuned empirically; assumes ~ortho size or FOV)
+                        float minWorldSqr = Mathf.Pow(screenAimMinPixels * (_isoCam ? _isoCam.orthographicSize : 20f) / _cam.pixelHeight, 2f);  // fallback 20 if no iso
+                        if (sqr > minWorldSqr)
                         {
-                            float yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
-                            _targetYaw = yaw;
+                            _targetYaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
                             _hasValidYaw = true;
-
                             if (networkSyncYaw)
                             {
                                 float now = Time.unscaledTime;
-                                if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
+                                if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, _targetYaw)) >= yawSendThresholdDeg)
                                 {
-                                    _netYaw.Value = yaw;
-                                    _lastSentYaw = yaw;
+                                    _netYaw.Value = _targetYaw;
+                                    _lastSentYaw = _targetYaw;
                                     _nextYawSendTime = now + (1f / Mathf.Max(1f, yawSendRateHz));
                                 }
                             }
                         }
                     }
-                    else
-                    {
-                        var plane = new Plane(Vector3.up, transform.position);
-                        if (plane.Raycast(ray, out float enter))
-                        {
-                            Vector3 p = ray.GetPoint(enter);
-                            Vector3 d = p - transform.position; d.y = 0f;
-                            if (d.sqrMagnitude > 0.0001f)
-                            {
-                                float yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
-                                _targetYaw = yaw;
-                                _hasValidYaw = true;
-
-                                if (networkSyncYaw)
-                                {
-                                    float now = Time.unscaledTime;
-                                    if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
-                                    {
-                                        _netYaw.Value = yaw;
-                                        _lastSentYaw = yaw;
-                                        _nextYawSendTime = now + (1f / Mathf.Max(1f, yawSendRateHz));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    _hasValidYaw = false;
                 }
+
+                // Brief dev comment: Using Plane.Raycast ensures we get a hit point without relying on physics colliders/layers, fixing cases where ground isn't set up correctly. For precise aiming on uneven terrain, use Physics.Raycast with a properly configured groundMask (e.g., including "Ground" layer) and ensure all floor/terrain colliders are on that layer.
             }
 
             UpdateUI();
