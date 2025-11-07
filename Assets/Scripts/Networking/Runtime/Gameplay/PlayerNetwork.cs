@@ -68,7 +68,10 @@ namespace Game.Net
         [SerializeField, Range(5f, 30f)] float extrapolationLimit = 15f;
 
         [Header("Ground/Aim")]
-        [SerializeField] LayerMask groundMask = ~0;
+        [SerializeField] LayerMask groundMask = ~0;   // used for vertical snap/ground checks
+        [SerializeField] LayerMask aimMask   = 0;     // legacy ray aim mask (kept as fallback)
+        [SerializeField] bool aimUsingScreenSpace = true;  // rotate to face mouse on screen
+        [SerializeField] float screenAimMinPixels = 6f;    // deadzone to avoid jitter near player
         [SerializeField] float groundSnapUp = 2.0f;
         [SerializeField] float groundSnapDown = 6.0f;
         [SerializeField] float groundSkin = 0.02f;
@@ -1091,20 +1094,51 @@ void OnActiveSlotChanged()
                 Vector3 aimPoint = transform.position;
                 bool aimResolved = false;
 
-                // Raycast to find world position under mouse cursor
-                if (Physics.Raycast(ray, out var hit, 500f, groundMask, QueryTriggerInteraction.Ignore))
+                // Prefer screen-space aim: face the mouse position on the screen.
+                // We convert screen delta -> world XZ using camera's projected basis (right/up).
+                if (aimUsingScreenSpace)
                 {
-                    aimPoint = hit.point;
-                    aimResolved = true;
-                }
-                else
-                {
-                    // Fallback to plane intersection at player height
-                    var plane = new Plane(Vector3.up, transform.position);
-                    if (plane.Raycast(ray, out float enter))
+                    var cam = Camera.main;
+                    if (cam != null)
                     {
-                        aimPoint = ray.GetPoint(enter);
+                        // Player position on screen
+                        var sp = cam.WorldToScreenPoint(transform.position);
+                        var mouse = (Vector2)Input.mousePosition;
+                        var delta = mouse - new Vector2(sp.x, sp.y);
+
+                        if (delta.sqrMagnitude >= (screenAimMinPixels * screenAimMinPixels))
+                        {
+                            // Map screen axes to world ground plane
+                            Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right, Vector3.up).normalized;
+                            Vector3 camUpXZ    = Vector3.ProjectOnPlane(cam.transform.up,    Vector3.up).normalized;
+
+                            Vector3 dir = camRightXZ * delta.x + camUpXZ * delta.y;
+                            dir.y = 0f;
+                            if (dir.sqrMagnitude > 0.0001f)
+                            {
+                                aimPoint = transform.position + dir.normalized; // a point in front of the player
+                                aimResolved = true;
+                            }
+                        }
+                    }
+                }
+
+                // Fallback for edge cases (no camera or tiny delta): old world-ray logic.
+                if (!aimResolved)
+                {
+                    if (Physics.Raycast(ray, out var hit, 500f, aimMask, QueryTriggerInteraction.Ignore))
+                    {
+                        aimPoint = hit.point;
                         aimResolved = true;
+                    }
+                    else
+                    {
+                        var plane = new Plane(Vector3.up, transform.position);
+                        if (plane.Raycast(ray, out float enter))
+                        {
+                            aimPoint = ray.GetPoint(enter);
+                            aimResolved = true;
+                        }
                     }
                 }
 
