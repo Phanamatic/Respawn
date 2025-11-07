@@ -225,17 +225,6 @@ void LateUpdate()
 // --- Internals ---
 void ApplyCutout(Renderer r, Vector2 vpCenter, float radius, float feather, float alphaInside)
 {
-    // Skip renderers using HDRP Lit or other complex shaders that require lighting buffers
-    if (r && r.sharedMaterial && r.sharedMaterial.shader)
-    {
-        string shaderName = r.sharedMaterial.shader.name;
-        if (shaderName.Contains("HDRP/Lit") || shaderName.Contains("HDRenderPipeline/Lit"))
-        {
-            // Don't apply cutout to HDRP Lit materials - they require complex lighting setup
-            return;
-        }
-    }
-
     if (!_current.TryGetValue(r, out var f))
     {
         f = new Faded { r = r, mpb = new MaterialPropertyBlock(), active = false, isCutout = true };
@@ -329,17 +318,6 @@ Renderer[] ResolveTargetRenderers()
 void FadeTo(Renderer r, float targetA, float duration)
 {
     if (!r) return;
-
-    // Skip renderers using HDRP Lit or other complex shaders that require lighting buffers
-    if (r.sharedMaterial && r.sharedMaterial.shader)
-    {
-        string shaderName = r.sharedMaterial.shader.name;
-        if (shaderName.Contains("HDRP/Lit") || shaderName.Contains("HDRenderPipeline/Lit"))
-        {
-            // Don't fade HDRP Lit materials - they require complex lighting setup
-            return;
-        }
-    }
 
     if (!_current.TryGetValue(r, out var f))
     {
@@ -528,13 +506,11 @@ static void r_GetBlock(ref Faded f)
                 // Lower sorting priority so transparent occluders draw AFTER opaque player
                 if (m.HasProperty(SortingPriorityId)) m.SetInt(SortingPriorityId, -100);
                 
-                // Force transparent render queue range (3000-3999) to ensure it draws after geometry
-                // Only modify if not already in transparent range to avoid HDRP Lit shader issues
+                // Force transparent render queue (3000+) to ensure it draws after geometry
                 int originalQueue = m.renderQueue;
-                if (originalQueue < 3000 || originalQueue >= 4000)
+                if (m.renderQueue < 3000)
                 {
-                    // Use Transparent queue (3000) but don't use high values that trigger HDRP Lit
-                    m.renderQueue = 3000;
+                    m.renderQueue = 3000; // Transparent queue start
                 }
             }
             r.sortingOrder = -100;  // Negative to draw before other transparents

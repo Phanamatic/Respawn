@@ -13,8 +13,7 @@ Shader "Game/HDRP_LOS_Cutout_Simple"
     SubShader
     {
         // Transparent rendering to allow occluders to fade
-        // Use Universal pipeline compatible settings to avoid HDRP lighting requirements
-        Tags { "RenderType"="Transparent" "Queue"="Transparent" "IgnoreProjector"="True" }
+        Tags { "RenderPipeline"="HDRenderPipeline" "RenderType"="Transparent" "Queue"="Transparent" }
 
         ZWrite Off
         Cull Back
@@ -22,11 +21,11 @@ Shader "Game/HDRP_LOS_Cutout_Simple"
 
         Pass
         {
-            Name "Unlit"
-            Tags { "LightMode"="Always" }
+            Name "ForwardUnlit"
+            Tags { "LightMode"="ForwardOnly" }
 
             CGPROGRAM
-            #pragma target 3.0
+            #pragma target 4.5
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
