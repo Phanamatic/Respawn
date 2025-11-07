@@ -513,6 +513,10 @@ namespace Game.Net
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
 
+// After Cloud Save round-trip during countdown, force a clean equip using the now-populated loadout.
+// This drives HUD (weapon name, ammo, reload icon) to update immediately when the round starts.
+ReequipAllPlayersServer();
+
             StartCoroutine(CoMonitorRound());
         }
 
@@ -550,8 +554,7 @@ namespace Game.Net
             if (!inst.GetComponent<GroundClampServer>())
                 inst.gameObject.AddComponent<GroundClampServer>();
 
-            // Ensure prefab is registered then spawn.
-            try { NetworkManager.AddNetworkPrefab(inst.gameObject); } catch { }
+            // Prefabs must be pre-registered in NetworkManager; never add at runtime (can corrupt NGO tables).
             inst.SpawnAsPlayerObject(clientId);
 
             // Register with LOS server culling.
@@ -563,7 +566,8 @@ namespace Game.Net
             {
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
-                pn.ServerAutoEquipPrimary(); // force Primary on start
+                // Defer equip until round actually starts (see ReequipAllPlayersServer).
+                // This ensures Cloud Save loadout is present before the first equip drives the HUD.
                 pn.ClearDeathRecapForOwner();
             }
 // Players spawn already holding Primary.
@@ -1230,6 +1234,21 @@ void DetachCameraFromShip()
         {
             if (co != null) { StopCoroutine(co); co = null; }
         }
+
+/// <summary>
+/// Re-equip Primaries for all players at round start, after Cloud Save loadouts have replicated.
+/// Safe to call each round; idempotent on the server-side equip code.
+/// </summary>
+void ReequipAllPlayersServer()
+{
+    if (!IsServer) return;
+    foreach (var cc in NetworkManager.ConnectedClientsList)
+    {
+        if (cc.ClientId == NetworkManager.ServerClientId) continue;
+        var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+        if (pn) pn.ServerAutoEquipPrimary();
+    }
+}
     }
 
     // moved into Match1v1Controller class
