@@ -324,17 +324,6 @@ namespace Game.Net
                     nt.UseHalfFloatPrecision = false;
                     nt.UseQuaternionSynchronization = false;
                     nt.UseQuaternionCompression = false;
-                    nt.Interpolate = true; // Enable interpolation for smooth remote player movement
-                    // Ensure owner can update transform (default for NetworkTransform)
-                    // Remote clients will receive updates via NetworkTransform automatically
-                }
-
-                // Ensure NetworkTransform has authority for owner and interpolation enabled
-                var netTransform = GetComponent<NetworkTransform>();
-                if (netTransform != null)
-                {
-                    netTransform.Interpolate = true;
-                    Debug.Log($"[PlayerNetwork] NetworkTransform configured for client {OwnerClientId}: Interpolate={netTransform.Interpolate}, SyncRotY={netTransform.SyncRotAngleY}");
                 }
 
                 _rb.isKinematic = false;
@@ -1274,7 +1263,7 @@ void OnActiveSlotChanged()
             // Instant rotation to face mouse cursor (no interpolation)
             var targetRot = Quaternion.Euler(0f, yaw, 0f);
             if (_rb) _rb.MoveRotation(targetRot);
-            transform.rotation = targetRot; // Ensure Transform is updated for NetworkTransform
+            transform.rotation = targetRot;
 
             float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
             var vel = _rb.linearVelocity;
