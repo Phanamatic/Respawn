@@ -1083,7 +1083,11 @@ namespace Game.Net
 
             _inMove = _aMove?.ReadValue<Vector2>() ?? Vector2.zero;
             _inMouse = _aMouse?.ReadValue<Vector2>() ?? Vector2.zero;
+            // Read inputs
             _inSprint = _aSprint != null && _aSprint.IsPressed();
+            // Reset per-frame so we always allow the fallback (ray/plane) to solve yaw when the screen-space delta is tiny
+            _hasValidYaw = false;
+            // Brief dev comment: this avoids getting "stuck" on an old yaw when the cursor is inside the deadzone.
 
             // Calculate target yaw from mouse position every frame for responsiveness
             if (_cam)
@@ -1095,14 +1099,17 @@ namespace Game.Net
                 {
                     var cam = Camera.main ? Camera.main : _cam;
                     var sp = cam.WorldToScreenPoint(transform.position);
-                    var delta = (Vector2)Input.mousePosition - new Vector2(sp.x, sp.y);
+                    // Use the Input System pointer position we already read into _inMouse
+                    var delta = _inMouse - new Vector2(sp.x, sp.y);
+                    // Brief dev comment: avoids mismatch with legacy Input.mousePosition.
 
                     if (delta.sqrMagnitude >= (screenAimMinPixels * screenAimMinPixels))
                     {
-                        Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right, Vector3.up).normalized;
-                        Vector3 camUpXZ = Vector3.ProjectOnPlane(cam.transform.up, Vector3.up).normalized;
+                        Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right,   Vector3.up).normalized;
+                        Vector3 camFwdXZ   = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
 
-                        Vector3 dir = camRightXZ * delta.x + camUpXZ * delta.y;
+                        Vector3 dir = camRightXZ * delta.x + camFwdXZ * delta.y;
+                        // Brief dev comment: screen Y should map to camera-forward on the ground plane (not camera-up), especially for isometric pitch.
                         dir.y = 0f;
                         if (dir.sqrMagnitude > 0.0001f)
                         {
@@ -1282,7 +1289,8 @@ namespace Game.Net
             if (_hasValidYaw)
             {
                 float cur = transform.eulerAngles.y;
-                float next = Mathf.LerpAngle(cur, _targetYaw, rotationLerpSpeed * Time.deltaTime);
+                float next = Mathf.LerpAngle(cur, _targetYaw, rotationLerpSpeed * dt);
+                // Brief dev comment: use FixedUpdate’s dt for consistent smoothing.
                 var e = transform.eulerAngles; e.y = next; transform.eulerAngles = e;
             }
             // Rotation application remains universal; the source of _targetYaw differs by role.
