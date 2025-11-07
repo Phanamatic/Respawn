@@ -186,6 +186,21 @@ namespace Game.UI.Account
 
                 crStatus.text = "OK";
                 await TrySaveSelectedIconAsync();
+
+                // Ensure a default loadout is saved for brand-new accounts.
+                // Idempotent: safe to write even if a loadout already exists.
+                try
+                {
+                    if (CloudSaveClient.Instance != null)
+                        await CloudSaveClient.Instance.SaveLoadoutAsync(PlayerLoadout.Default);
+                    else
+                        Debug.LogWarning("[AccountUI] CloudSaveClient.Instance missing; default loadout not written.");
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[AccountUI] Default loadout save failed: {e.Message}");
+                }
+
                 // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();
             }

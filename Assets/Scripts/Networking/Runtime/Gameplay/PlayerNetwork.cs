@@ -250,8 +250,13 @@ namespace Game.Net
             }
 
             // Client: send saved loadout to server after spawn
-            if (IsOwner)
+            // Only pull/send the saved loadout once we are actually in a Match.
+            // In Lobby we skip this to avoid nulls and unnecessary traffic.
+            if (IsOwner && _phase == PlayerPhase.Match)
                 StartCoroutine(CoLoadAndSendLoadout());
+            else if (IsOwner)
+                Debug.Log("[PlayerNetwork] Owner spawned in Lobby; deferring loadout fetch until Match.");
+            // Defers Cloud Save roundtrip until Match phase to avoid Lobby-time NREs.
 
             // ~2 ticks of interpolation for remotes
             try
@@ -1250,22 +1255,40 @@ namespace Game.Net
         // Load CloudSave -> send to server (owner only). Validated server-side.
         System.Collections.IEnumerator CoLoadAndSendLoadout()
         {
-            // Prefer cached value from SessionContext to avoid a network read
-            PlayerLoadout lo = SessionContext.TryGetLoadout(out var cached) ? cached : PlayerLoadout.Default;
+            // Defensive guards: this coroutine is for Match only.
+            if (!IsOwner) yield break;
+            if (_phase != PlayerPhase.Match) yield break;
 
-            // If not cached, try CloudSave
-            if (!SessionContext.TryGetLoadout(out _))
+            // Be defensive around lobby-time singletons.
+            PlayerLoadout lo = PlayerLoadout.Default;
+            bool hasCached = false;
+            try { hasCached = SessionContext.TryGetLoadout(out lo); } catch { lo = PlayerLoadout.Default; }
+
+            if (!hasCached)
             {
-                var task = CloudSaveClient.Instance.LoadLoadoutAsync(PlayerLoadout.Default);
-                while (!task.IsCompleted) yield return null;
-                lo = task.Result;
-                SessionContext.SetLoadout(lo);
+                // CloudSaveClient may not exist in some lobby-only scenes; guard it.
+                var csc = CloudSaveClient.Instance;
+                if (csc == null)
+                {
+                    Debug.LogWarning("[PlayerNetwork] CloudSaveClient.Instance is null; using default loadout.");
+                    lo = PlayerLoadout.Default;
+                }
+                else
+                {
+                    var task = csc.LoadLoadoutAsync(PlayerLoadout.Default);
+                    while (!task.IsCompleted) yield return null;
+                    lo = task.Result; // PlayerLoadout is a struct; '??' not applicable.
+                    // If you ever want a safety fallback, do it in the async method or by a separate validity check.
+                }
+
+                try { SessionContext.SetLoadout(lo); } catch { /* optional cache; ignore if context absent */ }
             }
 
             _myLoadout = lo;
             var net = NetLoadout.From(lo);
             EquipLoadoutServerRpc(net.primary, net.secondary, net.util);
         }
+        // Only runs in Match; Lobby spawns will no-op. Prevents NREs when lobby services aren't present.
 
         void FixedUpdate()
         {
