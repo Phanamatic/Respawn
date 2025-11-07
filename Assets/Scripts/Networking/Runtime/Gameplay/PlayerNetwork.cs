@@ -46,7 +46,7 @@ namespace Game.Net
         // Simple server rate-limits
         float _lastSwitchServerTime, _lastThrowServerTime;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
-        const float k_MinThrowInterval  = 0.5f;    // guard spam
+        const float k_MinThrowInterval = 0.5f;    // guard spam
         [Header("Movement")]
         [SerializeField, Min(0f)] float moveSpeed = 8.5f;
         [SerializeField, Min(1f)] float sprintMultiplier = 1.9f;
@@ -69,14 +69,26 @@ namespace Game.Net
 
         [Header("Ground/Aim")]
         [SerializeField] LayerMask groundMask = ~0;   // used for vertical snap/ground checks
-        [SerializeField] LayerMask aimMask   = 0;     // legacy ray aim mask (kept as fallback)
+        [SerializeField] LayerMask aimMask = 0;     // legacy ray aim mask (kept as fallback)
         [SerializeField] bool aimUsingScreenSpace = true;  // rotate to face mouse on screen
         [SerializeField] float screenAimMinPixels = 6f;    // deadzone to avoid jitter near player
         [SerializeField] float groundSnapUp = 2.0f;
         [SerializeField] float groundSnapDown = 6.0f;
         [SerializeField] float groundSkin = 0.02f;
+        [SerializeField] float rotationLerpSpeed = 10f;
 
-        [Header("State")]
+        [Header("Networking")]
+        [SerializeField] bool networkSyncYaw = true;          // replicate yaw to others
+        [SerializeField] float yawSendRateHz = 60f;           // throttle outgoing owner updates
+        [SerializeField] float yawSendThresholdDeg = 0.5f;    // change needed before sending
+        private Unity.Netcode.NetworkVariable<float> _netYaw =
+            new Unity.Netcode.NetworkVariable<float>(
+                0f,
+                Unity.Netcode.NetworkVariableReadPermission.Everyone,
+                Unity.Netcode.NetworkVariableWritePermission.Owner);
+        private float _lastSentYaw;
+        private float _nextYawSendTime;
+        // Owner drives yaw; others follow _netYaw. Throttled to reduce bandwidth.
         [SerializeField] PlayerPhase initialPhase = PlayerPhase.Lobby;
 
         [Header("HUD (scene refs; assign via binder)")]
@@ -84,8 +96,8 @@ namespace Game.Net
         [SerializeField] TMP_Text sprintLabel;
         [SerializeField] Image dashFill;
         [SerializeField] TMP_Text dashLabel;
-    [SerializeField] Image healthFill;
-    [SerializeField] TMP_Text healthLabel;
+        [SerializeField] Image healthFill;
+        [SerializeField] TMP_Text healthLabel;
 
         [Header("Visual Root (optional)")]
         [SerializeField] Transform modelRoot;
@@ -104,10 +116,10 @@ namespace Game.Net
         Renderer[] _renderers;
         Collider[] _colliders;
 
-    CombatStats _statsPendingForCloud;
-    CombatStats _statsLastPersisted;
-    Coroutine _statsSaveRoutine;
-    bool _statsFlushImmediate;
+        CombatStats _statsPendingForCloud;
+        CombatStats _statsLastPersisted;
+        Coroutine _statsSaveRoutine;
+        bool _statsFlushImmediate;
 
         struct NetworkState { public Vector3 position; public float yaw; public Vector3 velocity; public float timestamp; public bool isDashing; }
         NetworkState[] _stateBuffer = new NetworkState[64];
@@ -118,7 +130,7 @@ namespace Game.Net
         [SerializeField] bool useLegacyStateReplication = false;
 
         NetworkVariable<Vector3> _netPosition = new();
-        NetworkVariable<float> _netYaw = new();
+        // REMOVED duplicate _netYaw; we keep the owner-writable _netYaw declared near the top.
         NetworkVariable<Vector3> _netVelocity = new();
         NetworkVariable<bool> _netIsDashing = new();
         readonly NetworkVariable<FixedString64Bytes> _playerName =
@@ -175,7 +187,7 @@ namespace Game.Net
         InputAction _aMove, _aMouse, _aSprint, _aDash;
         InputAction _aScoreboard;
         public bool IsSprinting { get; private set; }
-        public bool IsDashing  { get; private set; }
+        public bool IsDashing { get; private set; }
         public event System.Action<bool> SprintChanged;
         public event System.Action<bool> DashChanged;
         InputAction _aSlot1, _aSlot2, _aSlot3, _aThrow;
@@ -188,19 +200,19 @@ namespace Game.Net
         bool _isDashing; float _dashStartTime, _dashEndTime, _dashReadyAt, _dashYaw; Vector3 _dashDirXZ; float _dashQueuedUntil;
 
         Camera _cam; IsometricCamera _isoCam; int _camBindTries;
-    int _scoreboardBindTries;
+        int _scoreboardBindTries;
 
         bool _inputPaused;
         bool _frozen;
 
-    MatchScoreboardPanel _scoreboard;
-    Coroutine _identitySubmitCo;
-    bool _identitySubmitted;
+        MatchScoreboardPanel _scoreboard;
+        Coroutine _identitySubmitCo;
+        bool _identitySubmitted;
 
-    static readonly Dictionary<ulong, string> s_lastKnownNames = new();
-    static readonly Dictionary<ulong, string> s_lastKnownIconIds = new();
-    static System.Action<DeathRecapPayload> s_onShowDeathRecap;
-    static System.Action s_onHideDeathRecap;
+        static readonly Dictionary<ulong, string> s_lastKnownNames = new();
+        static readonly Dictionary<ulong, string> s_lastKnownIconIds = new();
+        static System.Action<DeathRecapPayload> s_onShowDeathRecap;
+        static System.Action s_onHideDeathRecap;
 
         private readonly NetworkVariable<TeamId> _team = new(TeamId.A);
 
@@ -230,6 +242,12 @@ namespace Game.Net
             _activeSlot.OnValueChanged += (_, __) => OnActiveSlotChanged();
             _health.OnValueChanged += OnHealthChanged;
             _combatStats.OnValueChanged += OnCombatStatsChanged;
+
+            // Subscribe to yaw updates for remote players
+            if (networkSyncYaw)
+            {
+                _netYaw.OnValueChanged += OnYawChanged;
+            }
 
             // Client: send saved loadout to server after spawn
             if (IsOwner)
@@ -344,10 +362,12 @@ namespace Game.Net
             if (useLegacyStateReplication)
             {
                 _netPosition.OnValueChanged += OnPositionChanged;
-                _netYaw.OnValueChanged += OnYawChanged;
                 _netVelocity.OnValueChanged += OnVelocityChanged;
                 _netIsDashing.OnValueChanged += OnDashingChanged;
             }
+
+            // Always subscribe to yaw changes for new sync system
+            _netYaw.OnValueChanged += OnYawChanged;
         }
 
         void Awake()
@@ -368,36 +388,14 @@ namespace Game.Net
             _stamina = sprintStaminaMax;
         }
 
-        public override void OnNetworkDespawn()
-        {
-            _map?.Disable();
-            if (_aDash  != null) _aDash.performed  -= OnDashPerformed;
-            if (_aSlot1 != null) _aSlot1.performed -= _ => RequestSwitchSlot(0);
-            if (_aSlot2 != null) _aSlot2.performed -= _ => RequestSwitchSlot(1);
-            if (_aSlot3 != null) _aSlot3.performed -= _ => RequestSwitchSlot(2);
-            if (_aThrow != null) _aThrow.performed -= _ => RequestThrowUtility();
-            _map = null; _aMove = _aMouse = _aSprint = _aDash = null; _aSlot1 = _aSlot2 = _aSlot3 = _aThrow = null;
+        // Duplicate OnNetworkSpawn removed; the primary OnNetworkSpawn already exists and subscribes to OnYawChanged.
+        // (The duplicate block caused methods to nest and broke modifiers.)
 
-            _activeSlot.OnValueChanged -= (_, __) => OnActiveSlotChanged();
-            _playerName.OnValueChanged -= OnPlayerNameValueChanged;
-            _playerIconId.OnValueChanged -= OnPlayerIconValueChanged;
-            _health.OnValueChanged -= OnHealthChanged;
-            _combatStats.OnValueChanged -= OnCombatStatsChanged;
+        // Duplicate OnNetworkDespawn removed; the primary one later in the file handles cleanup and OnYawChanged.
 
-            if (IsOwner)
-            {
-                _statsPendingForCloud = _combatStats.Value;
-                QueueStatsFlush(true);
-            }
+        // Removed unused alternate yaw handler; we already use OnYawChanged(float _, float newVal).
 
-            if (useLegacyStateReplication)
-            {
-                _netPosition.OnValueChanged -= OnPositionChanged;
-                _netYaw.OnValueChanged -= OnYawChanged;
-                _netVelocity.OnValueChanged -= OnVelocityChanged;
-                _netIsDashing.OnValueChanged -= OnDashingChanged;
-            }
-        }
+        // Hook up replication so remote players and server receive yaw updates.
 
         // ==== HUD binding API (for PlayerHUDBinder) ====
         public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI, Image healthFillUI = null, TMP_Text healthLabelUI = null)
@@ -697,79 +695,79 @@ namespace Game.Net
             s_onHideDeathRecap?.Invoke();
         }
         // ================================================
-// ===== Weapons: equip, switch, throw (server authoritative) =====
+        // ===== Weapons: equip, switch, throw (server authoritative) =====
 
-void RequestSwitchSlot(byte slot)
-{
-    if (_inputPaused) return;
-    if (_phase != PlayerPhase.Match) return;
-    if (slot > 3) return;
-    RequestSwitchSlotServerRpc(slot);
-}
+        void RequestSwitchSlot(byte slot)
+        {
+            if (_inputPaused) return;
+            if (_phase != PlayerPhase.Match) return;
+            if (slot > 3) return;
+            RequestSwitchSlotServerRpc(slot);
+        }
 
-[ServerRpc]
-void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
-{
-    if (_phase != PlayerPhase.Match) return;
-    if (slot > 3) return;
+        [ServerRpc]
+        void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
+        {
+            if (_phase != PlayerPhase.Match) return;
+            if (slot > 3) return;
 
-    // Min interval
-    if (Time.time - _lastSwitchServerTime < k_MinSwitchInterval) return;
-    _lastSwitchServerTime = Time.time;
+            // Min interval
+            if (Time.time - _lastSwitchServerTime < k_MinSwitchInterval) return;
+            _lastSwitchServerTime = Time.time;
 
-    // Validate against equipped loadout: Primary/Secondary always valid; Melee always allowed; Utility only if set
-    bool allowed =
-        slot == 0 ||
-        slot == 1 ||
-        slot == 2 || // melee fixed
-        (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
+            // Validate against equipped loadout: Primary/Secondary always valid; Melee always allowed; Utility only if set
+            bool allowed =
+                slot == 0 ||
+                slot == 1 ||
+                slot == 2 || // melee fixed
+                (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
 
-    if (!allowed) return;
+            if (!allowed) return;
 
-    _activeSlot.Value = slot;
+            _activeSlot.Value = slot;
 #if UNITY_EDITOR
     Debug.Log($"[Weapons] Active slot -> {slot}");
 #endif
-    // TODO: later handle firing state teardown and equip animations.
-}
+            // TODO: later handle firing state teardown and equip animations.
+        }
 
-void RequestThrowUtility()
-{
-    if (_inputPaused) return;
-    RequestThrowUtilityServerRpc();
-}
+        void RequestThrowUtility()
+        {
+            if (_inputPaused) return;
+            RequestThrowUtilityServerRpc();
+        }
 
-[ServerRpc]
-void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
-{
-    if (_netLoadout.Value.util == (byte)UtilityType.None) return;
+        [ServerRpc]
+        void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
+        {
+            if (_netLoadout.Value.util == (byte)UtilityType.None) return;
 
-    if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
-    _lastThrowServerTime = Time.time;
+            if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
+            _lastThrowServerTime = Time.time;
 
-    // For now, just log. We will implement grenade entity later.
+            // For now, just log. We will implement grenade entity later.
 #if UNITY_EDITOR
     Debug.Log($"[Weapons] Throw utility: {(UtilityType)_netLoadout.Value.util}");
 #endif
-}
-
-void OnActiveSlotChanged()
-{
-    // Owner requests equip. Remotes wait for server fan-out.
-    if (!IsOwner) return;
-
-    if (_activeSlot.Value == 0)
-    {
-        var wp = GetComponent<WeaponPrimaryController>();
-        if (wp != null)
-        {
-            var pt = (Game.Net.PrimaryType)_netLoadout.Value.primary;
-            wp.Equip(pt, null); // server validates; stats default for now
         }
-    }
-}
-// Fixes "Only the owner can invoke a ServerRpc…" by stopping non-owners from calling it.
-// ===== end weapons =====
+
+        void OnActiveSlotChanged()
+        {
+            // Owner requests equip. Remotes wait for server fan-out.
+            if (!IsOwner) return;
+
+            if (_activeSlot.Value == 0)
+            {
+                var wp = GetComponent<WeaponPrimaryController>();
+                if (wp != null)
+                {
+                    var pt = (Game.Net.PrimaryType)_netLoadout.Value.primary;
+                    wp.Equip(pt, null); // server validates; stats default for now
+                }
+            }
+        }
+        // Fixes "Only the owner can invoke a ServerRpc…" by stopping non-owners from calling it.
+        // ===== end weapons =====
 
         void SetupInputAndCamera()
         {
@@ -778,22 +776,22 @@ void OnActiveSlotChanged()
             _aMove = _map.AddAction(name: "Move", type: InputActionType.Value, expectedControlLayout: "Vector2");
             _aMove.AddCompositeBinding("2DVector")
                   .With("Up", "<Keyboard>/w")
-                  .With("Down","<Keyboard>/s")
-                  .With("Left","<Keyboard>/a")
-                  .With("Right","<Keyboard>/d");
+                  .With("Down", "<Keyboard>/s")
+                  .With("Left", "<Keyboard>/a")
+                  .With("Right", "<Keyboard>/d");
 
-            _aMouse  = _map.AddAction(name: "MousePos", type: InputActionType.Value, binding: "<Pointer>/position");
-            var aFire   = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
+            _aMouse = _map.AddAction(name: "MousePos", type: InputActionType.Value, binding: "<Pointer>/position");
+            var aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
             var aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
 
             aFire.performed += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(true);
-            aFire.canceled  += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(false);
+            aFire.canceled += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(false);
             aReload.performed += _ => GetComponent<WeaponPrimaryController>()?.RequestReload();
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
-            _aDash   = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
+            _aDash = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
 
             _aSprint.performed += _ => SetSprint(true);
-            _aSprint.canceled  += _ => SetSprint(false);
+            _aSprint.canceled += _ => SetSprint(false);
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
@@ -809,7 +807,7 @@ void OnActiveSlotChanged()
             _aSlot3.performed += _ => RequestSwitchSlot(2);
             _aThrow.performed += _ => RequestThrowUtility();
             _aScoreboard.performed += OnScoreboardPerformed;
-            _aScoreboard.canceled  += OnScoreboardCanceled;
+            _aScoreboard.canceled += OnScoreboardCanceled;
 
             _map.Enable();
             TryBindCamera();
@@ -854,11 +852,11 @@ void OnActiveSlotChanged()
                 var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
                 los.target = transform;
 
-// Prevent baked/dynamic occlusion from hiding players behind now-transparent occluders.
+                // Prevent baked/dynamic occlusion from hiding players behind now-transparent occluders.
                 _cam.useOcclusionCulling = false;
 
                 FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
-// Disables camera occlusion culling when LOS transparency is active so faded occluders can't fully hide the player.
+                                                       // Disables camera occlusion culling when LOS transparency is active so faded occluders can't fully hide the player.
             }
         }
 
@@ -1083,77 +1081,98 @@ void OnActiveSlotChanged()
             if (!IsOwner) { InterpolateRemotePlayer(); return; }
             if (_inputPaused) { UpdateUI(); return; }
 
-            _inMove   = _aMove?.ReadValue<Vector2>() ?? Vector2.zero;
-            _inMouse  = _aMouse?.ReadValue<Vector2>() ?? Vector2.zero;
+            _inMove = _aMove?.ReadValue<Vector2>() ?? Vector2.zero;
+            _inMouse = _aMouse?.ReadValue<Vector2>() ?? Vector2.zero;
             _inSprint = _aSprint != null && _aSprint.IsPressed();
 
             // Calculate target yaw from mouse position every frame for responsiveness
             if (_cam)
             {
                 var ray = _cam.ScreenPointToRay(_inMouse);
-                Vector3 aimPoint = transform.position;
-                bool aimResolved = false;
 
-                // Prefer screen-space aim: face the mouse position on the screen.
-                // We convert screen delta -> world XZ using camera's projected basis (right/up).
+                // Owner computes yaw from screen-space mouse; others return early above.
                 if (aimUsingScreenSpace)
                 {
-                    var cam = Camera.main;
-                    if (cam != null)
+                    var cam = Camera.main ? Camera.main : _cam;
+                    var sp = cam.WorldToScreenPoint(transform.position);
+                    var delta = (Vector2)Input.mousePosition - new Vector2(sp.x, sp.y);
+
+                    if (delta.sqrMagnitude >= (screenAimMinPixels * screenAimMinPixels))
                     {
-                        // Player position on screen
-                        var sp = cam.WorldToScreenPoint(transform.position);
-                        var mouse = (Vector2)Input.mousePosition;
-                        var delta = mouse - new Vector2(sp.x, sp.y);
+                        Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right, Vector3.up).normalized;
+                        Vector3 camUpXZ = Vector3.ProjectOnPlane(cam.transform.up, Vector3.up).normalized;
 
-                        if (delta.sqrMagnitude >= (screenAimMinPixels * screenAimMinPixels))
+                        Vector3 dir = camRightXZ * delta.x + camUpXZ * delta.y;
+                        dir.y = 0f;
+                        if (dir.sqrMagnitude > 0.0001f)
                         {
-                            // Map screen axes to world ground plane
-                            Vector3 camRightXZ = Vector3.ProjectOnPlane(cam.transform.right, Vector3.up).normalized;
-                            Vector3 camUpXZ    = Vector3.ProjectOnPlane(cam.transform.up,    Vector3.up).normalized;
+                            float yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                            _targetYaw = yaw;
+                            _hasValidYaw = true;
 
-                            Vector3 dir = camRightXZ * delta.x + camUpXZ * delta.y;
-                            dir.y = 0f;
-                            if (dir.sqrMagnitude > 0.0001f)
+                            if (networkSyncYaw && NetworkManager.Singleton && NetworkManager.Singleton.IsConnectedClient)
                             {
-                                aimPoint = transform.position + dir.normalized; // a point in front of the player
-                                aimResolved = true;
+                                float now = Time.unscaledTime;
+                                if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
+                                {
+                                    _netYaw.Value = yaw;
+                                    _lastSentYaw = yaw;
+                                    _nextYawSendTime = now + (1f / Mathf.Max(1f, yawSendRateHz));
+                                }
                             }
                         }
                     }
                 }
 
-                // Fallback for edge cases (no camera or tiny delta): old world-ray logic.
-                if (!aimResolved)
+                // Fallback: ray/plane aim if screen-space didn’t resolve
+                if (!_hasValidYaw)
                 {
                     if (Physics.Raycast(ray, out var hit, 500f, aimMask, QueryTriggerInteraction.Ignore))
                     {
-                        aimPoint = hit.point;
-                        aimResolved = true;
+                        Vector3 d = hit.point - transform.position; d.y = 0f;
+                        if (d.sqrMagnitude > 0.0001f)
+                        {
+                            float yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+                            _targetYaw = yaw;
+                            _hasValidYaw = true;
+
+                            if (networkSyncYaw)
+                            {
+                                float now = Time.unscaledTime;
+                                if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
+                                {
+                                    _netYaw.Value = yaw;
+                                    _lastSentYaw = yaw;
+                                    _nextYawSendTime = now + (1f / Mathf.Max(1f, yawSendRateHz));
+                                }
+                            }
+                        }
                     }
                     else
                     {
                         var plane = new Plane(Vector3.up, transform.position);
                         if (plane.Raycast(ray, out float enter))
                         {
-                            aimPoint = ray.GetPoint(enter);
-                            aimResolved = true;
-                        }
-                    }
-                }
+                            Vector3 p = ray.GetPoint(enter);
+                            Vector3 d = p - transform.position; d.y = 0f;
+                            if (d.sqrMagnitude > 0.0001f)
+                            {
+                                float yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+                                _targetYaw = yaw;
+                                _hasValidYaw = true;
 
-                if (aimResolved)
-                {
-                    // Calculate direction from player to mouse position on ground
-                    // This is the direction the weapon muzzle should point
-                    var dir = aimPoint - transform.position;
-                    dir.y = 0f; // Keep rotation horizontal only (Y-axis rotation)
-                    
-                    // Only update rotation if direction is significant
-                    if (dir.sqrMagnitude > 0.0001f)
-                    {
-                        _targetYaw = Quaternion.LookRotation(dir.normalized, Vector3.up).eulerAngles.y;
-                        _hasValidYaw = true;
+                                if (networkSyncYaw)
+                                {
+                                    float now = Time.unscaledTime;
+                                    if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
+                                    {
+                                        _netYaw.Value = yaw;
+                                        _lastSentYaw = yaw;
+                                        _nextYawSendTime = now + (1f / Mathf.Max(1f, yawSendRateHz));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1260,10 +1279,14 @@ void OnActiveSlotChanged()
             wish.y = 0f;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
-            // Instant rotation to face mouse cursor (no interpolation)
-            var targetRot = Quaternion.Euler(0f, yaw, 0f);
-            if (_rb) _rb.MoveRotation(targetRot);
-            transform.rotation = targetRot;
+            if (_hasValidYaw)
+            {
+                float cur = transform.eulerAngles.y;
+                float next = Mathf.LerpAngle(cur, _targetYaw, rotationLerpSpeed * Time.deltaTime);
+                var e = transform.eulerAngles; e.y = next; transform.eulerAngles = e;
+            }
+            // Rotation application remains universal; the source of _targetYaw differs by role.
+            // Brief dev comment: universal application keeps visuals consistent and lets server broadcast via NetworkTransform.
 
             float speedMove = moveSpeed * (wantSprint ? sprintMultiplier : 1f);
             var vel = _rb.linearVelocity;
@@ -1319,6 +1342,17 @@ void OnActiveSlotChanged()
         void OnYawChanged(float _, float newVal)
         {
             if (IsOwner) return;
+
+            // Handle new yaw synchronization (direct NetworkVariable)
+            if (networkSyncYaw)
+            {
+                // Apply rotation directly for remote players
+                transform.rotation = Quaternion.Euler(0f, newVal, 0f);
+                if (_rb) _rb.MoveRotation(transform.rotation);
+                return;
+            }
+
+            // Legacy replication fallback
             AddStateToBuffer(_netPosition.Value, newVal, _netVelocity.Value, _netIsDashing.Value);
         }
 
