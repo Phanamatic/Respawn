@@ -9,14 +9,37 @@ using Unity.Services.Authentication;
 
 namespace Game.Net
 {
-    public static class CloudSaveClient
+    public class CloudSaveClient : MonoBehaviour
     {
-        // Use simple, compliant key (alphanumeric only).
+        public static CloudSaveClient Instance { get; private set; }
+
+        public struct PlayerConnectionLoadoutDTO
+        {
+            public byte version;      // bump if format changes
+            public byte primary;      // maps to PrimaryType
+            public byte secondary;    // maps to SecondaryType
+            public byte melee;        // maps to MeleeType
+            public byte utility;      // maps to UtilityType
+        }
+
+        public static event Action<PlayerConnectionLoadoutDTO> OnLoadoutReady; // fired as soon as Cloud Save returns
+
+    void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+        gameObject.AddComponent<LoadoutHandshake>();
+    }        // Use simple, compliant key (alphanumeric only).
         const string Key = "LoadoutV1";
         const string StatsKey = "MatchStatsV1";
         static readonly string[] LegacyKeys = { "game.loadout.v1", "player.loadout" };
 
-        public static async Task<PlayerLoadout> LoadLoadoutAsync(PlayerLoadout fallback)
+        public async Task<PlayerLoadout> LoadLoadoutAsync(PlayerLoadout fallback)
         {
             try
             {
@@ -59,7 +82,7 @@ namespace Game.Net
             return fallback;
         }
 
-        public static async Task<bool> SaveLoadoutAsync(PlayerLoadout loadout)
+        public async Task<bool> SaveLoadoutAsync(PlayerLoadout loadout)
         {
             await EnsureReadyAsync();
 
@@ -112,7 +135,7 @@ namespace Game.Net
             public int totalDamage;
         }
 
-        public static async Task<PlayerStatsRecord> LoadStatsAsync()
+        public async Task<PlayerStatsRecord> LoadStatsAsync()
         {
             await EnsureReadyAsync();
 
@@ -143,7 +166,7 @@ namespace Game.Net
             return default;
         }
 
-        public static async Task<bool> SaveStatsAsync(PlayerStatsRecord record)
+        public async Task<bool> SaveStatsAsync(PlayerStatsRecord record)
         {
             await EnsureReadyAsync();
 
@@ -169,7 +192,7 @@ namespace Game.Net
             }
         }
 
-        public static async Task<bool> AppendStatsAsync(int killsDelta, int deathsDelta, int damageDelta)
+        public async Task<bool> AppendStatsAsync(int killsDelta, int deathsDelta, int damageDelta)
         {
             if (killsDelta <= 0 && deathsDelta <= 0 && damageDelta <= 0)
                 return true; // nothing to append
@@ -246,6 +269,42 @@ namespace Game.Net
             }
             if (!AuthenticationService.Instance.IsSignedIn)
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
+        }
+
+        public System.Collections.IEnumerator CoLoadAndSendLoadout()
+        // Explicit non-generic IEnumerator to avoid CS0305 if a generic IEnumerator<T> is in scope.
+        {
+            // existing: fetch from UGS Cloud Save into your local loadout vars
+            // Use a safe enum default; the concrete 'AssaultRifle' name doesn't exist in your PrimaryType.
+            var fallback = new PlayerLoadout { Primary = default(PrimaryType), Secondary = SecondaryType.Pistol, Utility = UtilityType.Grenade };
+            // Fix CS0117 by avoiding a non-existent enum member.
+            // Avoid blocking the main thread; wait the Task in a coroutine-friendly way.
+            var loadTask = LoadLoadoutAsync(fallback);
+            while (!loadTask.IsCompleted) yield return null;
+            var loadout = loadTask.Result;
+            // Non-blocking pattern; prevents deadlocks while keeping the coroutine flow.
+
+            // Build small DTO for connection handshake (fits in NGO named message safely)
+            var dto = new PlayerConnectionLoadoutDTO
+            {
+                version = 1,
+                primary = (byte)loadout.Primary,
+                secondary = (byte)loadout.Secondary,
+                melee = 0, // Assuming default or add if available
+                utility = (byte)loadout.Utility
+            };
+
+            // 1) Immediately inform the server (pre-spawn) via named message if connected.
+            LoadoutHandshake.SendFromClient(dto);
+
+            // 2) Keep your existing path to inform PlayerNetwork after spawn (back-compat).
+            //    This ensures late joins or retries still work.
+            OnLoadoutReady?.Invoke(dto);
+
+            // existing: EquipLoadoutServerRpc(...) etc. remains as is
+            // For now, just log
+            Debug.Log("[CloudSave] Loadout sent to server.");
+            yield return null;
         }
     }
 }

@@ -166,7 +166,7 @@ namespace Game.Net
 
         async Task LoadFromCloud()
         {
-            _saved = await CloudSaveClient.LoadLoadoutAsync(PlayerLoadout.Default);
+            _saved = await CloudSaveClient.Instance.LoadLoadoutAsync(PlayerLoadout.Default);
             // sanitize old saves if any (values outside enum range)
             if ((byte)_saved.Utility > (byte)UtilityType.Stun) _saved.Utility = UtilityType.Grenade;
             _working = _saved;
@@ -178,7 +178,7 @@ namespace Game.Net
         async void OnSaveClicked()
         {
             StartSavingNotification();
-            var ok = await CloudSaveClient.SaveLoadoutAsync(_working);
+            var ok = await CloudSaveClient.Instance.SaveLoadoutAsync(_working);
             StopSavingNotification(ok);
             if (ok)
             {

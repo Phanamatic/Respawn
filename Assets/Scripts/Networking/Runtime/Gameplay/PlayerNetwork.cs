@@ -499,7 +499,7 @@ namespace Game.Net
                 if (deltaKills <= 0 && deltaDeaths <= 0 && deltaDamage <= 0)
                     break;
 
-                var task = CloudSaveClient.AppendStatsAsync(deltaKills, deltaDeaths, deltaDamage);
+                var task = CloudSaveClient.Instance.AppendStatsAsync(deltaKills, deltaDeaths, deltaDamage);
                 while (!task.IsCompleted)
                     yield return null;
 
@@ -1256,7 +1256,7 @@ namespace Game.Net
             // If not cached, try CloudSave
             if (!SessionContext.TryGetLoadout(out _))
             {
-                var task = CloudSaveClient.LoadLoadoutAsync(PlayerLoadout.Default);
+                var task = CloudSaveClient.Instance.LoadLoadoutAsync(PlayerLoadout.Default);
                 while (!task.IsCompleted) yield return null;
                 lo = task.Result;
                 SessionContext.SetLoadout(lo);
@@ -1402,6 +1402,24 @@ namespace Game.Net
                 ServerAutoEquipPrimary();
             }
         }
+
+// NGO: guard at runtime instead of using Mirror's [Server] attribute.
+public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, byte util)
+{
+    if (!IsServer) return;
+
+    var loadout = _netLoadout.Value;
+    loadout.primary = primary;
+    loadout.secondary = secondary;
+    loadout.melee = melee;
+    loadout.util = util;
+    _netLoadout.Value = loadout;
+
+#if UNITY_EDITOR
+    Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer -> P{primary}/S{secondary}/M{melee}/U{util}");
+#endif
+}
+// Removes missing [Server]/ServerAttribute and switches to byte params to avoid type coupling.
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)
         {

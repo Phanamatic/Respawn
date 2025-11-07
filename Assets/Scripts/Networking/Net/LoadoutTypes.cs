@@ -23,20 +23,22 @@ namespace Game.Net
     {
         public byte primary;   // PrimaryType
         public byte secondary; // SecondaryType
+        public byte melee;     // MeleeType (fixed to Knife for now)
         public byte util;      // UtilityType
 
         public void NetworkSerialize<T>(BufferSerializer<T> s) where T : IReaderWriter
         {
             s.SerializeValue(ref primary);
             s.SerializeValue(ref secondary);
+            s.SerializeValue(ref melee);
             s.SerializeValue(ref util);
         }
 
-        public bool Equals(NetLoadout other) => primary == other.primary && secondary == other.secondary && util == other.util;
-        public override int GetHashCode() => (primary << 16) ^ (secondary << 8) ^ util;
+        public bool Equals(NetLoadout other) => primary == other.primary && secondary == other.secondary && melee == other.melee && util == other.util;
+        public override int GetHashCode() => (primary << 16) ^ (secondary << 8) ^ (melee << 4) ^ util;
 
         public static NetLoadout From(PlayerLoadout lo) =>
-            new NetLoadout { primary = (byte)lo.Primary, secondary = (byte)lo.Secondary, util = (byte)lo.Utility };
+            new NetLoadout { primary = (byte)lo.Primary, secondary = (byte)lo.Secondary, melee = 0, util = (byte)lo.Utility };
 
         public PlayerLoadout ToModel() =>
             new PlayerLoadout { Primary = (PrimaryType)primary, Secondary = (SecondaryType)secondary, Utility = (UtilityType)util };

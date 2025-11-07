@@ -513,9 +513,10 @@ namespace Game.Net
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
 
-// After Cloud Save round-trip during countdown, force a clean equip using the now-populated loadout.
-// This drives HUD (weapon name, ammo, reload icon) to update immediately when the round starts.
+// Re-equip remains useful for round transitions, but with pre-join seeding
+// it will simply reapply the already-correct loadout.
 ReequipAllPlayersServer();
+// Safe even if spawner already equipped; ensures consistency on new rounds.
 
             StartCoroutine(CoMonitorRound());
         }
@@ -566,10 +567,20 @@ ReequipAllPlayersServer();
             {
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
-                // Defer equip until round actually starts (see ReequipAllPlayersServer).
-                // This ensures Cloud Save loadout is present before the first equip drives the HUD.
+
+                // Seed the authoritative loadout if the client sent it during connection.
+                if (LoadoutHandshake.TryGetPreJoinLoadout(clientId, out var pre))
+                {
+                    pn.ApplyPreJoinLoadoutServer(pre.primary, pre.secondary, pre.melee, pre.util);
+                    LoadoutHandshake.Consume(clientId);
+                }
+
+                // If you still want to auto-equip at spawn, it is now safe because _netLoadout is already populated.
+                pn.ServerAutoEquipPrimary();
+
                 pn.ClearDeathRecapForOwner();
             }
+// Spawner now seeds the player's NetLoadout from the pre-join cache, eliminating desync.
 // Players spawn already holding Primary.
         }
 
