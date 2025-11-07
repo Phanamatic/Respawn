@@ -52,15 +52,20 @@ namespace Game.UI.HUD
             if (!_primary) return;
 
             bool equipped = _primary.equippedWeaponName.Value.Length > 0;
+            bool hasAmmo = _primary.magazineAmmo.Value > 0 || _primary.reserveAmmo.Value != 0;
+            
+            // Show UI if weapon name is set OR if we have ammo (handles replication delay)
+            bool showUI = equipped || hasAmmo;
+            
             if (primaryWeaponName)
             {
-                primaryWeaponName.enabled = equipped;
+                primaryWeaponName.enabled = showUI;
                 if (equipped) primaryWeaponName.text = _primary.equippedWeaponName.Value.ToString();
             }
             if (primaryAmmoText)
             {
-                primaryAmmoText.enabled = equipped;
-                if (equipped)
+                primaryAmmoText.enabled = showUI;
+                if (showUI)
                 {
                     int magazine = Mathf.Max(0, _primary.magazineAmmo.Value);
                     int reserve = _primary.reserveAmmo.Value;
@@ -80,15 +85,20 @@ namespace Game.UI.HUD
             if (!_secondary) return;
 
             bool equipped = _secondary.equippedWeaponName.Value.Length > 0;
+            bool hasAmmo = _secondary.magazineAmmo.Value > 0 || _secondary.reserveAmmo.Value != 0;
+            
+            // Show UI if weapon name is set OR if we have ammo (handles replication delay)
+            bool showUI = equipped || hasAmmo;
+            
             if (secondaryWeaponName)
             {
-                secondaryWeaponName.enabled = equipped;
+                secondaryWeaponName.enabled = showUI;
                 if (equipped) secondaryWeaponName.text = _secondary.equippedWeaponName.Value.ToString();
             }
             if (secondaryAmmoText)
             {
-                secondaryAmmoText.enabled = equipped;
-                if (equipped)
+                secondaryAmmoText.enabled = showUI;
+                if (showUI)
                 {
                     int magazine = Mathf.Max(0, _secondary.magazineAmmo.Value);
                     int reserve = _secondary.reserveAmmo.Value;
@@ -151,7 +161,9 @@ namespace Game.UI.HUD
 
         void FindControllers()
         {
-            var local = NetworkManager.Singleton ? NetworkManager.Singleton.SpawnManager?.GetLocalPlayerObject() : null;
+            var nm = NetworkManager.Singleton;
+            if (!nm) return;
+            var local = nm.LocalClient?.PlayerObject;
             if (!local) return;
             _primary = local.GetComponent<WeaponPrimaryController>();
             _secondary = local.GetComponent<WeaponSecondaryController>();

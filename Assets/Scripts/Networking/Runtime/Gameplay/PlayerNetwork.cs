@@ -190,7 +190,7 @@ namespace Game.Net
         public bool IsDashing { get; private set; }
         public event System.Action<bool> SprintChanged;
         public event System.Action<bool> DashChanged;
-        InputAction _aSlot1, _aSlot2, _aSlot3, _aThrow;
+        InputAction _aSlot1, _aSlot2, _aSlot3, _aSlot4, _aThrow;
         Vector2 _inMove, _inMouse; bool _inSprint;
         float _targetYaw; // Cached yaw from mouse position
         bool _hasValidYaw; // Track if we have a valid yaw from mouse
@@ -756,13 +756,41 @@ namespace Game.Net
             // Owner requests equip. Remotes wait for server fan-out.
             if (!IsOwner) return;
 
-            if (_activeSlot.Value == 0)
+            byte slot = _activeSlot.Value;
+
+            if (slot == 0) // Primary
             {
                 var wp = GetComponent<WeaponPrimaryController>();
                 if (wp != null)
                 {
                     var pt = (Game.Net.PrimaryType)_netLoadout.Value.primary;
-                    wp.Equip(pt, null); // server validates; stats default for now
+                    wp.Equip(pt, null);
+                }
+            }
+            else if (slot == 1) // Secondary
+            {
+                var ws = GetComponent<WeaponSecondaryController>();
+                if (ws != null)
+                {
+                    var st = (Game.Net.SecondaryType)_netLoadout.Value.secondary;
+                    ws.Equip(st, null);
+                }
+            }
+            else if (slot == 2) // Melee
+            {
+                var wm = GetComponent<WeaponMeleeController>();
+                if (wm != null)
+                {
+                    wm.Equip();
+                }
+            }
+            else if (slot == 3) // Utility
+            {
+                var wu = GetComponent<WeaponUtilityController>();
+                if (wu != null)
+                {
+                    var ut = (Game.Net.UtilityType)_netLoadout.Value.util;
+                    wu.Equip(ut);
                 }
             }
         }
@@ -784,9 +812,9 @@ namespace Game.Net
             var aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
             var aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
 
-            aFire.performed += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(true);
-            aFire.canceled += _ => GetComponent<WeaponPrimaryController>()?.FireHeld(false);
-            aReload.performed += _ => GetComponent<WeaponPrimaryController>()?.RequestReload();
+            aFire.performed += _ => OnFireInput(true);
+            aFire.canceled += _ => OnFireInput(false);
+            aReload.performed += _ => OnReloadInput();
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
             _aDash = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
 
@@ -797,6 +825,7 @@ namespace Game.Net
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
             _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
             _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
+            _aSlot4 = _map.AddAction(name: "Slot4", type: InputActionType.Button, binding: "<Keyboard>/4");
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
             _aScoreboard = _map.AddAction(name: "Scoreboard", type: InputActionType.Button, binding: "<Keyboard>/tab");
 
@@ -805,6 +834,7 @@ namespace Game.Net
             _aSlot1.performed += _ => RequestSwitchSlot(0);
             _aSlot2.performed += _ => RequestSwitchSlot(1);
             _aSlot3.performed += _ => RequestSwitchSlot(2);
+            _aSlot4.performed += _ => RequestSwitchSlot(3);
             _aThrow.performed += _ => RequestThrowUtility();
             _aScoreboard.performed += OnScoreboardPerformed;
             _aScoreboard.canceled += OnScoreboardCanceled;
@@ -818,6 +848,42 @@ namespace Game.Net
         {
             if (_inputPaused) return;
             _dashQueuedUntil = Time.time + dashInputBuffer;
+        }
+
+        void OnFireInput(bool firing)
+        {
+            if (_inputPaused) return;
+            
+            byte slot = _activeSlot.Value;
+            if (slot == 0) // Primary
+            {
+                GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
+            }
+            else if (slot == 1) // Secondary
+            {
+                GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
+            }
+            else if (slot == 2) // Melee
+            {
+                if (firing) // Only swing on press, not release
+                    GetComponent<WeaponMeleeController>()?.RequestSwing();
+            }
+        }
+
+        void OnReloadInput()
+        {
+            if (_inputPaused) return;
+            
+            byte slot = _activeSlot.Value;
+            if (slot == 0) // Primary
+            {
+                GetComponent<WeaponPrimaryController>()?.RequestReload();
+            }
+            else if (slot == 1) // Secondary
+            {
+                GetComponent<WeaponSecondaryController>()?.RequestReload();
+            }
+            // Melee and utility don't reload
         }
 
         public void SetInputPaused(bool paused)
