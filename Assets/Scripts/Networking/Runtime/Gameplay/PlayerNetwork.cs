@@ -287,6 +287,13 @@ namespace Game.Net
             _phase = initialPhase;
             _netPhase.OnValueChanged += OnPhaseNetChanged;
 
+            // Ensure we respect the replicated phase immediately on spawn (e.g., Match servers).
+            var replicatedPhase = _netPhase.Value;
+            if (_phase != replicatedPhase)
+            {
+                OnPhaseNetChanged(_phase, replicatedPhase);
+            }
+
             _identitySubmitted = false;
             if (_identitySubmitCo != null)
             {
@@ -868,24 +875,49 @@ namespace Game.Net
             byte slot = _activeSlot.Value;
             Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
 
+            // Hide all weapon views first
+            var primary = GetComponent<WeaponPrimaryController>();
+            var secondary = GetComponent<WeaponSecondaryController>();
+            var melee = GetComponent<WeaponMeleeController>();
+            
+            if (primary) primary.SetVisible(false);
+            if (secondary) secondary.SetVisible(false);
+            if (melee) melee.SetVisible(false);
+
+            // Now show and equip the active slot
             if (slot == 0) // Primary
             {
                 var type = (PrimaryType)_netLoadout.Value.primary;
                 if (type == PrimaryType.None) { Debug.LogWarning("[Weapons] Equip primary skipped: None"); return; }
-                var wp = GetComponent<WeaponPrimaryController>();
-                if (wp) { Debug.Log($"[Weapons] Equip primary request -> {type}"); wp.Equip(type, null); } else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
+                if (primary) 
+                { 
+                    Debug.Log($"[Weapons] Equip primary request -> {type}"); 
+                    primary.Equip(type, null);
+                    primary.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
             else if (slot == 1) // Secondary
             {
                 var type = (SecondaryType)_netLoadout.Value.secondary;
                 if (type == SecondaryType.None) { Debug.LogWarning("[Weapons] Equip secondary skipped: None"); return; }
-                var ws = GetComponent<WeaponSecondaryController>();
-                if (ws) { Debug.Log($"[Weapons] Equip secondary request -> {type}"); ws.Equip(type, null); } else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
+                if (secondary) 
+                { 
+                    Debug.Log($"[Weapons] Equip secondary request -> {type}"); 
+                    secondary.Equip(type, null);
+                    secondary.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
             else if (slot == 2) // Melee
             {
-                var wm = GetComponent<WeaponMeleeController>();
-                if (wm) { Debug.Log("[Weapons] Equip melee (Knife)"); wm.Equip(); } else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
+                if (melee) 
+                { 
+                    Debug.Log("[Weapons] Equip melee (Knife)"); 
+                    melee.Equip();
+                    melee.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
             else if (slot == 3) // Utility
             {

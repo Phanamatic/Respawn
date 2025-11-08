@@ -40,6 +40,15 @@ namespace Game.Net.Weapons
             else ServerEquip();
         }
 
+        /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (_view && _view.gameObject)
+            {
+                _view.gameObject.SetActive(visible);
+            }
+        }
+
         public void RequestSwing()
         {
             if (!IsOwner) return;

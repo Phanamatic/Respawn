@@ -55,6 +55,15 @@ namespace Game.Net.Weapons
             else ServerEquip(primaryType, stats);
         }
 
+        /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (_view && _view.gameObject)
+            {
+                _view.gameObject.SetActive(visible);
+            }
+        }
+
         public void OnSprintChanged(bool on)   { if (isReloading.Value) _reloadPaused = on; }
         public void OnDashChanged(bool on)     { if (isReloading.Value) _reloadPaused = on; }
 
