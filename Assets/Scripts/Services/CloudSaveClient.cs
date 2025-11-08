@@ -35,7 +35,11 @@ namespace Game.Net
         DontDestroyOnLoad(gameObject);
 
         // Avoid creating a duplicate LoadoutHandshake if one already exists in the bootstrap scene.
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+        if (FindFirstObjectByType<LoadoutHandshake>(FindObjectsInactive.Include) == null)
+#else
         if (FindObjectOfType<LoadoutHandshake>() == null)
+#endif
         {
             gameObject.AddComponent<LoadoutHandshake>();
             Debug.Log("[CloudSave] Added LoadoutHandshake (none found in scene).");
@@ -44,8 +48,8 @@ namespace Game.Net
         {
             Debug.Log("[CloudSave] LoadoutHandshake already present; not adding another.");
         }
-    }
-    // Guarantees a single handshake while keeping CloudSaveClient persistent.        // Use simple, compliant key (alphanumeric only).
+        // Use FindFirstObjectByType on Unity 6/2022.3+ (includes inactive) to silence deprecation and avoid duplicates.
+    }        // Use simple, compliant key (alphanumeric only).
         const string Key = "LoadoutV1";
         const string StatsKey = "MatchStatsV1";
         static readonly string[] LegacyKeys = { "game.loadout.v1", "player.loadout" };

@@ -4891,7 +4891,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 317.3262, y: -450.58975}
+  m_AnchoredPosition: {x: 317.3262, y: -450.58972}
   m_SizeDelta: {x: 330.193, y: 54.052}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &1229466222
@@ -7998,7 +7998,6 @@ GameObject:
   m_Component:
   - component: {fileID: 2051952851}
   - component: {fileID: 2051952852}
-  - component: {fileID: 2051952853}
   m_Layer: 5
   m_Name: GameObject
   m_TagString: Untagged
@@ -8053,22 +8052,6 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
---- !u!114 &2051952853
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2051952850}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3611d3688f14e20449a7560c54d40aec, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  targetParticleSystem: {fileID: 0}
-  defaultMaterial: {fileID: 2100000, guid: c824ca8fcb72146498f7aa3be6d76efe, type: 2}
-  rareMaterial: {fileID: 2100000, guid: 1ff9c78316b4c9f40b978dc454b69b3f, type: 2}
-  rareChance: 100000
 --- !u!1 &2073581014
 GameObject:
   m_ObjectHideFlags: 0

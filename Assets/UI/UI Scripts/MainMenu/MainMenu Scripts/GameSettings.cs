@@ -131,22 +131,12 @@ namespace UI.Scripts
             ApplySFXVolume(sfxVolume, masterVolume);
 
             // Enable/Disable MusicController based on saved music volume
-            // If music volume is NOT at default (1.0), user has customized it, so disable MusicController
             if (musicController != null)
             {
-                if (musicVolume == 1f)
-                {
-                    // Default volume - enable dynamic music
-                    musicController.SetDynamicVolumeEnabled(true);
-                    userAdjustedMusic = false;
-                }
-                else
-                {
-                    // User has customized - disable dynamic music
-                    musicController.SetDynamicVolumeEnabled(false);
-                    userAdjustedMusic = true;
-                }
+                userAdjustedMusic = (musicVolume != 1f);
+                musicController.SetDynamicVolumeEnabled(!userAdjustedMusic);
             }
+// Use userAdjustedMusic so it's not a write-only field.
 
             // Accessibility
             if (mouseSensitivitySlider != null)
@@ -365,7 +355,8 @@ namespace UI.Scripts
         private void ApplyMasterVolumeToAllAudioSources(float masterVolume)
         {
             // Find ALL audio sources in the scene and apply master volume
-            AudioSource[] allAudioSources = FindObjectsOfType<AudioSource>(true);
+            AudioSource[] allAudioSources = Object.FindObjectsByType<AudioSource>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+// Replace deprecated FindObjectsOfType with FindObjectsByType.
 
             float musicVol = PlayerPrefs.GetFloat(MUSIC_VOLUME_KEY, 1f);
             float sfxVol = PlayerPrefs.GetFloat(SFX_VOLUME_KEY, 1f);
@@ -409,7 +400,8 @@ namespace UI.Scripts
             }
 
             // Also apply to all tagged music sources
-            AudioSource[] allAudioSources = FindObjectsOfType<AudioSource>(true);
+            AudioSource[] allAudioSources = Object.FindObjectsByType<AudioSource>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+// Replace deprecated FindObjectsOfType with FindObjectsByType.
             foreach (AudioSource source in allAudioSources)
             {
                 if (source != null)
@@ -432,14 +424,15 @@ namespace UI.Scripts
         private void ApplySFXVolume(float sfxVolume, float masterVolume)
         {
             // Find and control GlobalButtonSoundManager
-            GlobalButtonSoundManager buttonSoundManager = FindObjectOfType<GlobalButtonSoundManager>(true);
+            GlobalButtonSoundManager buttonSoundManager = Object.FindFirstObjectByType<GlobalButtonSoundManager>(FindObjectsInactive.Include);
             if (buttonSoundManager != null)
             {
                 buttonSoundManager.Volume = sfxVolume * masterVolume;
             }
 
             // Apply to all SFX-tagged audio sources
-            AudioSource[] allAudioSources = FindObjectsOfType<AudioSource>(true);
+            AudioSource[] allAudioSources = Object.FindObjectsByType<AudioSource>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+// Swap deprecated APIs for Unity 6 equivalents.
             foreach (AudioSource source in allAudioSources)
             {
                 if (source != null)
@@ -559,8 +552,9 @@ namespace UI.Scripts
             isHoldingReset = true;
             resetHoldTime = 0f;
 
-            while (resetHoldTime < resetHoldDuration)
+            while (isHoldingReset && resetHoldTime < resetHoldDuration)
             {
+// Use isHoldingReset in the loop so the field is read (removes CS0414) and cancels correctly.
                 resetHoldTime += Time.deltaTime;
                 float fillAmount = resetHoldTime / resetHoldDuration;
 

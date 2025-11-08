@@ -1,5 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
+// Add EventSystems for hover handlers.
 using TMPro;
 using DG.Tweening;
 using System.Collections;
@@ -11,7 +13,8 @@ namespace Game.UI.MainMenu
     /// Attach to any button to make its text more dynamic and eye-catching
     /// </summary>
     [RequireComponent(typeof(Button))]
-    public class ButtonTextEffects : MonoBehaviour
+    public class ButtonTextEffects : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+// Implement hover interfaces so playOnHover/isHovering are actually used.
     {
         [Header("Text Reference")]
         [Tooltip("Text component to animate (auto-finds if not assigned)")]
@@ -62,7 +65,6 @@ namespace Game.UI.MainMenu
         private Tween pulseTween;
         private Coroutine shimmerCoroutine;
         private Button button;
-        private bool isHovering = false;
 
         private void Awake()
         {
@@ -135,6 +137,24 @@ namespace Game.UI.MainMenu
             }
         }
 
+        // Hover handlers (use playOnHover to remove CS0414 warnings)
+        public void OnPointerEnter(PointerEventData eventData)
+        {
+            if (playOnHover && !playOnLoop)
+            {
+                StartEffects();
+            }
+        }
+
+        public void OnPointerExit(PointerEventData eventData)
+        {
+            if (playOnHover && !playOnLoop)
+            {
+                StopEffects();
+            }
+        }
+// Add simple hover-driven start/stop so playOnHover is read.
+
         private void StartPulse()
         {
             if (buttonText == null) return;
@@ -145,12 +165,16 @@ namespace Game.UI.MainMenu
                 pulseTween.Kill();
             }
 
+            // Start from min scale (uses pulseMinScale to avoid CS0414)
+            buttonText.transform.localScale = originalScale * Mathf.Max(0.01f, pulseMinScale);
+
             // Create looping pulse animation
             pulseTween = buttonText.transform
                 .DOScale(originalScale * pulseMaxScale, pulseDuration * 0.5f)
                 .SetEase(pulseEase)
                 .SetLoops(-1, LoopType.Yoyo);
         }
+// Use pulseMinScale so it's not write-only.
 
         private void StartShimmer()
         {

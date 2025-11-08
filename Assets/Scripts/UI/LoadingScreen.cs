@@ -13,15 +13,16 @@ namespace UI.Scripts
         [SerializeField] private string nextSceneName = "MainMenu";
 
         [Header("Loading Time")]
-        [SerializeField] private float minLoadTime = 2f;
-        [SerializeField] private float maxLoadTime = 5f;
+// Removed fake min/max load timing (now using real AsyncOperation.progress).
+// Brief dev comment: eliminates CS0414 warnings.
 
         [Header("UI References")]
         [SerializeField] private Image fillImage;
         [SerializeField] private TextMeshProUGUI tipsText;
 
         [Header("Fill Settings")]
-        [SerializeField] private int numberOfFillStages = 7; // How many jumps before 100%
+// Removed: staged fill count no longer used with real AsyncOperation.progress.
+// Dev: silences CS0414 on numberOfFillStages.
         [SerializeField] private float rotationSpeed = 180f;
         [SerializeField] private float pauseAt95Duration = 0.2f; // Pause time at 95%
         [SerializeField] private float finalSmoothDuration = 0.5f; // Smooth transition time for 95% to 100%
@@ -42,26 +43,21 @@ namespace UI.Scripts
             "Timing your abilities can turn the tide of battle."
         };
 
-        private float totalLoadTime;
-        private float loadStartTime;
+// Removed legacy timing fields.
+// Brief dev comment: these supported the fake staged loader.
         private List<string> shuffledTips;
         private int currentTipIndex = 0;
-        private List<float> fillStages;
+        private AsyncOperation _loadOp; // track the real async scene load so UI reflects actual progress
+// Brief dev comment: old staged list no longer used.
+// Drive progress from SceneManager.LoadSceneAsync instead of fake stages.
 
         private void Start()
         {
-            // Pick random load duration
-            totalLoadTime = Random.Range(minLoadTime, maxLoadTime);
-            loadStartTime = Time.time;
-
-            // Generate randomized fill stages
-            GenerateRandomFillStages();
-
             // Initialize and shuffle tips
             ShuffleTips();
 
             // Start coroutines
-            StartCoroutine(FillProgressionCoroutine());
+            StartCoroutine(FillProgressionCoroutine()); // now tied to real async load
             StartCoroutine(TipsRotationCoroutine());
 
             // Show first tip immediately
@@ -76,6 +72,7 @@ namespace UI.Scripts
                 fillImage.fillAmount = 0f;
             }
         }
+// Remove fake staged timing; we’ll reflect actual load progress.
 
         private void Update()
         {
@@ -86,30 +83,8 @@ namespace UI.Scripts
             }
         }
 
-        private void GenerateRandomFillStages()
-        {
-            fillStages = new List<float>();
-            fillStages.Add(0f); // Always start at 0%
-
-            // Generate random stages between 0.1 and 0.95 (stop before final smooth section)
-            for (int i = 0; i < numberOfFillStages; i++)
-            {
-                float randomStage = Random.Range(0.1f, 0.95f);
-                fillStages.Add(randomStage);
-            }
-
-            // Sort the stages so they're in ascending order
-            fillStages.Sort();
-
-            // Remove any stages above 0.95 since we'll smooth from 95% to 100%
-            fillStages.RemoveAll(stage => stage > 0.95f);
-
-            // Add the final stage at 0.95 (will smooth to 100%)
-            if (fillStages[fillStages.Count - 1] < 0.95f)
-            {
-                fillStages.Add(0.95f);
-            }
-        }
+// Removed: staged fake progression helper not used anymore.
+// Brief dev comment: progress now driven by _loadOp.progress.
 
         private void ShuffleTips()
         {
@@ -127,31 +102,38 @@ namespace UI.Scripts
 
         private IEnumerator FillProgressionCoroutine()
         {
-            for (int i = 0; i < fillStages.Count; i++)
+            if (string.IsNullOrEmpty(nextSceneName))
             {
-                float targetStage = fillStages[i];
-                float targetTime = loadStartTime + (totalLoadTime * targetStage);
+                Debug.LogError("[LoadingScreen] Next scene name is not set!");
+                yield break;
+            }
 
-                // Wait until we reach the time for this stage
-                yield return new WaitUntil(() => Time.time >= targetTime);
+            // Begin the real async load and gate activation until UI reaches 100%
+            _loadOp = SceneManager.LoadSceneAsync(nextSceneName);
+            _loadOp.allowSceneActivation = false;
 
-                // Jump to this fill stage
+            // Update fill based on actual async progress (0..0.9 while loading)
+            while (_loadOp != null && _loadOp.progress < 0.9f)
+            {
                 if (fillImage != null)
                 {
-                    fillImage.fillAmount = targetStage;
+                    // Normalize 0..0.9 to 0..1 for the ring
+                    float target = Mathf.Clamp01(_loadOp.progress / 0.9f);
+                    fillImage.fillAmount = target;
                 }
-
-                // If we've reached 95%, pause then start smooth transition to 100%
-                if (targetStage >= 0.95f)
-                {
-                    yield return new WaitForSeconds(pauseAt95Duration); // Pause at 95%
-                    yield return StartCoroutine(SmoothFinalFill());
-                    yield return new WaitForSeconds(0.1f); // Small delay to show 100%
-                    LoadNextScene();
-                    yield break;
-                }
+                yield return null;
             }
+
+            // Brief hold for anticipation then smooth the final stretch to 100%
+            if (pauseAt95Duration > 0f)
+                yield return new WaitForSeconds(pauseAt95Duration);
+
+            yield return StartCoroutine(SmoothFinalFill());
+
+            // Activate the scene once the bar hits 100%
+            LoadNextScene();
         }
+// Uses AsyncOperation.progress so the ring/tip reflect actual load state.
 
         private IEnumerator SmoothFinalFill()
         {
@@ -198,14 +180,21 @@ namespace UI.Scripts
 
         private void LoadNextScene()
         {
+            if (_loadOp != null)
+            {
+                _loadOp.allowSceneActivation = true; // hand-off to the already loaded async op
+                return;
+            }
+
             if (string.IsNullOrEmpty(nextSceneName))
             {
                 Debug.LogError("[LoadingScreen] Next scene name is not set!");
                 return;
             }
 
-            // Use async for smoother transition
+            // Fallback (shouldn't normally hit if _loadOp drove progress)
             SceneManager.LoadSceneAsync(nextSceneName);
         }
+// Activates the in-flight AsyncOperation instead of starting a second load.
     }
 }

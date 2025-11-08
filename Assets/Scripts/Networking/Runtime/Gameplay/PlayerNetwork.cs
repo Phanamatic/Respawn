@@ -43,6 +43,27 @@ namespace Game.Net
         Game.Net.PlayerLoadout _myLoadout = Game.Net.PlayerLoadout.Default;
         PlayerPhase _phase = PlayerPhase.Lobby;
 
+        // Replicated phase so clients are told when we've transitioned into Match.
+        readonly NetworkVariable<PlayerPhase> _netPhase =
+            new NetworkVariable<PlayerPhase>(
+                PlayerPhase.Lobby,
+                NetworkVariableReadPermission.Everyone,
+                NetworkVariableWritePermission.Server);
+
+        // Guard to avoid duplicate Cloud Save requests.
+        bool _loadoutRequested;
+
+        void OnPhaseNetChanged(PlayerPhase oldPhase, PlayerPhase newPhase)
+        {
+            _phase = newPhase;
+            if (IsOwner && newPhase == PlayerPhase.Match && !_loadoutRequested)
+            {
+                _loadoutRequested = true;
+                StartCoroutine(CoLoadAndSendLoadout());
+            }
+        }
+        // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.
+
         // Simple server rate-limits
         float _lastSwitchServerTime, _lastThrowServerTime;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
@@ -226,7 +247,9 @@ namespace Game.Net
                 _capsule = GetComponent<CapsuleCollider>();
             }
 
-            _phase = initialPhase;
+            _phase = _netPhase.Value; // mirror replicated value if server already set it
+            _netPhase.OnValueChanged += OnPhaseNetChanged;
+            // Brief dev comment: Subscribe early so we react if the server flips to Match right after spawn.
 
             _identitySubmitted = false;
             if (_identitySubmitCo != null)
@@ -252,11 +275,17 @@ namespace Game.Net
             // Client: send saved loadout to server after spawn
             // Only pull/send the saved loadout once we are actually in a Match.
             // In Lobby we skip this to avoid nulls and unnecessary traffic.
-            if (IsOwner && _phase == PlayerPhase.Match)
+            if (IsOwner && _phase == PlayerPhase.Match && !_loadoutRequested)
+            {
+                _loadoutRequested = true;
                 StartCoroutine(CoLoadAndSendLoadout());
+            }
             else if (IsOwner)
+            {
                 Debug.Log("[PlayerNetwork] Owner spawned in Lobby; deferring loadout fetch until Match.");
+            }
             // Defers Cloud Save roundtrip until Match phase to avoid Lobby-time NREs.
+            // Brief dev comment: Guard prevents duplicate Cloud Save reads if host-side also calls SetPhase().
 
             // ~2 ticks of interpolation for remotes
             try
@@ -1627,6 +1656,7 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
         void SetPhase(PlayerPhase phase)
         {
             _phase = phase;
+            if (IsServer) _netPhase.Value = phase;
 
             if (phase == PlayerPhase.Match)
             {
@@ -1636,6 +1666,11 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
                 }
                 if (IsOwner)
                 {
+                    if (!_loadoutRequested)
+                    {
+                        _loadoutRequested = true;
+                        StartCoroutine(CoLoadAndSendLoadout());
+                    }
                     OnActiveSlotChanged();
                 }
             }
@@ -1649,6 +1684,7 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
                 _inputPaused = false;
             }
         }
+        // Brief dev comment: Server writes the replicated phase; owner also kicks Cloud Save fetch if phase==Match.
 
         // ------- Freeze / Visibility -------
 

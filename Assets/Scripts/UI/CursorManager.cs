@@ -83,7 +83,8 @@ namespace UI.Scripts
         private void RegisterAllSliders()
         {
             // Find all sliders in the scene (including inactive ones)
-            Slider[] allSliders = FindObjectsOfType<Slider>(true);
+            Slider[] allSliders = Object.FindObjectsByType<Slider>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+// Swap deprecated FindObjectsOfType(...) with FindObjectsByType(...).
 
             foreach (Slider slider in allSliders)
             {

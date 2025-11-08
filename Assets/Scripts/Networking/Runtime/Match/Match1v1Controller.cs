@@ -578,7 +578,11 @@ ReequipAllPlayersServer();
                 // If you still want to auto-equip at spawn, it is now safe because _netLoadout is already populated.
                 pn.ServerAutoEquipPrimary();
 
+                // Make absolutely sure the player is in Match phase on spawn so owner-side Cloud Save can trigger.
+                pn.SetPhaseServerRpc(PlayerPhase.Match);
+
                 pn.ClearDeathRecapForOwner();
+                // Brief dev comment: Spawner now explicitly flips phase to Match for each spawned player.
             }
 // Spawner now seeds the player's NetLoadout from the pre-join cache, eliminating desync.
 // Players spawn already holding Primary.
