@@ -59,6 +59,8 @@ namespace Game.Net.Weapons
 
             if (!IsServer)
                 enabled = false; // server moves it
+
+            Debug.Log($"[Weapons] Projectile spawn netId={(NetworkObject?NetworkObjectId:0)} srv={IsServer} speed={speed} damage={damage} lifetime={lifetime}");
         }
 
         void Update()
@@ -74,7 +76,7 @@ namespace Game.Net.Weapons
             transform.position += fwd * speed * Time.deltaTime;
 
             _alive += Time.deltaTime;
-            if (_alive >= lifetime) { Despawn(); }
+            if (_alive >= lifetime) { Debug.Log($"[Weapons] Projectile despawn (lifetime) t={_alive:0.00}"); Despawn(); }
         }
 
         void OnTriggerEnter(Collider other)
@@ -90,7 +92,9 @@ namespace Game.Net.Weapons
 
                 _hasImpacted = true;
 
-                if (!_owner || target.GetTeam() != _ownerTeam)
+                bool friendly = _owner && target.GetTeam() == _ownerTeam;
+                Debug.Log($"[Weapons] Projectile hit player victimCid={target.OwnerClientId} attackerCid={_ownerClientId} friendly={friendly} dmg={damage}");
+                if (!friendly)
                 {
                     target.ApplyHealthDelta(-Mathf.Abs(damage), _owner);
                 }
@@ -100,6 +104,7 @@ namespace Game.Net.Weapons
             }
 
             _hasImpacted = true;
+            Debug.Log($"[Weapons] Projectile hit non-player collider={other.name}");
             Despawn();
         }
 
@@ -119,12 +124,14 @@ namespace Game.Net.Weapons
             _ownerClientId = ownerClientId;
             _alive = 0f;
             _hasImpacted = false;
+            Debug.Log($"[Weapons] Projectile configured ownerCid={_ownerClientId} team={_ownerTeam} speed={speed} dmg={damage} life={lifetime}");
         }
 
         public override void OnNetworkDespawn()
         {
             base.OnNetworkDespawn();
             if (trail) trail.emitting = false;
+            Debug.Log($"[Weapons] Projectile despawn netId={(NetworkObject?NetworkObjectId:0)} impacted={_hasImpacted}");
             _owner = null;
             _hasImpacted = false;
             _alive = 0f;

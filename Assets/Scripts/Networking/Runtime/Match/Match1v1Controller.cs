@@ -922,6 +922,7 @@ void DetachCameraFromShip()
 
         void FreezeAllPlayers(bool frozen)
         {
+            Debug.Log($"[Match1v1] FreezeAllPlayers -> {frozen} count={NetworkManager.ConnectedClientsList.Count}");
             foreach (var cc in NetworkManager.ConnectedClientsList)
             {
                 var pn = cc.PlayerObject?.GetComponent<PlayerNetwork>();
@@ -934,6 +935,7 @@ void DetachCameraFromShip()
 
         void BroadcastPauseAll(bool paused)
         {
+            Debug.Log($"[Match1v1] BroadcastPauseAll -> {paused} recipients={NetworkManager.ConnectedClientsIds.Count-1}");
             foreach (var cid in NetworkManager.ConnectedClientsIds)
                 if (cid != NetworkManager.ServerClientId)
                     PauseInputFor(cid, paused);
@@ -959,6 +961,8 @@ void DetachCameraFromShip()
         void SetAllPlayersVisibleClientRpc(bool visible)
         {
             var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            int count = players != null ? players.Length : 0;
+            Debug.Log($"[Match1v1] SetAllPlayersVisible -> {visible} playerObjs={count}");
             if (players == null || players.Length == 0) return;
 
             PlayerNetwork local = null;
@@ -1219,6 +1223,7 @@ void DetachCameraFromShip()
         void DespawnAllPlayersServer()
         {
             if (!IsServer) return;
+            int despawned = 0;
 
             foreach (var cc in NetworkManager.ConnectedClientsList)
             {
@@ -1230,8 +1235,10 @@ void DetachCameraFromShip()
                     LosVisibilitySystem.Instance?.UnregisterTarget(po);
 
                     po.Despawn(true); // destroy object on all peers
+                    despawned++;
                 }
             }
+            Debug.Log($"[Match1v1] DespawnAllPlayersServer count={despawned}");
         }
 
         LayerMask EffectiveGroundMask()
@@ -1266,6 +1273,7 @@ void DetachCameraFromShip()
 void ReequipAllPlayersServer()
 {
     if (!IsServer) return;
+    int count = 0;
     foreach (var cc in NetworkManager.ConnectedClientsList)
     {
         if (cc.ClientId == NetworkManager.ServerClientId) continue;
@@ -1275,13 +1283,16 @@ void ReequipAllPlayersServer()
         // Force healthy & ready.
         pn.SetHealth(100f);
         pn.ServerEnsureLoadoutValidAndEquip();
+        count++;
     }
+    Debug.Log($"[Match1v1] ReequipAllPlayersServer applied to {count} players");
 }
 
 // Now guarantees both players start healthy and equipped each round.
 void TopUpAndSanitizeAllPlayersServer()
 {
     if (!IsServer) return;
+    int count = 0;
     foreach (var cc in NetworkManager.ConnectedClientsList)
     {
         if (cc.ClientId == NetworkManager.ServerClientId) continue;
@@ -1289,7 +1300,9 @@ void TopUpAndSanitizeAllPlayersServer()
         if (!pn) continue;
         // Guarantee: full health + non-None loadout before round starts.
         pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
+        count++;
     }
+    Debug.Log($"[Match1v1] TopUpAndSanitizeAllPlayersServer applied to {count} players");
 }
 
 // Now guarantees both players start healthy and equipped each round.

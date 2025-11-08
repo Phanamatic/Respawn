@@ -98744,6 +98744,7 @@ MonoBehaviour:
   logDebug: 0
   useResourcesFallback: 1
   resourcesFolder: ProfileIcons
+  iconFadeDuration: 0.25
 --- !u!43 &1068666268
 Mesh:
   m_ObjectHideFlags: 0

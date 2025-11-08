@@ -24,6 +24,25 @@ namespace Game.Net
 
         public static event Action<PlayerConnectionLoadoutDTO> OnLoadoutReady; // fired as soon as Cloud Save returns
 
+        /// <summary>
+        /// Safely publish the loadout-ready signal to external listeners.
+        /// Needed because C# events can't be invoked outside their declaring type.
+        /// </summary>
+        public static void PublishLoadoutReady(PlayerConnectionLoadoutDTO dto)
+        {
+            try
+            {
+                OnLoadoutReady?.Invoke(dto);
+#if UNITY_EDITOR
+                Debug.Log("[CloudSave] PublishLoadoutReady dispatched.");
+#endif
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+
     void Awake()
     {
         if (Instance != null && Instance != this)

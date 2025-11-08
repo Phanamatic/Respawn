@@ -777,12 +777,10 @@ namespace Game.Net
                 slot == 2 || // melee fixed
                 (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
 
-            if (!allowed) return;
+            if (!allowed) { Debug.Log($"[Weapons] Slot switch rejected -> {slot} (not allowed) cid={OwnerClientId}"); return; }
 
             _activeSlot.Value = slot;
-#if UNITY_EDITOR
-    Debug.Log($"[Weapons] Active slot -> {slot}");
-#endif
+            Debug.Log($"[Weapons] Active slot -> {slot} cid={OwnerClientId}");
             // TODO: later handle firing state teardown and equip animations.
         }
 
@@ -820,34 +818,34 @@ namespace Game.Net
         {
             // Owner requests equip. Remotes wait for server fan-out.
             if (!IsOwner) return;
-// Brief dev comment.
 
             byte slot = _activeSlot.Value;
+            Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
 
             if (slot == 0) // Primary
             {
                 var type = (PrimaryType)_netLoadout.Value.primary;
-                if (type == PrimaryType.None) return; // never equip "None" locally
+                if (type == PrimaryType.None) { Debug.LogWarning("[Weapons] Equip primary skipped: None"); return; }
                 var wp = GetComponent<WeaponPrimaryController>();
-                if (wp) wp.Equip(type, null);
+                if (wp) { Debug.Log($"[Weapons] Equip primary request -> {type}"); wp.Equip(type, null); } else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
             else if (slot == 1) // Secondary
             {
                 var type = (SecondaryType)_netLoadout.Value.secondary;
-                if (type == SecondaryType.None) return; // never equip "None" locally
+                if (type == SecondaryType.None) { Debug.LogWarning("[Weapons] Equip secondary skipped: None"); return; }
                 var ws = GetComponent<WeaponSecondaryController>();
-                if (ws) ws.Equip(type, null);
+                if (ws) { Debug.Log($"[Weapons] Equip secondary request -> {type}"); ws.Equip(type, null); } else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
-            else if (slot == 2) // Melee is fixed Knife — always allowed
+            else if (slot == 2) // Melee
             {
                 var wm = GetComponent<WeaponMeleeController>();
-                if (wm) wm.Equip();
+                if (wm) { Debug.Log("[Weapons] Equip melee (Knife)"); wm.Equip(); } else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
             else if (slot == 3) // Utility
             {
-                if (_netLoadout.Value.util == (byte)UtilityType.None) return;
+                if (_netLoadout.Value.util == (byte)UtilityType.None) { Debug.LogWarning("[Weapons] Equip utility skipped: None"); return; }
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu) wu.Equip((UtilityType)_netLoadout.Value.util);
+                if (wu) { Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); wu.Equip((UtilityType)_netLoadout.Value.util); } else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
         }
         // Prevents client from issuing equip calls that clear views with "None" just as the round starts.
@@ -1913,6 +1911,8 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
             int damageInt = tookDamage ? Mathf.RoundToInt(-delta) : 0;
             bool died = previous > 0f && target <= 0f;
 
+            Debug.Log($"[Weapons] Health delta cid={OwnerClientId} delta={delta} prev={previous:0} now={target:0} attackerCid={(attacker?attacker.OwnerClientId:ulong.MaxValue)} died={died}");
+
             if (died)
             {
                 var victimStats = _combatStats.Value;
@@ -1964,6 +1964,7 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
         public void ServerAutoEquipPrimary()
         {
             if (!IsServer) return;
+            Debug.Log($"[Weapons] ServerAutoEquipPrimary cid={OwnerClientId}");
 
             // Always sanitize first so we never carry "None" into equip.
             ServerEnsureValidLoadoutAndHealth(sanitizeOnly: true);
