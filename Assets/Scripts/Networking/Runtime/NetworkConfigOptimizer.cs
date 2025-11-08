@@ -9,9 +9,10 @@ using Unity.Netcode.Transports.UTP;
 
 namespace Game.Net
 {
-    [DefaultExecutionOrder(-10001)] // Run before PlayerSpawner
+    [DefaultExecutionOrder(-10000)]
     public sealed class NetworkConfigOptimizer : MonoBehaviour
     {
+        [SerializeField] private Unity.Netcode.NetworkManager networkManager;
         [Header("Performance Profile")]
         [Tooltip("Choose preset based on game type")]
         [SerializeField] private PerformanceProfile profile = PerformanceProfile.Competitive; // 128 tick by default
@@ -38,6 +39,43 @@ namespace Game.Net
 
         private void Awake()
         {
+            var nm = networkManager ? networkManager : FindObjectOfType<Unity.Netcode.NetworkManager>();
+            if (nm == null || nm.NetworkConfig == null || nm.NetworkConfig.NetworkPrefabs == null) return;
+
+            var list = nm.NetworkConfig.NetworkPrefabs.Prefabs;
+            if (list == null) return;
+
+            int removedInvalid = 0, removedDup = 0;
+            var seen = new System.Collections.Generic.HashSet<UnityEngine.GameObject>();
+
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var entry = list[i];
+                var go = entry.Prefab;
+
+                // Remove nulls or prefabs without NetworkObject (source hash would be 0)
+                if (go == null || go.GetComponent<Unity.Netcode.NetworkObject>() == null)
+                {
+                    UnityEngine.Debug.LogWarning($"[Bootstrap] Removing invalid NetworkPrefab entry at index {i} (name='{(go ? go.name : "NULL")}').");
+                    list.RemoveAt(i);
+                    removedInvalid++;
+                    continue;
+                }
+
+                // Remove duplicates of the same prefab asset
+                if (!seen.Add(go))
+                {
+                    UnityEngine.Debug.LogWarning($"[Bootstrap] Removing duplicate NetworkPrefab registration for '{go.name}'.");
+                    list.RemoveAt(i);
+                    removedDup++;
+                }
+            }
+
+            if (removedInvalid > 0 || removedDup > 0)
+            {
+                UnityEngine.Debug.LogWarning($"[Bootstrap] Cleaned NetworkPrefabs: invalid={removedInvalid}, duplicate={removedDup}");
+            }
+
             ApplyNetworkOptimizations();
             ApplyPhysicsAndFps();
         }

@@ -33,8 +33,19 @@ namespace Game.Net
         }
         Instance = this;
         DontDestroyOnLoad(gameObject);
-        gameObject.AddComponent<LoadoutHandshake>();
-    }        // Use simple, compliant key (alphanumeric only).
+
+        // Avoid creating a duplicate LoadoutHandshake if one already exists in the bootstrap scene.
+        if (FindObjectOfType<LoadoutHandshake>() == null)
+        {
+            gameObject.AddComponent<LoadoutHandshake>();
+            Debug.Log("[CloudSave] Added LoadoutHandshake (none found in scene).");
+        }
+        else
+        {
+            Debug.Log("[CloudSave] LoadoutHandshake already present; not adding another.");
+        }
+    }
+    // Guarantees a single handshake while keeping CloudSaveClient persistent.        // Use simple, compliant key (alphanumeric only).
         const string Key = "LoadoutV1";
         const string StatsKey = "MatchStatsV1";
         static readonly string[] LegacyKeys = { "game.loadout.v1", "player.loadout" };
