@@ -103,6 +103,10 @@ namespace Game.Net
             var capsule = inst.GetComponent<CapsuleCollider>();
             AdjustToGroundAndResolve(inst.transform, capsule);
 
+            // CRITICAL: Set phase to Lobby BEFORE spawn so OnNetworkSpawn sees the correct phase immediately.
+            var pn = inst.GetComponent<PlayerNetwork>();
+            if (pn) pn.SeedPhasePreSpawnServer(PlayerPhase.Lobby);
+
             inst.SpawnAsPlayerObject(clientId);
 
 #if UNITY_EDITOR

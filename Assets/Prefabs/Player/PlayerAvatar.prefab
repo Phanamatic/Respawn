@@ -840,7 +840,7 @@ MonoBehaviour:
         byte0059: 0
         byte0060: 0
         byte0061: 0
-  knifeViewPrefab: {fileID: 2354712556141103704, guid: 8894f6fd00cc6db43a79321a835d0504, type: 3}
+  knifeViewPrefab: {fileID: 1772275987025050834, guid: 6c2a8a735f2405f40b8ef87e7f7e19c0, type: 3}
 --- !u!114 &4477007281245444062
 MonoBehaviour:
   m_ObjectHideFlags: 0

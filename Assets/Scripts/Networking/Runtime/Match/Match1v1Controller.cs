@@ -576,8 +576,13 @@ ReequipAllPlayersServer();
                 // Seed the authoritative loadout if the client sent it during connection.
                 if (LoadoutHandshake.TryGetPreJoinLoadout(clientId, out var pre))
                 {
+                    Debug.Log($"[Match1v1] Applying pre-join loadout for cid={clientId}: P={pre.primary} S={pre.secondary} M={pre.melee} U={pre.util}");
                     pn.ApplyPreJoinLoadoutServer(pre.primary, pre.secondary, pre.melee, pre.util);
                     LoadoutHandshake.Consume(clientId);
+                }
+                else
+                {
+                    Debug.Log($"[Match1v1] No pre-join loadout for cid={clientId}, defaults will be applied via ServerEnsureValidLoadoutAndHealth");
                 }
 
 // Final belt-and-braces: sanitize + ensure full HP + equip primary.
@@ -586,8 +591,8 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
 
 // Uses the new hardened entry point when spawning each player.
 
-                // Make absolutely sure the player is in Match phase on spawn so owner-side Cloud Save can trigger.
-                pn.SetPhaseServerRpc(PlayerPhase.Match);
+                // Phase is already set to Match via SeedPhasePreSpawnServer before spawn.
+                // No need to call SetPhaseServerRpc again - OnNetworkSpawn handles it.
 
                 pn.ClearDeathRecapForOwner();
                 // Brief dev comment: Spawner now explicitly flips phase to Match for each spawned player.

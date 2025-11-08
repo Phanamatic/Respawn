@@ -277,9 +277,11 @@ namespace Game.Net
             if (IsServer)
                 AssertLayoutVersionClientRpc(NETWORK_LAYOUT_VERSION);
 
-            _phase = _netPhase.Value; // mirror replicated value if server already set it
+            // CRITICAL: Set phase FIRST before any other initialization.
+            // For Match servers, SeedPhasePreSpawnServer already set _netPhase.Value to Match before spawn.
+            // This ensures all subsequent logic (loadout fetch, FOV/LOS, weapon equip) sees the correct phase.
+            _phase = _netPhase.Value;
             _netPhase.OnValueChanged += OnPhaseNetChanged;
-            // Brief dev comment: Subscribe early so we react if the server flips to Match right after spawn.
 
             _identitySubmitted = false;
             if (_identitySubmitCo != null)
@@ -339,6 +341,19 @@ namespace Game.Net
                 {
                     _rb.constraints &= ~(RigidbodyConstraints.FreezeRotationY);
                     _rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+                }
+
+                // CRITICAL: Force phase based on server type if not already set correctly.
+                // This is a safety net in case SeedPhasePreSpawnServer wasn't called before spawn.
+                if ((SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo) && initialPhase != PlayerPhase.Match)
+                {
+                    Debug.LogWarning($"[PlayerNetwork] Match server detected but initialPhase was {initialPhase}. Forcing to Match.");
+                    initialPhase = PlayerPhase.Match;
+                }
+                else if (SessionContext.Type == ServerType.Lobby && initialPhase != PlayerPhase.Lobby)
+                {
+                    Debug.LogWarning($"[PlayerNetwork] Lobby server detected but initialPhase was {initialPhase}. Forcing to Lobby.");
+                    initialPhase = PlayerPhase.Lobby;
                 }
 
                 SetPhase(initialPhase);
@@ -1343,9 +1358,23 @@ namespace Game.Net
                 try { SessionContext.SetLoadout(lo); } catch { /* optional cache; ignore if context absent */ }
             }
 
+            // CRITICAL: Guarantee no None values before sending to server
+            // This ensures players ALWAYS have a full loadout (AR/Pistol/Knife/Grenade)
+            if (lo.Primary == PrimaryType.None) lo.Primary = PrimaryType.AR;
+            if (lo.Secondary == SecondaryType.None) lo.Secondary = SecondaryType.Pistol;
+            if (lo.Utility == UtilityType.None) lo.Utility = UtilityType.Grenade;
+
             _myLoadout = lo;
             var net = NetLoadout.From(lo);
-            EquipLoadoutServerRpc(net.primary, net.secondary, net.util);
+            
+            // Double-check NetLoadout has valid values (melee is always 1 = Knife)
+            if (net.primary == 0) net.primary = (byte)PrimaryType.AR;
+            if (net.secondary == 0) net.secondary = (byte)SecondaryType.Pistol;
+            if (net.melee == 0) net.melee = 1; // Knife
+            if (net.util == 0) net.util = (byte)UtilityType.Grenade;
+            
+            Debug.Log($"[PlayerNetwork] Sending loadout to server: P={lo.Primary} S={lo.Secondary} M=Knife U={lo.Utility}");
+            EquipLoadoutServerRpc(net.primary, net.secondary, net.melee, net.util);
         }
         // Only runs in Match; Lobby spawns will no-op. Prevents NREs when lobby services aren't present.
 
@@ -1464,7 +1493,7 @@ namespace Game.Net
 
         // Authoritative equip. Validates indices and applies to replicated var.
         [ServerRpc(RequireOwnership = true)]
-        void EquipLoadoutServerRpc(byte primary, byte secondary, byte util, ServerRpcParams p = default)
+        void EquipLoadoutServerRpc(byte primary, byte secondary, byte melee, byte util, ServerRpcParams p = default)
         {
 // Validate ranges
 if (primary > (byte)PrimaryType.Sniper) primary = 0;
@@ -1474,17 +1503,18 @@ if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
 // Server-only fallback: never allow None in any slot
 if (primary == 0) primary = (byte)PrimaryType.AR;
 if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+if (melee == 0) melee = 1; // Knife
 // Utility already clamped above; also fix None explicitly:
 if (util == 0) util = (byte)UtilityType.Grenade;
 
-_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, melee = melee, util = util };
 
 // Hard guarantee: sanitize + health = 100, then equip primary.
 ServerEnsureValidLoadoutAndHealth();
 
 // Log for traceability
 #if UNITY_EDITOR
-Debug.Log($"[PlayerNetwork] Equipped loadout (sanitized) P={(PrimaryType)_netLoadout.Value.primary} S={(SecondaryType)_netLoadout.Value.secondary} M=Knife U={(UtilityType)_netLoadout.Value.util} for {OwnerClientId}");
+Debug.Log($"[PlayerNetwork] Equipped loadout (sanitized) P={(PrimaryType)_netLoadout.Value.primary} S={(SecondaryType)_netLoadout.Value.secondary} M={_netLoadout.Value.melee} U={(UtilityType)_netLoadout.Value.util} for {OwnerClientId}");
 #endif
 // Called from the same area where loadout RPC is processed【turn42file6†PlayerNetwork.cs†L1-L20】.
 
@@ -2019,6 +2049,11 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
             }
 
             if (changed) _netLoadout.Value = net;
+
+            if (changed || !sanitizeOnly)
+            {
+                Debug.Log($"[PlayerNetwork] Loadout validated/set: P={(PrimaryType)net.primary} S={(SecondaryType)net.secondary} M={(net.melee == 1 ? "Knife" : "None")} U={(UtilityType)net.util} for cid={OwnerClientId} (changed={changed})");
+            }
 
             if (sanitizeOnly) return;
 

@@ -19,9 +19,21 @@ namespace Game.Net.Weapons
         [SerializeField] TrailRenderer trail;
         static Material s_trailMaterial;
 
+        // Collision filter: only collide with Player, Occluder, and OccluderExtra layers
+        static LayerMask s_validCollisionLayers;
+        static bool s_layerMaskInitialized;
+
         public override void OnNetworkSpawn()
         {
             base.OnNetworkSpawn();
+
+            // Initialize collision layer mask once
+            if (!s_layerMaskInitialized)
+            {
+                s_validCollisionLayers = LayerMask.GetMask("Player", "Occluder", "OccluderExtra");
+                s_layerMaskInitialized = true;
+                Debug.Log($"[Weapons] Projectile collision layers configured: Player, Occluder, OccluderExtra (mask={s_validCollisionLayers.value})");
+            }
 
             if (!trail)
                 trail = GetComponentInChildren<TrailRenderer>();
@@ -85,6 +97,14 @@ namespace Game.Net.Weapons
             if (!other) return;
             if (other.attachedRigidbody && other.attachedRigidbody.gameObject == this.gameObject) return;
 
+            // CRITICAL: Only collide with Player, Occluder, and OccluderExtra layers
+            int otherLayer = other.gameObject.layer;
+            if ((s_validCollisionLayers.value & (1 << otherLayer)) == 0)
+            {
+                // Ignore collision with this layer (e.g., Ground, UI, etc.)
+                return;
+            }
+
             var target = other.GetComponentInParent<Game.Net.PlayerNetwork>();
             if (target)
             {
@@ -104,7 +124,7 @@ namespace Game.Net.Weapons
             }
 
             _hasImpacted = true;
-            Debug.Log($"[Weapons] Projectile hit non-player collider={other.name}");
+            Debug.Log($"[Weapons] Projectile hit non-player collider={other.name} layer={LayerMask.LayerToName(otherLayer)}");
             Despawn();
         }
 

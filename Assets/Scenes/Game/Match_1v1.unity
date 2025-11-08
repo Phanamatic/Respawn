@@ -148081,6 +148081,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 43315828963545753, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
+      objectReference: {fileID: 0}
     - target: {fileID: 44799893882456850, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 0
@@ -148168,6 +148172,10 @@ PrefabInstance:
     - target: {fileID: 140809400436878818, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 140809400436878818, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 153768871496331489, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
@@ -149605,6 +149613,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 1465027479722197069, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
+      objectReference: {fileID: 0}
     - target: {fileID: 1473009063676568558, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
       value: 
@@ -149676,6 +149688,10 @@ PrefabInstance:
     - target: {fileID: 1493788375508555433, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 1493788375508555433, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 1496917358265293549, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
@@ -151769,6 +151785,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 3279934904413041922, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
+      objectReference: {fileID: 0}
     - target: {fileID: 3299105057442653937, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
       value: 
@@ -152640,6 +152660,10 @@ PrefabInstance:
     - target: {fileID: 4028952752745372735, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 4028952752745372735, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 4031600776147374839, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
@@ -154973,6 +154997,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 5963725867411324178, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
+      objectReference: {fileID: 0}
     - target: {fileID: 5963906501689739442, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
       value: 
@@ -155144,6 +155172,10 @@ PrefabInstance:
     - target: {fileID: 6111191156497146609, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 6111191156497146609, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 6111533296193492024, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
@@ -155368,6 +155400,10 @@ PrefabInstance:
     - target: {fileID: 6322141533014701299, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 6322141533014701299, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 6325571935994935353, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
@@ -156993,6 +157029,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 10
       objectReference: {fileID: 0}
+    - target: {fileID: 7678763239338444186, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
+      objectReference: {fileID: 0}
     - target: {fileID: 7679309550093294546, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Mesh
       value: 
@@ -158004,6 +158044,10 @@ PrefabInstance:
     - target: {fileID: 8628834821430386189, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
       value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 8628834821430386189, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
+      propertyPath: m_TagString
+      value: Smoke
       objectReference: {fileID: 0}
     - target: {fileID: 8629934821563748591, guid: 25acb181f74779b4d9965d36acfabc9d, type: 3}
       propertyPath: m_Layer
