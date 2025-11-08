@@ -17691,6 +17691,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: aea0f4fcf9b72144f9dbdb954d31e9a2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  lowAmmoThreshold: 6
+  criticalAmmoThreshold: 2
+  ammoLowColor: {r: 1, g: 0.85, b: 0.3, a: 1}
+  ammoCriticalColor: {r: 1, g: 0.35, b: 0.35, a: 1}
+  reloadPulseThreshold: 0.85
+  pulseScale: 0.08
+  pulseSpeed: 10
   primaryReloadFill: {fileID: 1158520690}
   primaryAmmoText: {fileID: 468614788}
   primaryWeaponName: {fileID: 1312203315}
@@ -177306,7 +177313,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &6691284414302392911
 Transform:
   m_ObjectHideFlags: 0
