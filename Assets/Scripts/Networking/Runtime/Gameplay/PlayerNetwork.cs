@@ -159,7 +159,8 @@ namespace Game.Net
         const int MaxDisplayNameLength = 32;
         readonly NetworkVariable<FixedString128Bytes> _playerIconId =
             new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-        const int MaxIconIdLength = 96;
+        // Keep <= FixedString128Bytes capacity; 126 leaves headroom for bookkeeping.
+        const int MaxIconIdLength = 126;
 
         [System.Serializable]
         public struct CombatStats : INetworkSerializable
@@ -1112,10 +1113,11 @@ namespace Game.Net
         }
 
         [ServerRpc(RequireOwnership = false)]
-        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString64Bytes iconId, ServerRpcParams rpcParams = default)
+        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString128Bytes iconId, ServerRpcParams rpcParams = default)
         {
             var sanitizedName = SanitizeAlias(alias);
             if (sanitizedName.IsEmpty) return;
+
             var sanitizedIcon = SanitizeIconId(iconId);
             _playerName.Value = sanitizedName;
             _playerIconId.Value = sanitizedIcon;
@@ -1146,7 +1148,7 @@ namespace Game.Net
             return result;
         }
 
-        static FixedString64Bytes SanitizeIconId(FixedString64Bytes iconId)
+        static FixedString128Bytes SanitizeIconId(FixedString128Bytes iconId)
         {
             var raw = iconId.ToString();
             if (string.IsNullOrWhiteSpace(raw)) return default;
@@ -1165,7 +1167,7 @@ namespace Game.Net
             }
 
             if (len == 0) return default;
-            return new FixedString64Bytes(new string(buffer.Slice(0, len)));
+            return new FixedString128Bytes(new string(buffer.Slice(0, len)));
         }
 
         void LateUpdate()
@@ -1436,29 +1438,45 @@ namespace Game.Net
         [ServerRpc(RequireOwnership = true)]
         void EquipLoadoutServerRpc(byte primary, byte secondary, byte util, ServerRpcParams p = default)
         {
-            // Validate ranges
-            if (primary > (byte)PrimaryType.Sniper) primary = 0;
-            if (secondary > (byte)SecondaryType.MachinePistol) secondary = 0;
-            if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
+// Validate ranges
+if (primary > (byte)PrimaryType.Sniper) primary = 0;
+if (secondary > (byte)SecondaryType.MachinePistol) secondary = 0;
+if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
 
-            _netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+// Server-only fallback: never allow None in any slot
+if (primary == 0) primary = (byte)PrimaryType.AR;
+if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+// Utility already clamped above; also fix None explicitly:
+if (util == 0) util = (byte)UtilityType.Grenade;
+
+_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
 
 #if UNITY_EDITOR
-            Debug.Log($"[PlayerNetwork] Equipped loadout P={(PrimaryType)primary} S={(SecondaryType)secondary} U={(UtilityType)util} for {OwnerClientId}");
+Debug.Log($"[PlayerNetwork] Equipped loadout P={(PrimaryType)primary} S={(SecondaryType)secondary} U={(UtilityType)util} for {OwnerClientId}");
 #endif
 
-            // TODO: hook your weapon/inventory system here using _netLoadout.Value.ToModel()
+// TODO: hook your weapon/inventory system here using _netLoadout.Value.ToModel()
 
-            if (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo)
-            {
-                ServerAutoEquipPrimary();
-            }
+if (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo)
+{
+ServerAutoEquipPrimary();
+}
+
+// Server RPC now hardens "no None" invariants so UI/slots always populate.
         }
 
 // NGO: guard at runtime instead of using Mirror's [Server] attribute.
 public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, byte util)
 {
     if (!IsServer) return;
+
+    // Harden against missing/None payloads from pre-join path.
+    if (primary == 0)   primary   = (byte)PrimaryType.AR;
+    if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+    if (util == 0 || util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
+
+    // Melee: default to Knife if unset (assume 1 == Knife in your enum; adjust if needed).
+    if (melee == 0) melee = 1;
 
     var loadout = _netLoadout.Value;
     loadout.primary = primary;
@@ -1470,16 +1488,44 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
 #if UNITY_EDITOR
     Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer -> P{primary}/S{secondary}/M{melee}/U{util}");
 #endif
+
+    // Ensure a weapon is actually in-hand after seeding.
+    ServerAutoEquipPrimary();
 }
+
+// Server consumes pre-join cache and guarantees no slot is None; also equips primary.
 // Removes missing [Server]/ServerAttribute and switches to byte params to avoid type coupling.
+
+        // Server utility you can call from spawners/match controllers.
+        // Ensures loadout invariants and equips weapons so UI/slots are populated.
+        public void ServerEnsureLoadoutValidAndEquip()
+        {
+            if (!IsServer) return;
+
+            var lo = _netLoadout.Value;
+            if (lo.primary == 0)   lo.primary   = (byte)PrimaryType.AR;
+            if (lo.secondary == 0) lo.secondary = (byte)SecondaryType.Pistol;
+            if (lo.util == 0 || lo.util > (byte)UtilityType.Stun) lo.util = (byte)UtilityType.Grenade;
+            if (lo.melee == 0) lo.melee = 1; // assume Knife
+
+            _netLoadout.Value = lo;
+
+            // Equip on server (authoritative) and replicate down.
+            ServerAutoEquipPrimary();
+
+            // Pre-initialize other slots so they’re ready on first switch.
+            var ws = GetComponent<Game.Net.Weapons.WeaponSecondaryController>();
+            if (ws) ws.Equip((SecondaryType)lo.secondary, null);
+            var wm = GetComponent<Game.Net.Weapons.WeaponMeleeController>();
+            if (wm) wm.Equip();
+
+        }
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(newVal, _netYaw.Value, _netVelocity.Value, _netIsDashing.Value);
-        }
-
-        void OnYawChanged(float _, float newVal)
+        }        void OnYawChanged(float _, float newVal)
         {
             if (IsOwner) return;
 

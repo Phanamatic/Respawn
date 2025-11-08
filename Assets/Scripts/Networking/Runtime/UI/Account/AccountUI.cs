@@ -181,14 +181,27 @@ namespace Game.UI.Account
                 try
                 {
                     if (CloudSaveClient.Instance != null)
-                        await CloudSaveClient.Instance.SaveLoadoutAsync(PlayerLoadout.Default);
+                    {
+                        // Explicit defaults for brand-new accounts.
+                        var firstLoadout = new PlayerLoadout
+                        {
+                            Primary = PrimaryType.AR,
+                            Secondary = SecondaryType.Pistol,
+                            Utility = UtilityType.Grenade
+                        };
+                        await CloudSaveClient.Instance.SaveLoadoutAsync(firstLoadout);
+                    }
                     else
+                    {
                         Debug.LogWarning("[AccountUI] CloudSaveClient.Instance missing; default loadout not written.");
+                    }
                 }
                 catch (System.Exception e)
                 {
                     Debug.LogWarning($"[AccountUI] Default loadout save failed: {e.Message}");
                 }
+
+// New accounts now always start AR/Pistol/Grenade in Cloud Save.
 
                 // await CacheIdentityAsync(_selectedIconId);
                 LoadNext();

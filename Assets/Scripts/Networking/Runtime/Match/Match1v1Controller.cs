@@ -575,8 +575,10 @@ ReequipAllPlayersServer();
                     LoadoutHandshake.Consume(clientId);
                 }
 
-                // If you still want to auto-equip at spawn, it is now safe because _netLoadout is already populated.
-                pn.ServerAutoEquipPrimary();
+                // Ensure defaults + equip at spawn (covers missing/late Cloud Save).
+                pn.ServerEnsureLoadoutValidAndEquip();
+
+// Uses the new hardened entry point when spawning each player.
 
                 // Make absolutely sure the player is in Match phase on spawn so owner-side Cloud Save can trigger.
                 pn.SetPhaseServerRpc(PlayerPhase.Match);
@@ -1251,8 +1253,8 @@ void DetachCameraFromShip()
         }
 
 /// <summary>
-/// Re-equip Primaries for all players at round start, after Cloud Save loadouts have replicated.
-/// Safe to call each round; idempotent on the server-side equip code.
+/// Round start hardening: ensure valid loadouts, equip, and reset health.
+/// Idempotent on server (safe to call multiple times).
 /// </summary>
 void ReequipAllPlayersServer()
 {
@@ -1261,9 +1263,15 @@ void ReequipAllPlayersServer()
     {
         if (cc.ClientId == NetworkManager.ServerClientId) continue;
         var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
-        if (pn) pn.ServerAutoEquipPrimary();
+        if (!pn) continue;
+
+        // Force healthy & ready.
+        pn.SetHealth(100f);
+        pn.ServerEnsureLoadoutValidAndEquip();
     }
 }
+
+// Now guarantees both players start healthy and equipped each round.
     }
 
     // moved into Match1v1Controller class
