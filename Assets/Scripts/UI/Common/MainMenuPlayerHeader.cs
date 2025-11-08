@@ -31,6 +31,11 @@ namespace Game.UI.Common
         [SerializeField] bool useResourcesFallback = false;   // loads Resources/<Folder>/<iconId>.png
         [SerializeField] string resourcesFolder = "ProfileIcons";
 
+        [SerializeField, Min(0.05f)] private float iconFadeDuration = 0.25f;
+
+        private CanvasGroup _iconGroup;
+        private Coroutine _iconFadeCo;
+
         [System.Serializable]
         public struct IconEntry
         {
@@ -45,6 +50,9 @@ namespace Game.UI.Common
 
         public async Task RefreshAsync()
         {
+            // Signal network activity immediately
+            SetConnectingVisuals(true); // sets "Connecting…" and hides icon (alpha 0)
+
             // 1) Name
             var name = await GetPlayerNameAsync(nameTimeoutMs);
             if (usernameText) usernameText.text = string.IsNullOrWhiteSpace(name) ? "Player" : name;
@@ -53,7 +61,11 @@ namespace Game.UI.Common
             string iconId = await Game.Services.CloudSaveProfile.LoadProfileIconAsync(); // returns saved id or null
             if (logDebug) Debug.Log($"[MainMenuPlayerHeader] iconId='{iconId}'  map={iconMap.Count}");
             ApplyIcon(iconId);
+
+            // Fade avatar in once everything resolved
+            SetConnectingVisuals(false);
         }
+// Brief dev comment: Swap placeholder to "Connecting…" during resolve, defer icon visibility until resolve completes.
 
         async Task<string> GetPlayerNameAsync(int timeoutMs)
         {
@@ -118,7 +130,13 @@ namespace Game.UI.Common
                 if (s) { profileRawImage.texture = s.texture; profileRawImage.enabled = true; }
                 if (disableIconRaycast) profileRawImage.raycastTarget = false;
             }
+
+            // Do not force-visible here; RefreshAsync() controls the reveal timing.
+            EnsureIconGroup();
+            if (_iconGroup && s == null)
+                _iconGroup.alpha = 0f; // keep hidden if there's no sprite
         }
+// Brief dev comment: ApplyIcon no longer reveals; visibility is coordinated by RefreshAsync() for a clean fade-in.
 
         // Optional UI hook
         public void Refresh() => _ = RefreshAsync();
@@ -133,6 +151,57 @@ namespace Game.UI.Common
                 e => tcs.TrySetResult((null, e))
             );
             return tcs.Task;
+        }
+
+        void SetConnectingVisuals(bool connecting)
+        {
+            if (connecting)
+            {
+                // Show "Connecting…" in name text, hide icon
+                if (usernameText) usernameText.text = "Connecting…";
+                EnsureIconGroup();
+                if (_iconGroup) _iconGroup.alpha = 0f;
+            }
+            else
+            {
+                // Name is already set by RefreshAsync; fade icon in
+                FadeIconIn();
+            }
+        }
+
+        void EnsureIconGroup()
+        {
+            if (_iconGroup) return;
+            // Find or add CanvasGroup to the icon's parent (assumes profileImage or profileRawImage is the icon)
+            var iconObj = profileImage ? profileImage.gameObject : (profileRawImage ? profileRawImage.gameObject : null);
+            if (iconObj)
+            {
+                _iconGroup = iconObj.GetComponent<CanvasGroup>();
+                if (!_iconGroup) _iconGroup = iconObj.AddComponent<CanvasGroup>();
+            }
+        }
+
+        void FadeIconIn()
+        {
+            EnsureIconGroup();
+            if (!_iconGroup) return;
+            if (_iconFadeCo != null) StopCoroutine(_iconFadeCo);
+            _iconFadeCo = StartCoroutine(FadeIconInCoroutine());
+        }
+
+        System.Collections.IEnumerator FadeIconInCoroutine()
+        {
+            float start = _iconGroup.alpha;
+            float end = 1f;
+            float time = 0f;
+            while (time < iconFadeDuration)
+            {
+                time += Time.deltaTime;
+                _iconGroup.alpha = Mathf.Lerp(start, end, time / iconFadeDuration);
+                yield return null;
+            }
+            _iconGroup.alpha = end;
+            _iconFadeCo = null;
         }
     }
 }
