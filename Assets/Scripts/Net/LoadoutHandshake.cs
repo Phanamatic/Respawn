@@ -14,6 +14,7 @@ public class LoadoutHandshake : MonoBehaviour
 
     // Cache the last local DTO if Cloud Save finishes before the client is connected.
     private static CloudSaveClient.PlayerConnectionLoadoutDTO? _pendingDto;
+    bool _handlerRegistered;
 
     void Awake()
     {
@@ -22,11 +23,14 @@ public class LoadoutHandshake : MonoBehaviour
 
     void OnEnable()
     {
-        if (NetworkManager.Singleton != null)
+        var nm = NetworkManager.Singleton;
+        if (nm != null)
         {
-            NetworkManager.Singleton.OnServerStarted += OnServerStarted;
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
-            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected; // resend pending
+            nm.OnServerStarted += OnServerStarted;
+            nm.OnClientDisconnectCallback += OnClientDisconnected;
+            nm.OnClientConnectedCallback += OnClientConnected; // resend pending
+            TryRegisterServerHandler();
+            // Brief dev comment: Registers the server handler immediately when the component appears mid-session.
         }
         CloudSaveClient.OnLoadoutReady += OnLocalLoadoutReady; // client-side convenience hook
     }
@@ -40,45 +44,13 @@ public class LoadoutHandshake : MonoBehaviour
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
         }
         CloudSaveClient.OnLoadoutReady -= OnLocalLoadoutReady;
+        TryUnregisterServerHandler();
     }
 
     private void OnServerStarted()
     {
-        if (!NetworkManager.Singleton.IsServer) return;
-
-        NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
-            "client_loadout",
-            (senderClientId, reader) =>
-            {
-                try
-                {
-                    byte version; reader.ReadValueSafe(out version);
-                    byte p, s, m, u;
-                    reader.ReadValueSafe(out p);
-                    reader.ReadValueSafe(out s);
-                    reader.ReadValueSafe(out m);
-                    reader.ReadValueSafe(out u);
-
-                    var pl = new PreJoinLoadout
-                    {
-                        primary = p,
-                        secondary = s,
-                        melee = m,
-                        util = u
-                    };
-
-                    _preJoin[senderClientId] = pl;
-#if UNITY_EDITOR
-                    Debug.Log($"[DirectNet] Pre-join loadout received for {senderClientId}: P{p}/S{s}/M{m}/U{u}");
-#endif
-                }
-                catch
-                {
-#if UNITY_EDITOR
-                    Debug.LogWarning($"[DirectNet] Failed to parse client_loadout from {senderClientId}");
-#endif
-                }
-            });
+        TryRegisterServerHandler();
+        // Brief dev comment: Centralises the handler wiring so registration and cleanup share one guarded path.
     }
 
     private void OnClientDisconnected(ulong clientId)
@@ -137,6 +109,62 @@ public class LoadoutHandshake : MonoBehaviour
     public static void Consume(ulong clientId)
     {
         _preJoin.Remove(clientId);
+    }
+
+    void TryRegisterServerHandler()
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null) return;
+        if (!nm.IsServer) return;
+
+        var cmm = nm.CustomMessagingManager;
+        if (cmm == null) return;
+        if (_handlerRegistered) return;
+
+        cmm.RegisterNamedMessageHandler("client_loadout", HandleClientLoadoutMessage);
+        _handlerRegistered = true;
+    }
+
+    void TryUnregisterServerHandler()
+    {
+        if (!_handlerRegistered) return;
+
+        var nm = NetworkManager.Singleton;
+        var cmm = nm != null ? nm.CustomMessagingManager : null;
+        cmm?.UnregisterNamedMessageHandler("client_loadout");
+        _handlerRegistered = false;
+    }
+
+    void HandleClientLoadoutMessage(ulong senderClientId, FastBufferReader reader)
+    {
+        try
+        {
+            byte version; reader.ReadValueSafe(out version);
+            byte p, s, m, u;
+            reader.ReadValueSafe(out p);
+            reader.ReadValueSafe(out s);
+            reader.ReadValueSafe(out m);
+            reader.ReadValueSafe(out u);
+
+            var pl = new PreJoinLoadout
+            {
+                primary = p,
+                secondary = s,
+                melee = m,
+                util = u
+            };
+
+            _preJoin[senderClientId] = pl;
+#if UNITY_EDITOR
+            Debug.Log($"[DirectNet] Pre-join loadout received for {senderClientId}: P{p}/S{s}/M{m}/U{u}");
+#endif
+        }
+        catch
+        {
+#if UNITY_EDITOR
+            Debug.LogWarning($"[DirectNet] Failed to parse client_loadout from {senderClientId}");
+#endif
+        }
     }
 }
 // Server caches a tiny, authoritative loadout per client before their Player object spawns.

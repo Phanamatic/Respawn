@@ -230,9 +230,10 @@ namespace Game.Net
             }
         }
 
-        InputActionMap _map;
-        InputAction _aMove, _aMouse, _aSprint, _aDash;
-        InputAction _aScoreboard;
+    InputActionMap _map;
+    InputAction _aMove, _aMouse, _aSprint, _aDash;
+    InputAction _aFire, _aReload;
+    InputAction _aScoreboard;
         public bool IsSprinting { get; private set; }
         public bool IsDashing { get; private set; }
         public event System.Action<bool> SprintChanged;
@@ -267,6 +268,7 @@ namespace Game.Net
 
         public override void OnNetworkSpawn()
         {
+            enabled = true;
             if (!_rb)
             {
                 _rb = GetComponent<Rigidbody>();
@@ -524,6 +526,22 @@ namespace Game.Net
         {
             base.OnNetworkDespawn();
             _netLoadout.OnValueChanged -= OnNetLoadoutChanged;
+            _netYaw.OnValueChanged -= OnYawChanged;
+            if (useLegacyStateReplication)
+            {
+                _netPosition.OnValueChanged -= OnPositionChanged;
+                _netVelocity.OnValueChanged -= OnVelocityChanged;
+                _netIsDashing.OnValueChanged -= OnDashingChanged;
+            }
+
+            CleanupInputActions();
+            enabled = false;
+        }
+
+        public override void OnDestroy()
+        {
+            base.OnDestroy();
+            CleanupInputActions();
         }
 
         void OnCombatStatsChanged(CombatStats previous, CombatStats current)
@@ -869,6 +887,8 @@ namespace Game.Net
 
         void SetupInputAndCamera()
         {
+            CleanupInputActions();
+
             _map = new InputActionMap("Player");
 
             _aMove = _map.AddAction(name: "Move", type: InputActionType.Value, expectedControlLayout: "Vector2");
@@ -879,17 +899,17 @@ namespace Game.Net
                   .With("Right", "<Keyboard>/d");
 
             _aMouse = _map.AddAction(name: "MousePos", type: InputActionType.Value, binding: "<Pointer>/position");
-            var aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
-            var aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
+            _aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
+            _aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
 
-            aFire.performed += _ => OnFireInput(true);
-            aFire.canceled += _ => OnFireInput(false);
-            aReload.performed += _ => OnReloadInput();
+            _aFire.performed += OnFirePerformed;
+            _aFire.canceled += OnFireCanceled;
+            _aReload.performed += OnReloadPerformed;
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
             _aDash = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
 
-            _aSprint.performed += _ => SetSprint(true);
-            _aSprint.canceled += _ => SetSprint(false);
+            _aSprint.performed += OnSprintPerformed;
+            _aSprint.canceled += OnSprintCanceled;
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
@@ -901,17 +921,77 @@ namespace Game.Net
 
             _aDash.performed += OnDashPerformed;
             // forward dash state to weapon controller via OnDashingChanged callback already patched.
-            _aSlot1.performed += _ => RequestSwitchSlot(0);
-            _aSlot2.performed += _ => RequestSwitchSlot(1);
-            _aSlot3.performed += _ => RequestSwitchSlot(2);
-            _aSlot4.performed += _ => RequestSwitchSlot(3);
-            _aThrow.performed += _ => RequestThrowUtility();
+            _aSlot1.performed += OnSlot1Performed;
+            _aSlot2.performed += OnSlot2Performed;
+            _aSlot3.performed += OnSlot3Performed;
+            _aSlot4.performed += OnSlot4Performed;
+            _aThrow.performed += OnThrowPerformed;
             _aScoreboard.performed += OnScoreboardPerformed;
             _aScoreboard.canceled += OnScoreboardCanceled;
 
             _map.Enable();
             TryBindCamera();
             TryBindScoreboard();
+        }
+
+        void OnFirePerformed(InputAction.CallbackContext ctx) => OnFireInput(true);
+        void OnFireCanceled(InputAction.CallbackContext ctx) => OnFireInput(false);
+        void OnReloadPerformed(InputAction.CallbackContext ctx) => OnReloadInput();
+        void OnSprintPerformed(InputAction.CallbackContext ctx) => SetSprint(true);
+        void OnSprintCanceled(InputAction.CallbackContext ctx) => SetSprint(false);
+        void OnSlot1Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(0);
+        void OnSlot2Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(1);
+        void OnSlot3Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(2);
+        void OnSlot4Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(3);
+        void OnThrowPerformed(InputAction.CallbackContext ctx) => RequestThrowUtility();
+
+        void CleanupInputActions()
+        {
+            if (_aFire != null)
+            {
+                _aFire.performed -= OnFirePerformed;
+                _aFire.canceled -= OnFireCanceled;
+            }
+
+            if (_aReload != null)
+                _aReload.performed -= OnReloadPerformed;
+
+            if (_aSprint != null)
+            {
+                _aSprint.performed -= OnSprintPerformed;
+                _aSprint.canceled -= OnSprintCanceled;
+            }
+
+            if (_aDash != null)
+                _aDash.performed -= OnDashPerformed;
+
+            if (_aSlot1 != null) _aSlot1.performed -= OnSlot1Performed;
+            if (_aSlot2 != null) _aSlot2.performed -= OnSlot2Performed;
+            if (_aSlot3 != null) _aSlot3.performed -= OnSlot3Performed;
+            if (_aSlot4 != null) _aSlot4.performed -= OnSlot4Performed;
+            if (_aThrow != null) _aThrow.performed -= OnThrowPerformed;
+
+            if (_aScoreboard != null)
+            {
+                _aScoreboard.performed -= OnScoreboardPerformed;
+                _aScoreboard.canceled -= OnScoreboardCanceled;
+            }
+
+            _map?.Disable();
+            _map?.Dispose();
+
+            if (IsOwner)
+                ShowScoreboard(false);
+
+            _aMove = null;
+            _aMouse = null;
+            _aSprint = null;
+            _aDash = null;
+            _aFire = null;
+            _aReload = null;
+            _aScoreboard = null;
+            _aSlot1 = _aSlot2 = _aSlot3 = _aSlot4 = _aThrow = null;
+            _map = null;
         }
 
         void OnDashPerformed(InputAction.CallbackContext ctx)
@@ -1222,6 +1302,19 @@ namespace Game.Net
             if (_inputPaused) { UpdateUI(); return; }
         }
 
+        bool CanWriteYaw()
+        {
+            if (!networkSyncYaw) return false;
+            if (!IsSpawned) return false;
+            if (!IsOwner) return false;
+
+            var nm = NetworkManager.Singleton;
+            if (nm == null) return false;
+            if (!nm.IsClient || !nm.IsConnectedClient) return false;
+
+            return nm.LocalClientId == OwnerClientId;
+        }
+
         void Update()
         {
             if (!IsOwner) { InterpolateRemotePlayer(); return; }
@@ -1262,7 +1355,7 @@ namespace Game.Net
                             _targetYaw = yaw;
                             _hasValidYaw = true;
 
-                            if (networkSyncYaw && NetworkManager.Singleton && NetworkManager.Singleton.IsConnectedClient)
+                            if (CanWriteYaw())
                             {
                                 float now = Time.unscaledTime;
                                 if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
@@ -1305,7 +1398,7 @@ namespace Game.Net
                             _targetYaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
                             solved = true;
 
-                            if (networkSyncYaw)
+                            if (CanWriteYaw())
                             {
                                 float now = Time.unscaledTime;
                                 if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, _targetYaw)) >= yawSendThresholdDeg)

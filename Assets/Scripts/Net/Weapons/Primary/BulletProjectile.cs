@@ -133,18 +133,45 @@ namespace Game.Net.Weapons
             if (IsSpawned) NetworkObject.Despawn();
         }
 
+        const float kSpeedMultiplier = 10f;
+        const float kMinimumLifetime = 10f;
+
         public void ConfigureServer(float speedValue, float lifetimeSeconds, float damageValue, ulong ownerClientId, TeamId ownerTeam, Game.Net.PlayerNetwork owner)
         {
-            speed = speedValue;
-            _ = lifetimeSeconds; // lifetime fixed to 3 seconds per design
-            lifetime = 3f;
+            speed = speedValue * kSpeedMultiplier;
+            lifetime = Mathf.Max(kMinimumLifetime, lifetimeSeconds);
             damage = damageValue;
             _owner = owner;
             _ownerTeam = ownerTeam;
             _ownerClientId = ownerClientId;
             _alive = 0f;
             _hasImpacted = false;
+            IgnoreOwnerColliders(owner);
             Debug.Log($"[Weapons] Projectile configured ownerCid={_ownerClientId} team={_ownerTeam} speed={speed} dmg={damage} life={lifetime}");
+        }
+
+        void IgnoreOwnerColliders(Game.Net.PlayerNetwork owner)
+        {
+            if (!owner) return;
+
+            var projectileColliders = GetComponentsInChildren<Collider>();
+            if (projectileColliders == null || projectileColliders.Length == 0) return;
+
+            var ownerColliders = owner.GetComponentsInChildren<Collider>(true);
+            if (ownerColliders == null || ownerColliders.Length == 0) return;
+
+            for (int i = 0; i < projectileColliders.Length; i++)
+            {
+                var projCol = projectileColliders[i];
+                if (!projCol) continue;
+
+                for (int j = 0; j < ownerColliders.Length; j++)
+                {
+                    var ownerCol = ownerColliders[j];
+                    if (!ownerCol) continue;
+                    Physics.IgnoreCollision(projCol, ownerCol, true);
+                }
+            }
         }
 
         public override void OnNetworkDespawn()

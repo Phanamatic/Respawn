@@ -41,7 +41,7 @@ namespace Game.Net.Weapons
         bool _hasEquippedPrimary;
 
         const int InfiniteReserve = -1;
-        const float ProjectileLifetimeSeconds = 3f;
+    const float ProjectileLifetimeSeconds = 10f;
 
         void Awake()
         {
