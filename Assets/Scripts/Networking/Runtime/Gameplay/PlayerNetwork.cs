@@ -1726,8 +1726,19 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
             else radius = cap.radius * Mathf.Max(ls.x, ls.z);
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
+[ServerRpc(RequireOwnership = false)]
+public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
+
+// Pre-spawn seed so clients spawn with phase=Match and skip "Lobby" log spam.
+// Safe to call only on server before SpawnAsPlayerObject().
+public void SeedPhasePreSpawnServer(PlayerPhase phase)
+{
+    if (!IsServer) return;
+    initialPhase = phase;   // server OnNetworkSpawn will use this
+    _phase = phase;
+    _netPhase.Value = phase;
+}
+// Brief dev comment: Sets initial phase & NV prior to spawn so the spawn payload carries phase=Match.
 
         void SetPhase(PlayerPhase phase)
         {

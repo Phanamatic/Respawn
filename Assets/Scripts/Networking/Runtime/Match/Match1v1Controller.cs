@@ -559,13 +559,15 @@ ReequipAllPlayersServer();
                 inst.gameObject.AddComponent<GroundClampServer>();
 
             // Prefabs must be pre-registered in NetworkManager; never add at runtime (can corrupt NGO tables).
+            var pn = inst.GetComponent<PlayerNetwork>();
+            if (pn) pn.SeedPhasePreSpawnServer(PlayerPhase.Match);
             inst.SpawnAsPlayerObject(clientId);
+            // Brief dev comment: Pre-seed phase to Match before spawn; clients no longer log "Lobby" on spawn.
 
             // Register with LOS server culling.
             LosVisibilitySystem.Instance?.RegisterTarget(inst, team);
 
             // Initialize team and health post-spawn.
-            var pn = inst.GetComponent<PlayerNetwork>();
             if (pn)
             {
                 pn.SetTeam(team);
@@ -590,6 +592,7 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
                 pn.ClearDeathRecapForOwner();
                 // Brief dev comment: Spawner now explicitly flips phase to Match for each spawned player.
             }
+// Brief dev comment: Reuse pn declared before spawn.
 // Spawner now seeds the player's NetLoadout from the pre-join cache, eliminating desync.
 // Players spawn already holding Primary.
         }
