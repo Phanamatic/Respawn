@@ -280,7 +280,8 @@ namespace Game.Net
             // CRITICAL: Set phase FIRST before any other initialization.
             // For Match servers, SeedPhasePreSpawnServer already set _netPhase.Value to Match before spawn.
             // This ensures all subsequent logic (loadout fetch, FOV/LOS, weapon equip) sees the correct phase.
-            _phase = _netPhase.Value;
+            // IMPORTANT: Use initialPhase, not _netPhase.Value, because NetworkVariables don't replicate until AFTER OnNetworkSpawn.
+            _phase = initialPhase;
             _netPhase.OnValueChanged += OnPhaseNetChanged;
 
             _identitySubmitted = false;
