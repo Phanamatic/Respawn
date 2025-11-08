@@ -309,12 +309,14 @@ namespace Game.Net
             // Build small DTO for connection handshake (fits in NGO named message safely)
             var dto = new PlayerConnectionLoadoutDTO
             {
-                version = 1,
-                primary = (byte)loadout.Primary,
+                version   = 1,
+                primary   = (byte)loadout.Primary,
                 secondary = (byte)loadout.Secondary,
-                melee = 1, // Default to Knife for handshake (adjust if enum differs)
-                utility = (byte)loadout.Utility
+                melee     = 1, // fixed Knife id for handshake; project has no MeleeType enum
+                utility   = (byte)loadout.Utility
             };
+// Use literal 1 for Knife. Server-side sanitizer already coerces 0→1 when needed.
+// Brief dev comment.
 
 // Ensures pre-join payload never carries "None" and includes Knife by default.
 
