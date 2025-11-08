@@ -10,6 +10,25 @@ namespace Game.UI.HUD
     public sealed class HudWeaponUI : MonoBehaviour
     {
         [Header("Primary Weapon")]
+        // === Contextual cues ===
+        [Header("Ammo/Reload Cues")]
+        [Tooltip("Tint ammo text when magazine is at or below these thresholds.")]
+        [SerializeField, Range(0, 64)] int lowAmmoThreshold = 6;
+        [SerializeField, Range(0, 64)] int criticalAmmoThreshold = 2;
+
+        [SerializeField] Color ammoLowColor = new Color(1f, 0.85f, 0.3f, 1f);
+        [SerializeField] Color ammoCriticalColor = new Color(1f, 0.35f, 0.35f, 1f);
+
+        [Tooltip("When reloadProgress >= threshold, pulse the reload fill to telegraph completion.")]
+        [SerializeField, Range(0f, 1f)] float reloadPulseThreshold = 0.85f;
+        [SerializeField, Range(0f, 0.3f)] float pulseScale = 0.08f;
+        [SerializeField, Range(0f, 20f)] float pulseSpeed = 10f;
+
+        // cached defaults so we can cleanly restore when cues stop
+        Color _primaryAmmoBaseColor, _secondaryAmmoBaseColor;
+        Vector3 _primaryReloadBaseScale = Vector3.one, _secondaryReloadBaseScale = Vector3.one;
+// Adds serialized knobs and caches for tint/pulse behavior.
+
         [SerializeField] Image primaryReloadFill;     // type = Filled
         [SerializeField] TMP_Text primaryAmmoText;
         [SerializeField] TMP_Text primaryWeaponName;
@@ -33,6 +52,7 @@ namespace Game.UI.HUD
 
         void Start()
         {
+            CacheDefaults();     // capture base colors/scales before we hide
             HideAll();
             FindControllers();
         }
@@ -52,7 +72,9 @@ namespace Game.UI.HUD
             if (!_primary) return;
 
             bool equipped = _primary.equippedWeaponName.Value.Length > 0;
-            bool hasAmmo = _primary.magazineAmmo.Value > 0 || _primary.reserveAmmo.Value != 0;
+            int magazine = Mathf.Max(0, _primary.magazineAmmo.Value);
+            int reserve = _primary.reserveAmmo.Value;
+            bool hasAmmo = magazine > 0 || reserve != 0;
             
             // Show UI if weapon name is set OR if we have ammo (handles replication delay)
             bool showUI = equipped || hasAmmo;
@@ -67,16 +89,26 @@ namespace Game.UI.HUD
                 primaryAmmoText.enabled = showUI;
                 if (showUI)
                 {
-                    int magazine = Mathf.Max(0, _primary.magazineAmmo.Value);
-                    int reserve = _primary.reserveAmmo.Value;
                     string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
                     primaryAmmoText.text = $"{magazine.ToString("D3")}/{reserveText}";
+                    
+                    // Contextual tint when low/critical
+                    var normal = _primaryAmmoBaseColor;
+                    primaryAmmoText.color = ChooseAmmoColor(magazine, normal, ammoLowColor, ammoCriticalColor);
                 }
             }
+            
             if (primaryReloadFill)
             {
-                primaryReloadFill.fillAmount = _primary.isReloading.Value ? _primary.reloadProgress.Value : 0f;
-                primaryReloadFill.enabled = _primary.isReloading.Value;
+                bool reloading = _primary.isReloading.Value;
+                float progress = reloading ? _primary.reloadProgress.Value : 0f;
+                
+                primaryReloadFill.fillAmount = progress;
+                primaryReloadFill.enabled = reloading;
+                
+                // Pulse the circle near completion to telegraph the end of reload.
+                bool nearDone = reloading && progress >= reloadPulseThreshold;
+                ApplyReloadPulse(primaryReloadFill, _primaryReloadBaseScale, reloading, nearDone);
             }
         }
 
@@ -85,7 +117,9 @@ namespace Game.UI.HUD
             if (!_secondary) return;
 
             bool equipped = _secondary.equippedWeaponName.Value.Length > 0;
-            bool hasAmmo = _secondary.magazineAmmo.Value > 0 || _secondary.reserveAmmo.Value != 0;
+            int magazine = Mathf.Max(0, _secondary.magazineAmmo.Value);
+            int reserve = _secondary.reserveAmmo.Value;
+            bool hasAmmo = magazine > 0 || reserve != 0;
             
             // Show UI if weapon name is set OR if we have ammo (handles replication delay)
             bool showUI = equipped || hasAmmo;
@@ -100,16 +134,26 @@ namespace Game.UI.HUD
                 secondaryAmmoText.enabled = showUI;
                 if (showUI)
                 {
-                    int magazine = Mathf.Max(0, _secondary.magazineAmmo.Value);
-                    int reserve = _secondary.reserveAmmo.Value;
                     string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
                     secondaryAmmoText.text = $"{magazine.ToString("D3")}/{reserveText}";
+                    
+                    // Contextual tint when low/critical
+                    var normal = _secondaryAmmoBaseColor;
+                    secondaryAmmoText.color = ChooseAmmoColor(magazine, normal, ammoLowColor, ammoCriticalColor);
                 }
             }
+            
             if (secondaryReloadFill)
             {
-                secondaryReloadFill.fillAmount = _secondary.isReloading.Value ? _secondary.reloadProgress.Value : 0f;
-                secondaryReloadFill.enabled = _secondary.isReloading.Value;
+                bool reloading = _secondary.isReloading.Value;
+                float progress = reloading ? _secondary.reloadProgress.Value : 0f;
+                
+                secondaryReloadFill.fillAmount = progress;
+                secondaryReloadFill.enabled = reloading;
+                
+                // Pulse the circle near completion to telegraph the end of reload.
+                bool nearDone = reloading && progress >= reloadPulseThreshold;
+                ApplyReloadPulse(secondaryReloadFill, _secondaryReloadBaseScale, reloading, nearDone);
             }
         }
 
@@ -158,6 +202,40 @@ namespace Game.UI.HUD
             if (utilityWeaponName) { utilityWeaponName.enabled = false; utilityWeaponName.text = ""; }
         }
 // Hides equip texts unless equipped; reload image only when reloading.
+
+        // ===== Helpers: defaults, tint logic, pulse animation =====
+        void CacheDefaults()
+        {
+            if (primaryAmmoText) _primaryAmmoBaseColor = primaryAmmoText.color;
+            if (secondaryAmmoText) _secondaryAmmoBaseColor = secondaryAmmoText.color;
+
+            if (primaryReloadFill) _primaryReloadBaseScale = primaryReloadFill.rectTransform.localScale;
+            if (secondaryReloadFill) _secondaryReloadBaseScale = secondaryReloadFill.rectTransform.localScale;
+        }
+
+        Color ChooseAmmoColor(int magazine, Color normal, Color low, Color critical)
+        {
+            if (magazine <= Mathf.Max(0, criticalAmmoThreshold)) return critical;
+            if (magazine <= Mathf.Max(criticalAmmoThreshold + 1, lowAmmoThreshold)) return low;
+            return normal;
+        }
+
+        void ApplyReloadPulse(Image img, Vector3 baseScale, bool enabled, bool shouldPulse)
+        {
+            if (!img) return;
+
+            // When the image is disabled or no pulse requested, ensure we restore the base scale.
+            if (!enabled || !shouldPulse)
+            {
+                if (img.rectTransform.localScale != baseScale)
+                    img.rectTransform.localScale = baseScale;
+                return;
+            }
+
+            // Unscaled time so pause/slow-mo doesn't kill the cue.
+            float s = 1f + pulseScale * Mathf.Abs(Mathf.Sin(Time.unscaledTime * pulseSpeed));
+            img.rectTransform.localScale = baseScale * s;
+        }
 
         void FindControllers()
         {

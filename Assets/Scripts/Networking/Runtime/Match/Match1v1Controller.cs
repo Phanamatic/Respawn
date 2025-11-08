@@ -513,10 +513,13 @@ namespace Game.Net
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
 
+// Top-up + sanitize every player before we re-equip primaries.
+TopUpAndSanitizeAllPlayersServer();
+
 // Re-equip remains useful for round transitions, but with pre-join seeding
 // it will simply reapply the already-correct loadout.
 ReequipAllPlayersServer();
-// Safe even if spawner already equipped; ensures consistency on new rounds.
+// Keeps countdown→start transition deterministic for weapons and HP【turn42file4†Match1v1Controller.cs†L7-L13】.
 
             StartCoroutine(CoMonitorRound());
         }
@@ -575,8 +578,11 @@ ReequipAllPlayersServer();
                     LoadoutHandshake.Consume(clientId);
                 }
 
-                // If you still want to auto-equip at spawn, it is now safe because _netLoadout is already populated.
-                pn.ServerAutoEquipPrimary();
+// Final belt-and-braces: sanitize + ensure full HP + equip primary.
+pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
+// Guarantees a healthy, equipped spawn even if pre-join payload is missing or partial【turn42file11†Match1v1Controller.cs†L14-L36】.
+
+// Uses the new hardened entry point when spawning each player.
 
                 // Make absolutely sure the player is in Match phase on spawn so owner-side Cloud Save can trigger.
                 pn.SetPhaseServerRpc(PlayerPhase.Match);
@@ -1251,8 +1257,8 @@ void DetachCameraFromShip()
         }
 
 /// <summary>
-/// Re-equip Primaries for all players at round start, after Cloud Save loadouts have replicated.
-/// Safe to call each round; idempotent on the server-side equip code.
+/// Round start hardening: ensure valid loadouts, equip, and reset health.
+/// Idempotent on server (safe to call multiple times).
 /// </summary>
 void ReequipAllPlayersServer()
 {
@@ -1261,10 +1267,28 @@ void ReequipAllPlayersServer()
     {
         if (cc.ClientId == NetworkManager.ServerClientId) continue;
         var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
-        if (pn) pn.ServerAutoEquipPrimary();
+        if (!pn) continue;
+
+        // Force healthy & ready.
+        pn.SetHealth(100f);
+        pn.ServerEnsureLoadoutValidAndEquip();
     }
 }
-    }
 
-    // moved into Match1v1Controller class
+// Now guarantees both players start healthy and equipped each round.
+void TopUpAndSanitizeAllPlayersServer()
+{
+    if (!IsServer) return;
+    foreach (var cc in NetworkManager.ConnectedClientsList)
+    {
+        if (cc.ClientId == NetworkManager.ServerClientId) continue;
+        var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+        if (!pn) continue;
+        // Guarantee: full health + non-None loadout before round starts.
+        pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
+    }
+}
+
+// Now guarantees both players start healthy and equipped each round.
+}
 }

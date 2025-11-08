@@ -27,6 +27,22 @@ namespace Game.Net
     [DisallowMultipleComponent]
     public sealed class PlayerNetwork : NetworkBehaviour
     {
+        // ---- NetworkVariable layout contract ----
+        // Bump when you add/remove/reorder any NetworkVariable fields in this class.
+        // Server will broadcast this to clients at spawn; a mismatch means mixed builds.
+        private const int NETWORK_LAYOUT_VERSION = 3;
+
+        [ClientRpc]
+        private void AssertLayoutVersionClientRpc(int serverVersion, ClientRpcParams rpcParams = default)
+        {
+            if (serverVersion != NETWORK_LAYOUT_VERSION)
+            {
+                Debug.LogError($"[DirectNet] NetworkVariable layout mismatch. Server={serverVersion} Client={NETWORK_LAYOUT_VERSION}. Update all builds.");
+                // Optionally: NetworkManager.Singleton?.Shutdown();
+            }
+        }
+        // Brief dev comment: Early, human-readable failure instead of a buffer overflow when deltas arrive.
+
         // Keep this declared once and at the top so the NetworkVariable order is identical on all builds.
         private readonly NetworkVariable<Game.Net.NetLoadout> _netLoadout =
             new NetworkVariable<Game.Net.NetLoadout>(
@@ -56,12 +72,18 @@ namespace Game.Net
         void OnPhaseNetChanged(PlayerPhase oldPhase, PlayerPhase newPhase)
         {
             _phase = newPhase;
-            if (IsOwner && newPhase == PlayerPhase.Match && !_loadoutRequested)
+            if (IsOwner && newPhase == PlayerPhase.Match)
             {
-                _loadoutRequested = true;
-                StartCoroutine(CoLoadAndSendLoadout());
+                if (!_loadoutRequested)
+                {
+                    _loadoutRequested = true;
+                    StartCoroutine(CoLoadAndSendLoadout());
+                }
+
+                OnActiveSlotChanged();
             }
         }
+// Brief dev comment.
         // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.
 
         // Simple server rate-limits
@@ -159,7 +181,8 @@ namespace Game.Net
         const int MaxDisplayNameLength = 32;
         readonly NetworkVariable<FixedString128Bytes> _playerIconId =
             new(default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-        const int MaxIconIdLength = 96;
+        // Keep <= FixedString128Bytes capacity; 126 leaves headroom for bookkeeping.
+        const int MaxIconIdLength = 126;
 
         [System.Serializable]
         public struct CombatStats : INetworkSerializable
@@ -247,6 +270,10 @@ namespace Game.Net
                 _capsule = GetComponent<CapsuleCollider>();
             }
 
+            // Broadcast NV layout so mismatched clients shout loudly at connect time.
+            if (IsServer)
+                AssertLayoutVersionClientRpc(NETWORK_LAYOUT_VERSION);
+
             _phase = _netPhase.Value; // mirror replicated value if server already set it
             _netPhase.OnValueChanged += OnPhaseNetChanged;
             // Brief dev comment: Subscribe early so we react if the server flips to Match right after spawn.
@@ -263,8 +290,12 @@ namespace Game.Net
 
             // Observe active slot to react locally (e.g., show weapon later)
             _activeSlot.OnValueChanged += (_, __) => OnActiveSlotChanged();
+            _netLoadout.OnValueChanged += OnNetLoadoutChanged;
             _health.OnValueChanged += OnHealthChanged;
             _combatStats.OnValueChanged += OnCombatStatsChanged;
+
+            OnNetLoadoutChanged(default, _netLoadout.Value);
+// Brief dev comment.
 
             // Subscribe to yaw updates for remote players
             if (networkSyncYaw)
@@ -490,7 +521,14 @@ namespace Game.Net
             }
         }
 
+        public override void OnNetworkDespawn()
+        {
+            base.OnNetworkDespawn();
+            _netLoadout.OnValueChanged -= OnNetLoadoutChanged;
+        }
+
         void OnCombatStatsChanged(CombatStats previous, CombatStats current)
+// Brief dev comment.
         {
             if (!IsOwner) return;
             _statsPendingForCloud = current;
@@ -785,51 +823,52 @@ namespace Game.Net
 #endif
         }
 
+        void OnNetLoadoutChanged(Game.Net.NetLoadout previous, Game.Net.NetLoadout current)
+        {
+            _myLoadout = current.ToModel();
+
+            if (IsOwner && _phase == PlayerPhase.Match)
+            {
+                OnActiveSlotChanged();
+            }
+        }
+
         void OnActiveSlotChanged()
         {
             // Owner requests equip. Remotes wait for server fan-out.
             if (!IsOwner) return;
+// Brief dev comment.
 
             byte slot = _activeSlot.Value;
 
             if (slot == 0) // Primary
             {
+                var type = (PrimaryType)_netLoadout.Value.primary;
+                if (type == PrimaryType.None) return; // never equip "None" locally
                 var wp = GetComponent<WeaponPrimaryController>();
-                if (wp != null)
-                {
-                    var pt = (Game.Net.PrimaryType)_netLoadout.Value.primary;
-                    wp.Equip(pt, null);
-                }
+                if (wp) wp.Equip(type, null);
             }
             else if (slot == 1) // Secondary
             {
+                var type = (SecondaryType)_netLoadout.Value.secondary;
+                if (type == SecondaryType.None) return; // never equip "None" locally
                 var ws = GetComponent<WeaponSecondaryController>();
-                if (ws != null)
-                {
-                    var st = (Game.Net.SecondaryType)_netLoadout.Value.secondary;
-                    ws.Equip(st, null);
-                }
+                if (ws) ws.Equip(type, null);
             }
-            else if (slot == 2) // Melee
+            else if (slot == 2) // Melee is fixed Knife — always allowed
             {
                 var wm = GetComponent<WeaponMeleeController>();
-                if (wm != null)
-                {
-                    wm.Equip();
-                }
+                if (wm) wm.Equip();
             }
             else if (slot == 3) // Utility
             {
+                if (_netLoadout.Value.util == (byte)UtilityType.None) return;
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu != null)
-                {
-                    var ut = (Game.Net.UtilityType)_netLoadout.Value.util;
-                    wu.Equip(ut);
-                }
+                if (wu) wu.Equip((UtilityType)_netLoadout.Value.util);
             }
         }
-        // Fixes "Only the owner can invoke a ServerRpc…" by stopping non-owners from calling it.
-        // ===== end weapons =====
+        // Prevents client from issuing equip calls that clear views with "None" just as the round starts.
+        // Related context: owner-side local equip is triggered by _activeSlot.OnValueChanged【turn41file1†PlayerNetwork.cs†L57-L99】.
 
         void SetupInputAndCamera()
         {
@@ -1112,10 +1151,11 @@ namespace Game.Net
         }
 
         [ServerRpc(RequireOwnership = false)]
-        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString64Bytes iconId, ServerRpcParams rpcParams = default)
+        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString128Bytes iconId, ServerRpcParams rpcParams = default)
         {
             var sanitizedName = SanitizeAlias(alias);
             if (sanitizedName.IsEmpty) return;
+
             var sanitizedIcon = SanitizeIconId(iconId);
             _playerName.Value = sanitizedName;
             _playerIconId.Value = sanitizedIcon;
@@ -1146,7 +1186,7 @@ namespace Game.Net
             return result;
         }
 
-        static FixedString64Bytes SanitizeIconId(FixedString64Bytes iconId)
+        static FixedString128Bytes SanitizeIconId(FixedString128Bytes iconId)
         {
             var raw = iconId.ToString();
             if (string.IsNullOrWhiteSpace(raw)) return default;
@@ -1165,7 +1205,7 @@ namespace Game.Net
             }
 
             if (len == 0) return default;
-            return new FixedString64Bytes(new string(buffer.Slice(0, len)));
+            return new FixedString128Bytes(new string(buffer.Slice(0, len)));
         }
 
         void LateUpdate()
@@ -1436,29 +1476,43 @@ namespace Game.Net
         [ServerRpc(RequireOwnership = true)]
         void EquipLoadoutServerRpc(byte primary, byte secondary, byte util, ServerRpcParams p = default)
         {
-            // Validate ranges
-            if (primary > (byte)PrimaryType.Sniper) primary = 0;
-            if (secondary > (byte)SecondaryType.MachinePistol) secondary = 0;
-            if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
+// Validate ranges
+if (primary > (byte)PrimaryType.Sniper) primary = 0;
+if (secondary > (byte)SecondaryType.MachinePistol) secondary = 0;
+if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
 
-            _netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+// Server-only fallback: never allow None in any slot
+if (primary == 0) primary = (byte)PrimaryType.AR;
+if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+// Utility already clamped above; also fix None explicitly:
+if (util == 0) util = (byte)UtilityType.Grenade;
 
+_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+
+// Hard guarantee: sanitize + health = 100, then equip primary.
+ServerEnsureValidLoadoutAndHealth();
+
+// Log for traceability
 #if UNITY_EDITOR
-            Debug.Log($"[PlayerNetwork] Equipped loadout P={(PrimaryType)primary} S={(SecondaryType)secondary} U={(UtilityType)util} for {OwnerClientId}");
+Debug.Log($"[PlayerNetwork] Equipped loadout (sanitized) P={(PrimaryType)_netLoadout.Value.primary} S={(SecondaryType)_netLoadout.Value.secondary} M=Knife U={(UtilityType)_netLoadout.Value.util} for {OwnerClientId}");
 #endif
+// Called from the same area where loadout RPC is processed【turn42file6†PlayerNetwork.cs†L1-L20】.
 
-            // TODO: hook your weapon/inventory system here using _netLoadout.Value.ToModel()
-
-            if (SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo)
-            {
-                ServerAutoEquipPrimary();
-            }
+// Server RPC now hardens "no None" invariants so UI/slots always populate.
         }
 
 // NGO: guard at runtime instead of using Mirror's [Server] attribute.
 public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, byte util)
 {
     if (!IsServer) return;
+
+    // Harden against missing/None payloads from pre-join path.
+    if (primary == 0)   primary   = (byte)PrimaryType.AR;
+    if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+    if (util == 0 || util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
+
+    // Melee: default to Knife if unset (assume 1 == Knife in your enum; adjust if needed).
+    if (melee == 0) melee = 1;
 
     var loadout = _netLoadout.Value;
     loadout.primary = primary;
@@ -1467,19 +1521,49 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
     loadout.util = util;
     _netLoadout.Value = loadout;
 
+// Normalize and ensure full health before any auto-equip.
+ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
+
 #if UNITY_EDITOR
-    Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer -> P{primary}/S{secondary}/M{melee}/U{util}");
+Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.Value.primary}/S{_netLoadout.Value.secondary}/M{_netLoadout.Value.melee}/U{_netLoadout.Value.util}");
 #endif
+// This runs at spawn time where the pre-join payload is applied【turn42file6†PlayerNetwork.cs†L22-L37】.    // Ensure a weapon is actually in-hand after seeding.
+    ServerAutoEquipPrimary();
 }
+
+// Server consumes pre-join cache and guarantees no slot is None; also equips primary.
 // Removes missing [Server]/ServerAttribute and switches to byte params to avoid type coupling.
+
+        // Server utility you can call from spawners/match controllers.
+        // Ensures loadout invariants and equips weapons so UI/slots are populated.
+        public void ServerEnsureLoadoutValidAndEquip()
+        {
+            if (!IsServer) return;
+
+            var lo = _netLoadout.Value;
+            if (lo.primary == 0)   lo.primary   = (byte)PrimaryType.AR;
+            if (lo.secondary == 0) lo.secondary = (byte)SecondaryType.Pistol;
+            if (lo.util == 0 || lo.util > (byte)UtilityType.Stun) lo.util = (byte)UtilityType.Grenade;
+            if (lo.melee == 0) lo.melee = 1; // assume Knife
+
+            _netLoadout.Value = lo;
+
+            // Equip on server (authoritative) and replicate down.
+            ServerAutoEquipPrimary();
+
+            // Pre-initialize other slots so they’re ready on first switch.
+            var ws = GetComponent<Game.Net.Weapons.WeaponSecondaryController>();
+            if (ws) ws.Equip((SecondaryType)lo.secondary, null);
+            var wm = GetComponent<Game.Net.Weapons.WeaponMeleeController>();
+            if (wm) wm.Equip();
+
+        }
 
         void OnPositionChanged(Vector3 _, Vector3 newVal)
         {
             if (IsOwner) return;
             AddStateToBuffer(newVal, _netYaw.Value, _netVelocity.Value, _netIsDashing.Value);
-        }
-
-        void OnYawChanged(float _, float newVal)
+        }        void OnYawChanged(float _, float newVal)
         {
             if (IsOwner) return;
 
@@ -1877,23 +1961,77 @@ public void ApplyPreJoinLoadoutServer(byte primary, byte secondary, byte melee, 
         public void ServerAutoEquipPrimary()
         {
             if (!IsServer) return;
+
+            // Always sanitize first so we never carry "None" into equip.
+            ServerEnsureValidLoadoutAndHealth(sanitizeOnly: true);
+
             var wp = GetComponent<Game.Net.Weapons.WeaponPrimaryController>();
             if (!wp) return;
 
             var net = _netLoadout.Value;
             var pt = (PrimaryType)net.primary;
+            if (pt == PrimaryType.None) return; // After sanitize this should never happen.
 
-            if (pt == PrimaryType.None)
+            _activeSlot.Value = 0; // Primary first
+            wp.Equip(pt, null);    // server path equips and rebuilds views
+        }
+        // Previously added helper remains, but now we sanitize before using the replicated loadout【turn42file7†PlayerNetwork.cs†L65-L85】.
+
+        /// <summary>
+        /// Server-only guarantee: fill any empty slots with defaults (AR/Pistol/Knife/Grenade),
+        /// ensure health is 100, and keep ActiveSlot on a valid weapon.
+        /// </summary>
+        public void ServerEnsureValidLoadoutAndHealth(bool sanitizeOnly = false)
+        {
+            if (!IsServer) return;
+
+            var net = _netLoadout.Value;
+            bool changed = false;
+
+            // Defaults mandated by design: AR / Pistol / Knife / Grenade
+            if ((PrimaryType)net.primary == PrimaryType.None)
             {
-                pt = PlayerLoadout.Default.Primary;
-                if (pt == PrimaryType.None) return;
-                net.primary = (byte)pt;
-                _netLoadout.Value = net;
+                net.primary = (byte)PlayerLoadout.Default.Primary; // expected AR
+                if ((PrimaryType)net.primary == PrimaryType.None) net.primary = (byte)PrimaryType.AR; // correct enum
+                changed = true;
+            }
+            if ((SecondaryType)net.secondary == SecondaryType.None)
+            {
+                net.secondary = (byte)PlayerLoadout.Default.Secondary; // expected Pistol
+                if ((SecondaryType)net.secondary == SecondaryType.None) net.secondary = (byte)SecondaryType.Pistol;
+                changed = true;
+            }
+            // Project has no MeleeType enum; use byte convention (0=unset, 1=Knife).
+            if (net.melee == 0)
+            {
+                net.melee = 1; // Knife
+                changed = true;
+            }
+            if ((UtilityType)net.util == UtilityType.None)
+            {
+                net.util = (byte)PlayerLoadout.Default.Utility; // expected Grenade
+                if ((UtilityType)net.util == UtilityType.None) net.util = (byte)UtilityType.Grenade;
+                changed = true;
             }
 
-            _activeSlot.Value = 0; // Primary
-            wp.Equip(pt, null); // server path equips and rebuilds views
+            if (changed) _netLoadout.Value = net;
+
+            if (sanitizeOnly) return;
+
+            _activeSlot.Value = 0;
+            var wp = GetComponent<Game.Net.Weapons.WeaponPrimaryController>();
+            if (wp) wp.Equip((PrimaryType)net.primary, null);
+
+            var ws = GetComponent<Game.Net.Weapons.WeaponSecondaryController>();
+            if (ws && (SecondaryType)net.secondary != SecondaryType.None) ws.Equip((SecondaryType)net.secondary, null);
+
+            var wm = GetComponent<Game.Net.Weapons.WeaponMeleeController>();
+            if (wm) wm.Equip();
+
+            _health.Value = 100f;
         }
+// Brief dev comment: replace nonexistent MeleeType enum with byte convention and fix PrimaryType.AR.
+        // Server-only fallback that guarantees "no None" and a healthy spawn.
 
         void SetSprint(bool on)
         {

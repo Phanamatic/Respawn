@@ -26,7 +26,7 @@ public sealed class FovMesh : MonoBehaviour
     [Range(0.02f, 1f)] public float visualEdgeSoftness = 0.35f;
     [Range(0f, 0.2f)] public float visualHeightOffset = 0.03f;
     [Tooltip("Additional height above ground to prevent Z-fighting")]
-    public float groundHeightOffset = 0.05f;
+    public float groundHeightOffset = 0.98f;
 
     const float EyeHeight = 1.2f;
     const float RebuildHz = 12f;

@@ -290,24 +290,35 @@ namespace Game.Net
         // Explicit non-generic IEnumerator to avoid CS0305 if a generic IEnumerator<T> is in scope.
         {
             // existing: fetch from UGS Cloud Save into your local loadout vars
-            // Use a safe enum default; the concrete 'AssaultRifle' name doesn't exist in your PrimaryType.
-            var fallback = new PlayerLoadout { Primary = default(PrimaryType), Secondary = SecondaryType.Pistol, Utility = UtilityType.Grenade };
-            // Fix CS0117 by avoiding a non-existent enum member.
+            var fallback = new PlayerLoadout { Primary = PrimaryType.AR, Secondary = SecondaryType.Pistol, Utility = UtilityType.Grenade };
+
             // Avoid blocking the main thread; wait the Task in a coroutine-friendly way.
             var loadTask = LoadLoadoutAsync(fallback);
             while (!loadTask.IsCompleted) yield return null;
             var loadout = loadTask.Result;
+
+            // Harden against "None" saved values.
+            // (Cloud Save may contain explicit "None" from old clients; fix here client-side too.)
+            if (loadout.Primary == PrimaryType.None) loadout.Primary = PrimaryType.AR;
+            if (loadout.Secondary == SecondaryType.None) loadout.Secondary = SecondaryType.Pistol;
+            if (loadout.Utility == UtilityType.None) loadout.Utility = UtilityType.Grenade;
+
+            // Primary now defaults to AR and we sanitize any "None" returned from storage.
             // Non-blocking pattern; prevents deadlocks while keeping the coroutine flow.
 
             // Build small DTO for connection handshake (fits in NGO named message safely)
             var dto = new PlayerConnectionLoadoutDTO
             {
-                version = 1,
-                primary = (byte)loadout.Primary,
+                version   = 1,
+                primary   = (byte)loadout.Primary,
                 secondary = (byte)loadout.Secondary,
-                melee = 0, // Assuming default or add if available
-                utility = (byte)loadout.Utility
+                melee     = 1, // fixed Knife id for handshake; project has no MeleeType enum
+                utility   = (byte)loadout.Utility
             };
+// Use literal 1 for Knife. Server-side sanitizer already coerces 0→1 when needed.
+// Brief dev comment.
+
+// Ensures pre-join payload never carries "None" and includes Knife by default.
 
             // 1) Immediately inform the server (pre-spawn) via named message if connected.
             LoadoutHandshake.SendFromClient(dto);
