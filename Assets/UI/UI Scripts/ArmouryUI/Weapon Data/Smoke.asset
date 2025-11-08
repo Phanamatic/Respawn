@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Smoke
   m_EditorClassIdentifier: 
   weaponName: Smoke
-  weaponIcon: {fileID: 21300000, guid: c0d6ff4d683795b48b988503e46dc8e5, type: 3}
+  weaponIcon: {fileID: -1377084730, guid: 9eb1dcd1f4243c544b133e5f1e513a75, type: 3}
   category: 3
   primaryType: 0
   secondaryType: 0

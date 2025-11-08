@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Flash
   m_EditorClassIdentifier: 
   weaponName: Stun
-  weaponIcon: {fileID: 21300000, guid: ea87f0b5594cd3743aec05514893ee80, type: 3}
+  weaponIcon: {fileID: -709360207, guid: 9eb1dcd1f4243c544b133e5f1e513a75, type: 3}
   category: 3
   primaryType: 0
   secondaryType: 0

@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Machine Pistol
   m_EditorClassIdentifier: 
   weaponName: Machine Pistol
-  weaponIcon: {fileID: 21300000, guid: 6637ddd2501d0d74c90f6492bdeecbb8, type: 3}
+  weaponIcon: {fileID: 466599975, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
   category: 1
   primaryType: 0
   secondaryType: 1
