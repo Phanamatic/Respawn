@@ -2192,6 +2192,9 @@ void SetFovAndLosEnabled(bool enabled)
 
     if (enabled)
     {
+        // Ensure camera is bound before setting up LOS
+        if (_cam == null) TryBindCamera();
+
         if (!fov) fov = gameObject.AddComponent<FovMesh>();
         // Same configuration you currently set on spawn:
         fov.radiusMeters = 12f;
@@ -2203,6 +2206,7 @@ void SetFovAndLosEnabled(bool enabled)
         fov.edgeFeather = 0.15f;
         fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
         fov.follow = modelRoot ? modelRoot : transform;
+        fov.enabled = true; // Explicitly enable
 
         if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
         losLight.fovSource = fov;
@@ -2211,8 +2215,27 @@ void SetFovAndLosEnabled(bool enabled)
         losLight.castShadows = true;
         losLight.enabled = true;
 
-        // Ensure overlay exists
-        if (_cam != null) FogOfWarOverlayPlane.InstallFor(_cam);
+        // Install camera LOS components
+        if (_cam != null)
+        {
+            var los = _cam.GetComponent<LineOfSightTransparency>();
+            if (!los)
+            {
+                los = _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                los.target = transform;
+            }
+            else
+            {
+                los.target = transform;
+                los.enabled = true;
+            }
+
+            // Prevent occlusion culling issues with our transparent fades
+            _cam.useOcclusionCulling = false;
+
+            // Ensure the fog overlay plane exists
+            FogOfWarOverlayPlane.InstallFor(_cam);
+        }
     }
     else
     {
