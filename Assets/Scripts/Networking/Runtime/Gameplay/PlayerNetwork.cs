@@ -72,12 +72,18 @@ namespace Game.Net
         void OnPhaseNetChanged(PlayerPhase oldPhase, PlayerPhase newPhase)
         {
             _phase = newPhase;
-            if (IsOwner && newPhase == PlayerPhase.Match && !_loadoutRequested)
+            if (IsOwner && newPhase == PlayerPhase.Match)
             {
-                _loadoutRequested = true;
-                StartCoroutine(CoLoadAndSendLoadout());
+                if (!_loadoutRequested)
+                {
+                    _loadoutRequested = true;
+                    StartCoroutine(CoLoadAndSendLoadout());
+                }
+
+                OnActiveSlotChanged();
             }
         }
+// Brief dev comment.
         // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.
 
         // Simple server rate-limits
@@ -284,8 +290,12 @@ namespace Game.Net
 
             // Observe active slot to react locally (e.g., show weapon later)
             _activeSlot.OnValueChanged += (_, __) => OnActiveSlotChanged();
+            _netLoadout.OnValueChanged += OnNetLoadoutChanged;
             _health.OnValueChanged += OnHealthChanged;
             _combatStats.OnValueChanged += OnCombatStatsChanged;
+
+            OnNetLoadoutChanged(default, _netLoadout.Value);
+// Brief dev comment.
 
             // Subscribe to yaw updates for remote players
             if (networkSyncYaw)
@@ -511,7 +521,14 @@ namespace Game.Net
             }
         }
 
+        public override void OnNetworkDespawn()
+        {
+            base.OnNetworkDespawn();
+            _netLoadout.OnValueChanged -= OnNetLoadoutChanged;
+        }
+
         void OnCombatStatsChanged(CombatStats previous, CombatStats current)
+// Brief dev comment.
         {
             if (!IsOwner) return;
             _statsPendingForCloud = current;
@@ -806,10 +823,21 @@ namespace Game.Net
 #endif
         }
 
+        void OnNetLoadoutChanged(Game.Net.NetLoadout previous, Game.Net.NetLoadout current)
+        {
+            _myLoadout = current.ToModel();
+
+            if (IsOwner && _phase == PlayerPhase.Match)
+            {
+                OnActiveSlotChanged();
+            }
+        }
+
         void OnActiveSlotChanged()
         {
             // Owner requests equip. Remotes wait for server fan-out.
             if (!IsOwner) return;
+// Brief dev comment.
 
             byte slot = _activeSlot.Value;
 
