@@ -72,6 +72,12 @@ namespace Game.Net
         void OnPhaseNetChanged(PlayerPhase oldPhase, PlayerPhase newPhase)
         {
             _phase = newPhase;
+            if (IsOwner)
+            {
+                // Turn FOV/LOS on only in Match, off in Lobby
+                SetFovAndLosEnabled(newPhase == PlayerPhase.Match);
+            }
+
             if (IsOwner && newPhase == PlayerPhase.Match)
             {
                 if (!_loadoutRequested)
@@ -79,14 +85,11 @@ namespace Game.Net
                     _loadoutRequested = true;
                     StartCoroutine(CoLoadAndSendLoadout());
                 }
-
                 OnActiveSlotChanged();
             }
         }
 // Brief dev comment.
-        // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.
-
-        // Simple server rate-limits
+// Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.        // Simple server rate-limits
         float _lastSwitchServerTime, _lastThrowServerTime;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
         const float k_MinThrowInterval = 0.5f;    // guard spam
@@ -356,29 +359,9 @@ namespace Game.Net
                 TryBindScoreboard();
                 CacheLocalIdentitySnapshot();
 
-                // Install client-side LOS FOV visualization for local player.
-                var fov = gameObject.GetComponent<FovMesh>();
-                if (!fov) fov = gameObject.AddComponent<FovMesh>();
-                fov.radiusMeters = 12f;                                  // LOS radius
-                fov.rayCount = 220;                                      // tuned for perf
-                // Detect both LOS layers.
-                fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
-                fov.showFill = true;
-                fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f); // bright inside
-                fov.fillIntensity = 1.15f;
-                fov.edgeFeather = 0.15f;
-                fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
-                // Anchor FOV to visual root if provided so the stencil sits on the model.
-                fov.follow = modelRoot ? modelRoot : transform;
+                // NEW: Only enable FOV/LOS in Match
+                SetFovAndLosEnabled(_phase == PlayerPhase.Match);
 
-                var losLight = GetComponent<PlayerLosLight>();
-                if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
-                losLight.fovSource = fov;
-                losLight.intensity = 1.3f;
-                losLight.rangeScale = 0.9f;
-                losLight.castShadows = true;
-
-                FogOfWarOverlayPlane.InstallFor(Camera.main);
                 BeginSubmitNameRoutine();
 
                 // Force local model fully visible each spawn (guards against any fade components).
@@ -986,16 +969,25 @@ namespace Game.Net
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
                 _isoCam.follow = transform;
-                _isoCam.enabled = true; // ensure camera is active after (re)spawn — avoids staying on spawn-select view
+                _isoCam.enabled = true;
 
-                var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
-                los.target = transform;
+                // Only install LOS transparency + fog-of-war during MATCH
+                if (_phase == PlayerPhase.Match)
+                {
+                    var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                    los.target = transform;
 
-                // Prevent baked/dynamic occlusion from hiding players behind now-transparent occluders.
-                _cam.useOcclusionCulling = false;
+                    // Prevent occlusion culling issues with our transparent fades
+                    _cam.useOcclusionCulling = false;
 
-                FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
-                                                       // Disables camera occlusion culling when LOS transparency is active so faded occluders can't fully hide the player.
+                    // Ensure the fog overlay plane exists now that we have a camera
+                    FogOfWarOverlayPlane.InstallFor(_cam);
+                }
+                else
+                {
+                    // In Lobby, keep the camera clean
+                    RemoveLosFromCamera();
+                }
             }
         }
 
@@ -2032,6 +2024,63 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
         }
 // Brief dev comment: replace nonexistent MeleeType enum with byte convention and fix PrimaryType.AR.
         // Server-only fallback that guarantees "no None" and a healthy spawn.
+
+// --- FOV / LOS enable/disable helpers (Match only) ---
+void SetFovAndLosEnabled(bool enabled)
+{
+    if (!IsOwner) return;
+
+    // FOV mesh on the local player
+    var fov = GetComponent<FovMesh>();
+    var losLight = GetComponent<PlayerLosLight>();
+
+    if (enabled)
+    {
+        if (!fov) fov = gameObject.AddComponent<FovMesh>();
+        // Same configuration you currently set on spawn:
+        fov.radiusMeters = 12f;
+        fov.rayCount = 220;
+        fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
+        fov.showFill = true;
+        fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f);
+        fov.fillIntensity = 1.15f;
+        fov.edgeFeather = 0.15f;
+        fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
+        fov.follow = modelRoot ? modelRoot : transform;
+
+        if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
+        losLight.fovSource = fov;
+        losLight.intensity = 1.3f;
+        losLight.rangeScale = 0.9f;
+        losLight.castShadows = true;
+        losLight.enabled = true;
+
+        // Ensure overlay exists
+        if (_cam != null) FogOfWarOverlayPlane.InstallFor(_cam);
+    }
+    else
+    {
+        if (losLight) losLight.enabled = false;
+        if (fov) fov.enabled = false;
+
+        // Remove fog overlay + line-of-sight transparency from camera
+        RemoveLosFromCamera();
+    }
+}
+
+void RemoveLosFromCamera()
+{
+    if (_cam == null)
+        return;
+
+    // Kill the fog overlay child, if present
+    var overlay = _cam.GetComponentInChildren<FogOfWarOverlayPlane>(true);
+    if (overlay) Destroy(overlay.gameObject);
+
+    // Remove camera LOS transparency in lobby so players never get faded
+    var los = _cam.GetComponent<LineOfSightTransparency>();
+    if (los) Destroy(los);
+}
 
         void SetSprint(bool on)
         {
