@@ -137,6 +137,8 @@ namespace Game.Net
         {
             if (IsServer)
             {
+                EnsureServerLoadoutHandshake();
+
                 NetworkManager.OnClientConnectedCallback += OnClientConnected;
                 NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
                 RecountPlayers();
@@ -573,6 +575,9 @@ ReequipAllPlayersServer();
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
 
+                // Force replicated phase to Match immediately after spawn so clients enable Match systems.
+                pn.SetPhaseServerRpc(PlayerPhase.Match);
+
                 // Seed the authoritative loadout if the client sent it during connection.
                 if (LoadoutHandshake.TryGetPreJoinLoadout(clientId, out var pre))
                 {
@@ -601,6 +606,23 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
 // Spawner now seeds the player's NetLoadout from the pre-join cache, eliminating desync.
 // Players spawn already holding Primary.
         }
+
+    void EnsureServerLoadoutHandshake()
+    {
+        if (!IsServer) return;
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+        var existing = FindFirstObjectByType<LoadoutHandshake>(FindObjectsInactive.Include);
+#else
+        var existing = FindObjectOfType<LoadoutHandshake>();
+#endif
+        if (existing != null) return;
+
+        var go = new GameObject("LoadoutHandshake(Server)");
+        DontDestroyOnLoad(go);
+        go.AddComponent<LoadoutHandshake>();
+        Debug.Log("[Match1v1] Spawned server LoadoutHandshake");
+    }
 
         IEnumerator CoMonitorRound()
         {
