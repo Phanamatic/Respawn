@@ -82,8 +82,9 @@ namespace Game.Net
             {
                 if (!_loadoutRequested)
                 {
+                    // Skip client-side loadout send in Match; server already applied pre-join.
+                    Debug.Log("[PlayerNetwork] Phase changed to Match; pre-join loadout already applied.");
                     _loadoutRequested = true;
-                    StartCoroutine(CoLoadAndSendLoadout());
                 }
                 OnActiveSlotChanged();
             }
@@ -314,14 +315,25 @@ namespace Game.Net
             // Client: send saved loadout to server after spawn
             // Only pull/send the saved loadout once we are actually in a Match.
             // In Lobby we skip this to avoid nulls and unnecessary traffic.
+            // SKIP if server already applied pre-join loadout (prevents overwrite race).
             if (IsOwner && _phase == PlayerPhase.Match && !_loadoutRequested)
             {
+                // The match spawner already applied the pre-join loadout server-side.
+                // Client only needs to send if no pre-join was available (e.g., reconnect).
+                // For now, skip the client-side send entirely in Match spawns since
+                // ApplyPreJoinLoadoutServer handles it authoritatively.
+                Debug.Log("[PlayerNetwork] Owner spawned in Match; pre-join loadout already applied by server.");
+                _loadoutRequested = true; // Mark as handled
+            }
+            else if (IsOwner && _phase == PlayerPhase.Lobby && !_loadoutRequested)
+            {
+                // In Lobby, load from Cloud Save and send to server for caching
                 _loadoutRequested = true;
                 StartCoroutine(CoLoadAndSendLoadout());
             }
             else if (IsOwner)
             {
-                Debug.Log("[PlayerNetwork] Owner spawned in Lobby; deferring loadout fetch until Match.");
+                Debug.Log("[PlayerNetwork] Owner spawned; loadout already requested.");
             }
             // Defers Cloud Save roundtrip until Match phase to avoid Lobby-time NREs.
             // Brief dev comment: Guard prevents duplicate Cloud Save reads if host-side also calls SetPhase().
@@ -1423,9 +1435,8 @@ namespace Game.Net
         // Load CloudSave -> send to server (owner only). Validated server-side.
         System.Collections.IEnumerator CoLoadAndSendLoadout()
         {
-            // Defensive guards: this coroutine is for Match only.
+            // This coroutine now runs in LOBBY phase to load and send the loadout for caching
             if (!IsOwner) yield break;
-            if (_phase != PlayerPhase.Match) yield break;
 
             // Be defensive around lobby-time singletons.
             PlayerLoadout lo = PlayerLoadout.Default;
@@ -1459,18 +1470,21 @@ namespace Game.Net
             if (lo.Utility == UtilityType.None) lo.Utility = UtilityType.Grenade;
 
             _myLoadout = lo;
-            var net = NetLoadout.From(lo);
             
-            // Double-check NetLoadout has valid values (melee is always 1 = Knife)
-            if (net.primary == 0) net.primary = (byte)PrimaryType.AR;
-            if (net.secondary == 0) net.secondary = (byte)SecondaryType.Pistol;
-            if (net.melee == 0) net.melee = 1; // Knife
-            if (net.util == 0) net.util = (byte)UtilityType.Grenade;
+            // Send via LoadoutHandshake (same path as LoadoutUI)
+            var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO
+            {
+                version = 1,
+                primary = (byte)lo.Primary,
+                secondary = (byte)lo.Secondary,
+                melee = 1, // Knife
+                utility = (byte)lo.Utility
+            };
             
-            Debug.Log($"[PlayerNetwork] Sending loadout to server: P={lo.Primary} S={lo.Secondary} M=Knife U={lo.Utility}");
-            EquipLoadoutServerRpc(net.primary, net.secondary, net.melee, net.util);
+            Debug.Log($"[PlayerNetwork] Sending loadout via handshake: P={lo.Primary} S={lo.Secondary} M=Knife U={lo.Utility}");
+            LoadoutHandshake.SendFromClient(dto);
         }
-        // Only runs in Match; Lobby spawns will no-op. Prevents NREs when lobby services aren't present.
+        // Runs in Lobby to load from Cloud Save and send to server for pre-join caching.
 
         void FixedUpdate()
         {
@@ -1877,8 +1891,9 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
                 {
                     if (!_loadoutRequested)
                     {
+                        // Skip client-side loadout send; server already applied pre-join.
+                        Debug.Log("[PlayerNetwork] SetPhase Match; pre-join loadout already applied.");
                         _loadoutRequested = true;
-                        StartCoroutine(CoLoadAndSendLoadout());
                     }
                     OnActiveSlotChanged();
                 }
