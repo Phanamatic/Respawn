@@ -32,6 +32,12 @@ namespace Game.Net
         // Server will broadcast this to clients at spawn; a mismatch means mixed builds.
         private const int NETWORK_LAYOUT_VERSION = 3;
 
+        // Loading-phase flags reported back to server (match controller).
+        [System.Flags]
+        public enum LoadingReady : byte { None = 0, Phase = 1, Los = 2, Loadout = 4 }
+
+        /* Expose a tiny flags enum so both ends speak the same bit language. */
+
         [ClientRpc]
         private void AssertLayoutVersionClientRpc(int serverVersion, ClientRpcParams rpcParams = default)
         {
@@ -62,7 +68,7 @@ namespace Game.Net
         // Replicated phase so clients are told when we've transitioned into Match.
         readonly NetworkVariable<PlayerPhase> _netPhase =
             new NetworkVariable<PlayerPhase>(
-                PlayerPhase.Lobby,
+                PlayerPhase.Match,
                 NetworkVariableReadPermission.Everyone,
                 NetworkVariableWritePermission.Server);
 
@@ -136,7 +142,7 @@ namespace Game.Net
         private float _lastSentYaw;
         private float _nextYawSendTime;
         // Owner drives yaw; others follow _netYaw. Throttled to reduce bandwidth.
-        [SerializeField] PlayerPhase initialPhase = PlayerPhase.Lobby;
+    [SerializeField] PlayerPhase initialPhase = PlayerPhase.Match;
 
         [Header("HUD (scene refs; assign via binder)")]
         [SerializeField] Image sprintFill;
@@ -648,7 +654,7 @@ namespace Game.Net
             if (_scoreboard == panel) _scoreboard = null;
         }
 
-        static ClientRpcParams TargetClientParams(ulong clientId)
+        public static ClientRpcParams TargetClientParams(ulong clientId)
         {
             return new ClientRpcParams
             {
@@ -802,6 +808,91 @@ namespace Game.Net
             if (!IsOwner) return;
             s_onHideDeathRecap?.Invoke();
         }
+        
+        #region Loading Phase RPCs
+
+        /// <summary>Targeted to the owning client when the round’s Loading phase begins.</summary>
+        [ClientRpc]
+        public void BeginLoadingPhaseClientRpc(ClientRpcParams rpcParams = default)
+        {
+            if (!IsOwner) return;
+
+            // Ensure LOS/FOV visuals are active locally in Match.
+            SetFovAndLosEnabled(true);
+
+            // Immediately report LOS ready (client-side visuals enabled).
+            ReportLoadingReadyToServerRpc((byte)LoadingReady.Los);
+
+            // Kick off Cloud Save fetch → handshake → then report Loadout ready.
+            StartCoroutine(CoEnsureLoadoutThenAck());
+        }
+
+        /// <summary>Owner → Server: report completion of a loading step (LOS/Loadout).</summary>
+        [ServerRpc]
+        public void ReportLoadingReadyToServerRpc(byte bits, ServerRpcParams serverRpcParams = default)
+        {
+            if (!IsServer) return;
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var ctrl = FindFirstObjectByType<Game.Net.Match1v1Controller>(FindObjectsInactive.Exclude);
+#else
+            var ctrl = FindObjectOfType<Game.Net.Match1v1Controller>(false);
+#endif
+            ctrl?.OnClientLoadingBits(OwnerClientId, bits);
+        }
+
+        /// <summary>
+        /// Owner-only: Ensure we have a Cloud Save loadout, send it to server via the existing handshake,
+        /// then tell the server our loadout step is ready.
+        /// </summary>
+        System.Collections.IEnumerator CoEnsureLoadoutThenAck()
+        {
+            if (!IsOwner) yield break;
+
+            // Try session cache first
+            PlayerLoadout lo = PlayerLoadout.Default;
+            bool hasCached = false;
+            try { hasCached = SessionContext.TryGetLoadout(out lo); } catch { lo = PlayerLoadout.Default; }
+
+            if (!hasCached)
+            {
+                var csc = CloudSaveClient.Instance;
+                if (csc != null)
+                {
+                    var task = csc.LoadLoadoutAsync(PlayerLoadout.Default);
+                    while (!task.IsCompleted) yield return null;
+                    lo = task.Result;
+                }
+                else
+                {
+                    Debug.LogWarning("[PlayerNetwork] CloudSaveClient.Instance missing; falling back to defaults.");
+                    lo = PlayerLoadout.Default;
+                }
+                try { SessionContext.SetLoadout(lo); } catch { /* ignore */ }
+            }
+
+            // Sanitize before sending to server
+            if (lo.Primary == PrimaryType.None)    lo.Primary   = PrimaryType.AR;
+            if (lo.Secondary == SecondaryType.None)lo.Secondary = SecondaryType.Pistol;
+            if (lo.Utility == UtilityType.None)    lo.Utility   = UtilityType.Grenade;
+
+            // Send to server through existing handshake channel so it applies authoritatively.
+            var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO
+            {
+                version = 1,
+                primary   = (byte)lo.Primary,
+                secondary = (byte)lo.Secondary,
+                melee     = 1, // Knife
+                utility   = (byte)lo.Utility
+            };
+            LoadoutHandshake.SendFromClient(dto);
+
+            // Let server know our Loadout step is complete.
+            ReportLoadingReadyToServerRpc((byte)LoadingReady.Loadout);
+            yield break;
+        }
+
+        #endregion
         // ================================================
         // ===== Weapons: equip, switch, throw (server authoritative) =====
 
@@ -1941,6 +2032,14 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
             }
         }
         // Brief dev comment: Server writes the replicated phase; owner also kicks Cloud Save fetch if phase==Match.
+
+        // Server-side helper used by controller to verify server actually has a loadout applied.
+        public bool ServerHasValidLoadout()
+        {
+            if (!IsServer) return false;
+            var lo = _netLoadout.Value;
+            return lo.primary != 0 && lo.secondary != 0 && lo.melee != 0; // util may be None-less after sanitize
+        }
 
         // ------- Freeze / Visibility -------
 

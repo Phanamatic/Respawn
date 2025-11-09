@@ -16,12 +16,11 @@ namespace Game.Net
     {
         Waiting = 0,
         Countdown = 1,
-        FlyIn = 2,
+        Loading = 2, // repurpose old value 2 (was FlyIn) to keep NV packing stable
         Playing = 4,
         RoundEnd = 5,
         MatchEnd = 6
     }
-// Remove unused SpawnSelect state. Explicit values keep network stability.
 
     [DefaultExecutionOrder(-9000)]
     public sealed class Match1v1Controller : NetworkBehaviour
@@ -34,8 +33,7 @@ namespace Game.Net
         [SerializeField] private CanvasGroup statusCanvas;
         [SerializeField] private TMP_Text statusText;
         [SerializeField] private TMP_Text countdownText;
-        [SerializeField] private CanvasGroup spawnCanvas;
-        [SerializeField] private TMP_Text spawnHintText;
+    
 
         [Header("Score/Timer UI")]
         [SerializeField] private TMP_Text roundTimerText;
@@ -54,23 +52,12 @@ namespace Game.Net
         [SerializeField] private TMP_Text winnerText;
         [SerializeField] private UnityEngine.UI.Button returnToLobbyButton;
 
-        [Header("Cinematic")]
-        [SerializeField] private GameObject shipPrefab;
-        [SerializeField] private Transform shipStart;
-        [SerializeField] private Transform shipEnd;
-        [SerializeField, Min(0.1f)] private float shipDuration = 3f;
-        [SerializeField] private string seatMountName = "SeatMount";
-        [SerializeField] private string cameraMountName = "CameraMount";
-        [SerializeField] private string cameraLookAtName = "CameraLookAt";
-        [SerializeField, Tooltip("Optional lightweight visual used if no PlayerNetwork exists yet.")]
-        private GameObject cinematicStandInPrefab;   // visual-only prefab (no NetworkObject)
+    // Cinematic removed.
 
 // Removed old spawn-select UI and camera fields.
 
-        [Header("Timings")]
-        [SerializeField, Min(1f)] private int countdownSeconds = 3;
-        [SerializeField, Min(3f)] private float cinematicSeconds = 3.5f;
-        [SerializeField, Min(0f)] private float roundDurationSeconds = 90f;
+    [Header("Timings")]
+    [SerializeField, Min(0f)] private float roundDurationSeconds = 90f;
 
         [Header("Pre-Round")]
         [SerializeField, Min(1)] private int preRoundCountdownSeconds = 3;
@@ -92,7 +79,6 @@ namespace Game.Net
         [SerializeField] private TMP_Text _requiredPlayersUI;
         [SerializeField, Min(2)] private int requiredPlayers = 2;
 
-        Coroutine _cineCo;   // track coroutines so we can stop safely
 
 // Removed map pan used only by selection flow.
 
@@ -114,24 +100,22 @@ namespace Game.Net
         private readonly NetworkVariable<int> _winsTeamB = new();
         private readonly NetworkVariable<bool> _suddenDeath = new();
 
-        // Server state
-        private readonly Dictionary<ulong, TeamId> _teams = new();
-        // removed _chosenSpawns
-        // removed _spawnDeadlineServer
-        private bool _firstRound = true;
-        private float _roundStartTimeServer;
+    // Server state
+    private readonly Dictionary<ulong, TeamId> _teams = new();
+    // removed _chosenSpawns
+    // removed _spawnDeadlineServer
+    private float _roundStartTimeServer;
+
+        // --- Loading phase readiness (server) ---
+        [System.Flags]
+        private enum LoadingReady : byte { None = 0, Phase = 1, Los = 2, Loadout = 4 }
+        private readonly Dictionary<ulong, LoadingReady> _loadingReady = new();
 
         // Client state
         // removed _selecting, _myAreaBounds, _myAreaBlocked, _myTeam, _spawnDeadlineLocal, _selectCo, _spawnCursor
-    private Coroutine _flyCo, _uiCo, _iconWarmupCo;
-        private GameObject _shipInstance;
+    private Coroutine _uiCo, _iconWarmupCo, _loadingDotsCo;
 
-        // Camera
-        private Camera _cam;
-        private IsometricCamera _isoCam;
-        private Transform _originalFollow;
-        private Vector3 _preCinematicCamPos;
-        private Quaternion _preCinematicCamRot;
+    // Cinematic fields removed.
 
         public override void OnNetworkSpawn()
         {
@@ -164,8 +148,6 @@ namespace Game.Net
             {
                 var identityTask = Game.Services.PlayerIdentityState.EnsureIdentityAsync();
 
-                _cam = Camera.main;
-                if (_cam) _isoCam = _cam.GetComponent<IsometricCamera>();
                 RefreshUI();
 
                 if (returnToLobbyButton)
@@ -181,7 +163,6 @@ namespace Game.Net
 
         public override void OnNetworkDespawn()
         {
-            StopCinematicClientRpc();
             if (IsServer)
             {
                 NetworkManager.OnClientConnectedCallback -= OnClientConnected;
@@ -272,37 +253,11 @@ namespace Game.Net
             _winsTeamA.Value = 0;
             _winsTeamB.Value = 0;
             _suddenDeath.Value = false;
-            _firstRound = true;
-
             yield return StartRound();
         }
 
         IEnumerator StartRound()
         {
-            StopCinematicClientRpc();
-            _state.Value = MatchState.Countdown;
-            for (int i = countdownSeconds; i > 0; i--)
-            {
-                CountdownClientRpc(i);
-                yield return new WaitForSecondsRealtime(1f);
-            }
-            CountdownClientRpc(0);
-            yield return new WaitForSecondsRealtime(0.25f);
-
-            if (_firstRound)
-            {
-                _firstRound = false;
-                _state.Value = MatchState.FlyIn;
-                BroadcastPauseAll(true);
-                FreezeAllPlayers(true);
-                SetAllPlayersVisibleClientRpc(true);
-                StartCinematicClientRpc();
-                yield return new WaitForSecondsRealtime(cinematicSeconds);
-                // Despawn everyone after the fly-in.
-                DespawnAllPlayersServer();
-                SetAllPlayersVisibleClientRpc(false);
-            }
-
             // Halftime side swap: from round > ceil(winsNeeded/2) we flip Team A/B spawn sides.
             if (areas)
             {
@@ -310,133 +265,19 @@ namespace Game.Net
                 areas.SetSwapSides(swap);
             }
 
-            // No spawn-choose: immediately spawn both teams at random side points, then do a 3..2..1 and start.
+            // Spawn both players immediately, then run the pre-round 3..2..1 and start.
             SpawnAllAndStartRound();
+            yield break;
         }
 
-        [ClientRpc]
-        void StartCinematicClientRpc()
-        {
-            if (!IsClient) return;
-            if (_state.Value != MatchState.FlyIn) return;        // hard guard
-            if (_shipInstance) return;                           // do not replay if ship exists
-            if (_cineCo != null) StopCoroutine(_cineCo);
-            _cineCo = StartCoroutine(CoFlyIn());
-        }
 
-        IEnumerator CoFlyIn()
-        {
-            if (!AcquireCameraSafe()) yield break;
+/* Start is now straight to spawn+countdown; no pre-cinematic countdown, no fly-in. */
 
-            _preCinematicCamPos = _cam.transform.position;
-            _preCinematicCamRot = _cam.transform.rotation;
+        // removed
+        // Brief dev comment: Client cinematic entrypoint no longer needed.
 
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
-#else
-            if (_isoCam == null) _isoCam = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
-#endif
-            if (_isoCam) _isoCam.enabled = false;
-
-            _shipInstance = shipPrefab ? Instantiate(shipPrefab) : null;
-            if (!_shipInstance || !shipStart || !shipEnd)
-            {
-                Debug.LogError("[Match1v1] Ship or waypoints missing");
-                yield break;
-            }
-
-            // Mounts
-            Transform seatMount   = EnsureSeatMount(_shipInstance.transform, seatMountName);
-            Transform cameraMount = FindDeep(_shipInstance.transform, cameraMountName);
-            Transform lookAt      = FindDeep(_shipInstance.transform, cameraLookAtName);
-
-            // Always use client-only stand-ins on the ship. Never reparent networked player objects.
-            var players       = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            var hiddenAnchors = new List<PlayerVisualAnchor>(players.Length);
-            var tempStandIns  = new List<GameObject>(2);
-
-            // Hide real models during cinematic
-            foreach (var p in players)
-            {
-                if (!p) continue;
-                var a = p.GetComponent<PlayerVisualAnchor>() ?? p.gameObject.AddComponent<PlayerVisualAnchor>();
-                a.SetModelVisible(false);
-                hiddenAnchors.Add(a);
-
-                // pick seat by team for nice framing
-                float xOffset = p.GetTeam() == TeamId.A ? -1.5f : 1.5f;
-                var prefab = cinematicStandInPrefab ? cinematicStandInPrefab : (playerPrefab ? playerPrefab.gameObject : null);
-                var stand = prefab ? Instantiate(prefab) : null;
-                if (stand)
-                {
-                    foreach (var no in stand.GetComponentsInChildren<NetworkObject>(true)) Destroy(no);
-                    foreach (var rb in stand.GetComponentsInChildren<Rigidbody>(true)) Destroy(rb);
-                    foreach (var col in stand.GetComponentsInChildren<Collider>(true)) col.enabled = false;
-                    foreach (var beh in stand.GetComponentsInChildren<Behaviour>(true))
-                        if (!(beh is Animator)) beh.enabled = false;
-
-                    stand.transform.SetParent(seatMount, false);
-                    stand.transform.localPosition = new Vector3(xOffset, 0, 0);
-                    stand.transform.localRotation = Quaternion.identity;
-                    tempStandIns.Add(stand);
-                }
-            }
-
-            // If no players yet, still show two generic riders
-            if (players.Length == 0)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    var prefab = cinematicStandInPrefab ? cinematicStandInPrefab : (playerPrefab ? playerPrefab.gameObject : null);
-                    var stand = prefab ? Instantiate(prefab) : null;
-                    if (!stand) break;
-
-                    foreach (var no in stand.GetComponentsInChildren<NetworkObject>(true)) Destroy(no);
-                    foreach (var rb in stand.GetComponentsInChildren<Rigidbody>(true)) Destroy(rb);
-                    foreach (var col in stand.GetComponentsInChildren<Collider>(true)) col.enabled = false;
-                    foreach (var beh in stand.GetComponentsInChildren<Behaviour>(true))
-                        if (!(beh is Animator)) beh.enabled = false;
-
-                    float xOffset = (i == 0) ? -1.5f : 1.5f;
-                    stand.transform.SetParent(seatMount, false);
-                    stand.transform.localPosition = new Vector3(xOffset, 0, 0);
-                    stand.transform.localRotation = Quaternion.identity;
-                    tempStandIns.Add(stand);
-                }
-            }
-
-            // Camera attach
-            if (AcquireCameraSafe() && cameraMount && lookAt)
-            {
-                _cam.transform.SetParent(cameraMount, false);
-                _cam.transform.localPosition = Vector3.zero;
-                _cam.transform.localRotation = Quaternion.identity;
-                _cam.transform.LookAt(lookAt.position);
-            }
-
-            // Animate ship
-            float elapsed = 0f;
-            while (_shipInstance && elapsed < shipDuration)
-            {
-                float t = elapsed / shipDuration;
-                _shipInstance.transform.position = Vector3.Lerp(shipStart.position, shipEnd.position, t);
-                _shipInstance.transform.rotation = Quaternion.Slerp(shipStart.rotation, shipEnd.rotation, t);
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
-
-            // Restore models and cleanup
-            for (int i = 0; i < hiddenAnchors.Count; i++)
-                if (hiddenAnchors[i]) hiddenAnchors[i].SetModelVisible(true);
-
-            for (int i = 0; i < tempStandIns.Count; i++)
-                if (tempStandIns[i]) Destroy(tempStandIns[i]);
-
-            // Detach camera but DO NOT destroy the ship yet.
-            // Ship stays visible until spawn-select actually begins.
-            DetachCameraFromShip();
-            if (_isoCam) _isoCam.enabled = true;
-        }
+        // removed
+        // Brief dev comment: Entire fly-in coroutine deleted.
 
         void Update()
         {
@@ -484,19 +325,25 @@ namespace Game.Net
                 SpawnFreshPlayerForClient(cid, point, team);
             }
 
-            // Keep players frozen/paused and visible while we run the 3..2..1 pre-round countdown.
+            // Spawned and frozen/paused/visible while we run the LOADING phase, then the 3..2..1.
             SetAllPlayersVisibleClientRpc(true);
-
             FreezeAllPlayers(true);
             BroadcastPauseAll(true);
 
             StopCoroutineSafe(ref _uiCo);
-            StartCoroutine(CoPreRoundCountdownThenStart());
+            StartCoroutine(CoLoadingPhaseThenCountdown());
         }
+
+
+        // We now enter a Loading phase first; countdown only starts once both players are ready.
 
         IEnumerator CoPreRoundCountdownThenStart()
         {
             _state.Value = MatchState.Countdown;
+
+            // Equip during countdown (server authoritative), primary auto-equipped
+            ReequipAllPlayersServer();
+
             for (int i = preRoundCountdownSeconds; i > 0; i--)
             {
                 CountdownClientRpc(i);
@@ -506,7 +353,6 @@ namespace Game.Net
             yield return new WaitForSecondsRealtime(0.25f);
 
             _state.Value = MatchState.Playing;
-            // server-authoritative start/end; guard if server time not ready yet
             var now = GetServerNowSafe();
             _roundStartTimeServer = now;
             _roundEndTime.Value   = now + roundDurationSeconds;
@@ -515,16 +361,14 @@ namespace Game.Net
             FreezeAllPlayers(false);
             BroadcastPauseAll(false);
 
-// Top-up + sanitize every player before we re-equip primaries.
-TopUpAndSanitizeAllPlayersServer();
-
-// Re-equip remains useful for round transitions, but with pre-join seeding
-// it will simply reapply the already-correct loadout.
-ReequipAllPlayersServer();
-// Keeps countdown→start transition deterministic for weapons and HP【turn42file4†Match1v1Controller.cs†L7-L13】.
+            TopUpAndSanitizeAllPlayersServer();
+            // Re-equip not needed here anymore; already done at countdown start.
 
             StartCoroutine(CoMonitorRound());
         }
+
+
+        // Primary is now in-hand throughout the 3-second countdown; players unfreeze at 0.
 
         void SpawnFreshPlayerForClient(ulong clientId, Vector3 point, TeamId team)
         {
@@ -575,32 +419,24 @@ ReequipAllPlayersServer();
                 pn.SetTeam(team);
                 pn.SetHealth(100f);
 
-                // Force replicated phase to Match immediately after spawn so clients enable Match systems.
+                // Replicate phase -> Match so clients enable Match systems.
                 pn.SetPhaseServerRpc(PlayerPhase.Match);
 
-                // Seed the authoritative loadout if the client sent it during connection.
+                // Seed authoritative loadout if the client sent it during connection.
                 if (LoadoutHandshake.TryGetPreJoinLoadout(clientId, out var pre))
                 {
                     Debug.Log($"[Match1v1] Applying pre-join loadout for cid={clientId}: P={pre.primary} S={pre.secondary} M={pre.melee} U={pre.util}");
                     pn.ApplyPreJoinLoadoutServer(pre.primary, pre.secondary, pre.melee, pre.util);
                     LoadoutHandshake.Consume(clientId);
                 }
-                else
-                {
-                    Debug.Log($"[Match1v1] No pre-join loadout for cid={clientId}, defaults will be applied via ServerEnsureValidLoadoutAndHealth");
-                }
 
-// Final belt-and-braces: sanitize + ensure full HP + equip primary.
-pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
-// Guarantees a healthy, equipped spawn even if pre-join payload is missing or partial【turn42file11†Match1v1Controller.cs†L14-L36】.
+                // Mark PHASE bit ready immediately (phase is server-driven).
+                OnClientLoadingBits(clientId, (byte)LoadingReady.Phase);
 
-// Uses the new hardened entry point when spawning each player.
-
-                // Phase is already set to Match via SeedPhasePreSpawnServer before spawn.
-                // No need to call SetPhaseServerRpc again - OnNetworkSpawn handles it.
+                // Ask the owner to enable LOS visuals and fetch their Cloud Save loadout, then ack.
+                pn.BeginLoadingPhaseClientRpc(PlayerNetwork.TargetClientParams(clientId));
 
                 pn.ClearDeathRecapForOwner();
-                // Brief dev comment: Spawner now explicitly flips phase to Match for each spawned player.
             }
 // Brief dev comment: Reuse pn declared before spawn.
 // Spawner now seeds the player's NetLoadout from the pre-join cache, eliminating desync.
@@ -701,7 +537,6 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
 
         IEnumerator CoPostRoundFlow()
         {
-            StopCinematicClientRpc();
             yield return new WaitForSecondsRealtime(roundEndDelaySeconds);
 
             bool matchOver = false;
@@ -742,7 +577,6 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
 
         void EndMatch(TeamId winner)
         {
-            StopCinematicClientRpc();
             _state.Value = MatchState.MatchEnd;
             ClearDeathRecapsClientRpc();
             ShowMatchEndClientRpc(winner);
@@ -845,107 +679,22 @@ pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
 
 
 
-        // Remove any ship/stand-in leftovers and hide real player visuals until actual spawn.
-        void ForceClearCinematicResidueLocal()
-        {
-            // Detach cam if it’s under the ship
-            DetachCameraFromShip();
+        // removed
+        // Brief dev comment: No ship/stand-in leftovers to clear; cinematic removed.
 
-            if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
+        // removed
+        // Brief dev comment: Selection/cinematic prep removed.
 
-            var anchors = UnityEngine.Object.FindObjectsByType<PlayerVisualAnchor>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            for (int i = 0; i < anchors.Length; i++)
-            {
-                var a = anchors[i];
-                if (!a) continue;
-                a.DetachToWorld(true);     // ensure no parenting remains
-                a.SetModelVisible(false);  // hide until actual spawn
-            }
-        }
+        // removed
+        // Brief dev comment: Ship object is no longer spawned, so no cleanup needed.
 
-        // Prepare for pan: detach camera and hide player models/stand-ins, but keep the ship alive.
-        void PrepareCinematicForPanLocal()
-        {
-            DetachCameraFromShip();
+// removed
+// Brief dev comment: No ship/camera parenting, so cleanup path is gone.
 
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            var anchors = UnityEngine.Object.FindObjectsByType<PlayerVisualAnchor>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-#else
-            var anchors = UnityEngine.Object.FindObjectsOfType<PlayerVisualAnchor>();
-#endif
-            for (int i = 0; i < anchors.Length; i++)
-            {
-                var a = anchors[i];
-                if (!a) continue;
-                a.DetachToWorld(true);
-                a.SetModelVisible(false);
-            }
-        }
-
-        void ClearCinematicShip()
-        {
-            DetachCameraFromShip();
-            if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
-
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-            var standIns = UnityEngine.Object.FindObjectsByType<Animator>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-#else
-            var standIns = UnityEngine.Object.FindObjectsOfType<Animator>();
-#endif
-            // Best-effort: remove any loose client-only stand-ins we created (they have no NetworkObject)
-            for (int i = 0; i < standIns.Length; i++)
-            {
-                var anim = standIns[i]; if (!anim) continue;
-                var no = anim.GetComponentInParent<Unity.Netcode.NetworkObject>();
-                if (no == null)
-                {
-                    // Destroy only if it was under the ship or still near the ship spawn path
-                    if (_shipInstance == null || (anim.transform && !anim.transform.IsChildOf(_shipInstance.transform)))
-                        continue;
-                    UnityEngine.Object.Destroy(anim.gameObject);
-                }
-            }
-        }
-
-/// <summary>Client-side cinematic cleanup RPC and local helper.</summary>
-[ClientRpc]
-void StopCinematicClientRpc()
-{
-    if (!IsClient) return;
-    CleanupCinematicLocal(restoreCamera:true);
-}
-
-void CleanupCinematicLocal(bool restoreCamera)
-{
-    if (_cineCo != null) { StopCoroutine(_cineCo); _cineCo = null; }
-    DetachCameraFromShip();
-    if (_shipInstance) { Destroy(_shipInstance); _shipInstance = null; }
-    if (_isoCam && restoreCamera) _isoCam.enabled = true;
-}
-
-/// <summary>Detach main camera from ship if it was parented.</summary>
-void DetachCameraFromShip()
-{
-    if (!_cam) _cam = Camera.main;
-    if (!_cam) return;
-    // If camera is parented under the ship, detach and restore last known transform.
-    if (_cam.transform && _cam.transform.parent != null && _shipInstance && _cam.transform.IsChildOf(_shipInstance.transform))
-    {
-        _cam.transform.SetParent(null, worldPositionStays:true);
-        _cam.transform.SetPositionAndRotation(_preCinematicCamPos, _preCinematicCamRot);
-    }
-}
-        Transform EnsureSeatMount(Transform shipRoot, string mountName)
-        {
-            var t = FindDeep(shipRoot, mountName);
-            if (t) return t;
-
-            var go = new GameObject(string.IsNullOrEmpty(mountName) ? "SeatMount" : mountName);
-            go.transform.SetParent(shipRoot, false);
-            go.transform.localPosition = Vector3.zero;
-            go.transform.localRotation = Quaternion.identity;
-            return go.transform;
-        }
+// removed
+// Brief dev comment: No cinematic camera parenting remains.
+        // removed
+        // Brief dev comment: Seat mount helper was only used by the cinematic ship.
 
         void FreezeAllPlayers(bool frozen)
         {
@@ -1215,33 +964,8 @@ void DetachCameraFromShip()
         // Unity fake-null safe checks
         static bool IsUnityNull(Object o) => o == null;
 
-        bool AcquireCameraSafe()
-        {
-            if (!IsUnityNull(_cam)) return true;
-
-            // Prefer the scene's main camera
-            _cam = Camera.main;
-
-            // Fallback to IsometricCamera’s Camera
-            if (IsUnityNull(_cam))
-            {
-#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
-                var iso = UnityEngine.Object.FindFirstObjectByType<IsometricCamera>(FindObjectsInactive.Include);
-#else
-                var iso = UnityEngine.Object.FindObjectOfType<IsometricCamera>();
-#endif
-                if (iso) _cam = iso.GetComponent<Camera>();
-            }
-
-            // Any camera as last resort
-            if (IsUnityNull(_cam))
-            {
-                var cams = UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-                if (cams != null && cams.Length > 0) _cam = cams[0];
-            }
-
-            return !IsUnityNull(_cam);
-        }
+        // removed
+        // Brief dev comment: No more cinematic camera choreography.
 
         static ClientRpcParams ToClient(ulong clientId) =>
             new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } };
@@ -1333,5 +1057,89 @@ void TopUpAndSanitizeAllPlayersServer()
 }
 
 // Now guarantees both players start healthy and equipped each round.
+
+        IEnumerator CoLoadingPhaseThenCountdown()
+        {
+            if (!IsServer) yield break;
+
+            _state.Value = MatchState.Loading;
+            SetLoadingUiClientRpc(true); // start “Loading…” dots on all clients
+
+            // Reset server-side readiness map for connected non-server clients
+            _loadingReady.Clear();
+            var ids = NetworkManager.ConnectedClientsIds;
+            foreach (var cid in ids)
+            {
+                if (cid == NetworkManager.ServerClientId) continue;
+                _loadingReady[cid] = LoadingReady.None; // Phase bit is set as each player is spawned
+            }
+
+            // Wait until both players report LOS+Loadout ready AND server can see a valid loadout applied.
+            bool AllReady()
+            {
+                foreach (var kvp in _loadingReady)
+                {
+                    var cid = kvp.Key;
+                    var bits = kvp.Value;
+
+                    if ((bits & (LoadingReady.Los | LoadingReady.Loadout)) != (LoadingReady.Los | LoadingReady.Loadout))
+                        return false;
+
+                    // Defensive: ensure server has an applied loadout for this player too
+                    var cc = NetworkManager.ConnectedClients[cid];
+                    var pn = cc?.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+                    if (!pn || !pn.ServerHasValidLoadout()) return false;
+                }
+                return _loadingReady.Count >= requiredPlayers;
+            }
+
+            // Poll at NGO tick rate; avoid tight loop.
+            while (!AllReady())
+                yield return null;
+
+            // Begin 3..2..1 and equip during countdown.
+            SetLoadingUiClientRpc(false);
+            StartCoroutine(CoPreRoundCountdownThenStart());
+        }
+
+        // Called by PlayerNetwork.ServerRpc when a client finishes a loading step.
+        internal void OnClientLoadingBits(ulong clientId, byte bits)
+        {
+            if (!IsServer) return;
+            if (!_loadingReady.ContainsKey(clientId)) _loadingReady[clientId] = LoadingReady.None;
+            _loadingReady[clientId] |= (LoadingReady)bits;
+        }
+
+        // Toggle the “Loading…” animated UI on clients.
+        [ClientRpc]
+        void SetLoadingUiClientRpc(bool on)
+        {
+            if (!IsClient) return;
+
+            StopCoroutineSafe(ref _loadingDotsCo);
+            if (on)
+            {
+                _loadingDotsCo = StartCoroutine(CoAnimateLoadingDots());
+            }
+            else
+            {
+                if (roundTimerText) roundTimerText.text = string.Empty;
+            }
+        }
+
+        IEnumerator CoAnimateLoadingDots()
+        {
+            int dots = 0;
+            while (true)
+            {
+                if (roundTimerText)
+                    roundTimerText.text = "Loading" + new string('.', dots);
+
+                dots = (dots + 1) % 4;
+                yield return new WaitForSecondsRealtime(0.35f);
+            }
+        }
+
+        // Server waits on per-player readiness; clients render animated “Loading…”.
 }
 }

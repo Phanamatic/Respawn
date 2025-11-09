@@ -158,6 +158,22 @@ public class LoadoutHandshake : MonoBehaviour
 #if UNITY_EDITOR
             Debug.Log($"[DirectNet] Pre-join loadout received for {senderClientId}: P{p}/S{s}/M{m}/U{u}");
 #endif
+
+            // If the player's NetworkObject already exists (spawned late), apply immediately.
+            var nm = NetworkManager.Singleton;
+            if (nm != null && nm.IsServer && nm.ConnectedClients.TryGetValue(senderClientId, out var conn))
+            {
+                var playerObj = conn.PlayerObject;
+                if (playerObj)
+                {
+                    var pn = playerObj.GetComponent<Game.Net.PlayerNetwork>();
+                    if (pn)
+                    {
+                        pn.ApplyPreJoinLoadoutServer(pl.primary, pl.secondary, pl.melee, pl.util);
+                        Consume(senderClientId);
+                    }
+                }
+            }
         }
         catch
         {
