@@ -130,15 +130,23 @@ namespace Game.Net.Weapons
         public void RebuildLocalViewImmediate()
         {
             if (!IsOwner) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Melee)
+            {
+                Debug.Log("[Melee] Skip rebuild: slot not active.");
+                return;
+            }
 
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
-            Debug.Log($"[Melee][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedMelee}");
+            Debug.Log($"[Melee][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedMelee} goActive={gameObject.activeInHierarchy} frame={Time.frameCount}");
 
             if (!_hasEquippedMelee)
             {
-                Debug.LogWarning("[Melee] Abort: _hasEquippedMelee=false");
+                Debug.LogWarning("[Melee] Abort: _hasEquippedMelee=false (viewLocal="
+                    + (transform.childCount > 0 ? transform.GetChild(0).name : "<none>")
+                    + ", parent=" + (transform.parent ? transform.parent.name : "<null>")
+                    + ", frame=" + Time.frameCount + ")");
                 return;
             }
 

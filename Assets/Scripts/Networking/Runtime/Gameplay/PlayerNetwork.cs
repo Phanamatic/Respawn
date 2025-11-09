@@ -26,7 +26,7 @@ namespace Game.Net
     [RequireComponent(typeof(NetworkObject))]
     [RequireComponent(typeof(Rigidbody))]
     [DisallowMultipleComponent]
-    public sealed class PlayerNetwork : NetworkBehaviour
+    public sealed partial class PlayerNetwork : NetworkBehaviour
     {
         // ---- NetworkVariable layout contract ----
         // Bump when you add/remove/reorder any NetworkVariable fields in this class.
@@ -973,6 +973,8 @@ public void ForceActiveSlotServer(byte slot)
             }
 
             Debug.Log($"[Weapons] Slot switch request -> {slot} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
+            // Extra context for this moment in time.
+            DbgDumpWeaponsEnv($"RequestSwitchSlot({slot})");
             if (slot > 3) return;
             RequestSwitchSlotServerRpc(slot);
         }
@@ -1077,6 +1079,8 @@ public void ForceActiveSlotServer(byte slot)
 
             byte slot = _activeSlot.Value;
             Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
+            // Dump environment at the start of the slot transition.
+            DbgDumpWeaponsEnv("OnActiveSlotChanged(start)");
 
             // Snapshot env for debugging slot 2/3/4 issues
             var primary   = GetComponent<WeaponPrimaryController>();
@@ -1158,6 +1162,8 @@ public void ForceActiveSlotServer(byte slot)
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
+            // After we've executed the branch, dump again to see effect.
+            DbgDumpWeaponsEnv("OnActiveSlotChanged(after)");
 
             // Publish an atomic snapshot for clients (server only).
             if (IsServer)

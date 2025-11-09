@@ -230,13 +230,20 @@ namespace Game.UI.HUD
             {
                 if (equipped) utilityWeaponName.text = _utility.equippedWeaponName.Value.ToString();
                 else utilityWeaponName.text = "";
-                SetAlpha(utilityWeaponName, equipped ? 1f : 0f);
+                // Always keep the utility name visible so it shows from the start.
+                // Use saved-loadout name (set by EnsureNamesFromLoadout) until equipped name arrives.
+                bool hasName = utilityWeaponName && !string.IsNullOrEmpty(utilityWeaponName.text);
+                SetAlpha(utilityWeaponName, 1f);
             }
             if (utilityAmmoText != null)
             {
-                if (equipped) utilityAmmoText.text = $"x{_utility.ammoCount.Value}";
-                else utilityAmmoText.text = "";
-                SetAlpha(utilityAmmoText, equipped ? 1f : 0f);
+                // Ammo: show placeholder until we have a live count; keep the meter hidden when not active.
+                if (equipped && _utility.ammoCount.Value >= 0)
+                    utilityAmmoText.text = $"x{_utility.ammoCount.Value}";
+                else if (utilityWeaponName && !string.IsNullOrEmpty(utilityWeaponName.text))
+                    utilityAmmoText.text = "x—"; // visible placeholder before equip
+                bool hasName = utilityWeaponName && !string.IsNullOrEmpty(utilityWeaponName.text);
+                SetAlpha(utilityAmmoText, hasName ? 1f : 0f);
             }
         }
 

@@ -174,20 +174,12 @@ public sealed class FovMesh : MonoBehaviour
                 _visualMpb.SetFloat(_RadiusId, Mathf.Max(0.1f, radiusMeters));
                 _visualRenderer.SetPropertyBlock(_visualMpb);
                 
-                // Clamp visual to sit on top of the Ground collider (never below it).
+                // Ensure exact transform match with the mesh (already achieved via parenting).
                 if (_visualGO)
                 {
-                    var vt = _visualGO.transform;
-                    var wp = vt.position;
-                    // small skin avoids z-fighting; keep tiny to "sit on" the ground
-                    float skin = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
-                    Ray ray = new Ray(wp + Vector3.up * 2f, Vector3.down);
-                    if (Physics.Raycast(ray, out var gHit, 10f, LayerMask.GetMask("Ground"), QueryTriggerInteraction.Collide)
-                        || (Physics.Raycast(ray, out gHit, 10f) && gHit.collider.CompareTag("Ground")))
-                    {
-                        wp.y = gHit.point.y + skin;
-                        vt.position = wp;
-                    }
+                    _visualGO.transform.localPosition = Vector3.zero;
+                    _visualGO.transform.localRotation = Quaternion.identity;
+                    _visualGO.transform.localScale    = Vector3.one;
                 }
             }
         }
@@ -290,7 +282,9 @@ public sealed class FovMesh : MonoBehaviour
         if (_visualGO == null)
         {
             _visualGO = new GameObject("__FOVVisual");
-            _visualGO.transform.SetParent(transform, worldPositionStays: false);
+            // Parent directly under the mesh so it inherits EXACT position/rotation/scale.
+            _visualGO.transform.SetParent(_meshGO ? _meshGO.transform : transform, worldPositionStays: false);
+            _visualGO.transform.localPosition = Vector3.zero;
             _visualGO.transform.localRotation = Quaternion.identity;
             _visualGO.transform.localScale = Vector3.one;
         }
@@ -330,37 +324,8 @@ public sealed class FovMesh : MonoBehaviour
     // Ensure a stable, searchable name for the child visual so tooling can find it.
     if (_visualGO.name != "__FOVVisual") _visualGO.name = "__FOVVisual";
     // Dev: Named child so the constraint helper can auto-bind even in Edit Mode.
-        // ParentConstraint setup: ensure the visual follows position but not rotation.
-        var pc = _visualGO.GetComponent<ParentConstraint>();
-        if (!pc) pc = _visualGO.AddComponent<ParentConstraint>();
-        for (int i = pc.sourceCount - 1; i >= 0; i--) pc.RemoveSource(i);
-        var src = new ConstraintSource { sourceTransform = follow ? follow : transform, weight = 1f };
-        // Add the source and capture its index so we can set offsets manually.
-        var idx = pc.AddSource(src);
-        // Drive position on all axes; do NOT inherit any rotation from the parent.
-        // Follow only X/Z from the source; we'll clamp Y ourselves.
-        pc.translationAxis = Axis.X | Axis.Z;
-        pc.rotationAxis     = 0; // Axis.None
-        // Preserve current world-space offset (Unity 6 ParentConstraint lacks `maintainOffset`).
-        var visualT = _visualGO.transform;
-        var sourceT = follow ? follow : transform;
-        pc.SetTranslationOffset(idx, visualT.position - sourceT.position);
-        pc.SetRotationOffset(idx, Vector3.zero);
-        pc.locked           = true;
-        pc.constraintActive = true;
-        pc.enabled          = true;
-
-        // Initialize world Y to the top of the Ground collider under us.
-        var vt = _visualGO.transform;
-        var wp = vt.position;
-        float skinInit = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
-        Ray initRay = new Ray(wp + Vector3.up * 2f, Vector3.down);
-        if (Physics.Raycast(initRay, out var gHitInit, 10f, LayerMask.GetMask("Ground"), QueryTriggerInteraction.Collide)
-            || (Physics.Raycast(initRay, out gHitInit, 10f) && gHitInit.collider.CompareTag("Ground")))
-        {
-            wp.y = gHitInit.point.y + skinInit;
-            vt.position = wp;
-        }
+        // Direct parenting to __FOVMesh replaces the constraint+ground-offset approach.
+        // The visual now inherits exactly the mesh transform.
     }
 
     void DisableVisualRenderer()

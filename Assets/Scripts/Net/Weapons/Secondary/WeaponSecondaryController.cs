@@ -306,6 +306,11 @@ namespace Game.Net.Weapons
         public void RebuildLocalViewImmediate()
         {
             if (!IsOwner) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Secondary)
+            {
+                Debug.Log("[Weapons] Skip Secondary rebuild: slot not active.");
+                return;
+            }
 
             if (sockets && sockets.handMount)
             {

@@ -61,6 +61,9 @@ namespace Game.Net.Weapons
             transform.position += worldOffset;
 
             Debug.Log($"[WeaponView] Grip snapped: view='{name}' -> mount='{handMount.name}' pos={transform.position}");
+            // Add parent + local TR so we can see if we're actually parented vs just teleported.
+            var parentName = transform.parent ? transform.parent.name : "<null>";
+            Debug.Log($"[WeaponView] Parent='{parentName}' localPos={transform.localPosition} localEuler={transform.localEulerAngles}");
         }
 
         Transform GetAimPivot()

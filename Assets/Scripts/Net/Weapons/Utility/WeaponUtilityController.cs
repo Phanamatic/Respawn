@@ -91,15 +91,23 @@ namespace Game.Net.Weapons
         public void RebuildLocalViewImmediate()
         {
             if (!IsOwner) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Utility)
+            {
+                Debug.Log("[Utility] Skip rebuild: slot not active.");
+                return;
+            }
 
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
-            Debug.Log($"[Utility][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedUtility} netType={(Game.Net.UtilityType)_netUtilityType.Value}");
+            Debug.Log($"[Utility][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedUtility} netType={(Game.Net.UtilityType)_netUtilityType.Value} goActive={gameObject.activeInHierarchy} frame={Time.frameCount}");
 
             if (!_hasEquippedUtility)
             {
-                Debug.LogWarning("[Utility] Abort: _hasEquippedUtility=false");
+                Debug.LogWarning("[Utility] Abort: _hasEquippedUtility=false (parent="
+                    + (transform.parent ? transform.parent.name : "<null>")
+                    + ", children=" + transform.childCount
+                    + ", frame=" + Time.frameCount + ")");
                 return;
             }
 

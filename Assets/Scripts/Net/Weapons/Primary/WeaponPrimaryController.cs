@@ -356,6 +356,12 @@ namespace Game.Net.Weapons
         public void RebuildLocalViewImmediate()
         {
             if (!IsOwner) return;
+            // Guard: only rebuild if this slot is currently active
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Primary)
+            {
+                Debug.Log("[Weapons] Skip Primary rebuild: slot not active.");
+                return;
+            }
 
             // Always allow immediate rebuilds; snapshot drivers can replace later if needed.
 

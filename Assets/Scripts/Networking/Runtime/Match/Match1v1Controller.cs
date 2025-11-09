@@ -194,8 +194,22 @@ namespace Game.Net
         {
             _teams.Remove(clientId);
             // removed _chosenSpawns.Remove(clientId);
+            _loadingReady.Remove(clientId);
             RecountPlayers();
             UpdateRequiredPlayersClientRpc(_playerCount.Value, requiredPlayers);
+
+            // Count real clients (exclude server)
+            int active = 0;
+            foreach (var id in NetworkManager.ConnectedClientsIds)
+                if (id != NetworkManager.ServerClientId) active++;
+
+            // If only one (or zero) client remains while match is live, end as forfeit
+            if ((_state.Value == MatchState.Playing || _state.Value == MatchState.Countdown) && active <= 1)
+            {
+                var winner = DetermineRemainingTeam(clientId);
+                EndMatchServer(winner, "forfeit");
+                return;
+            }
 
             if (_playerCount.Value < 2 && _state.Value != MatchState.MatchEnd)
             {
@@ -562,7 +576,10 @@ namespace Game.Net
 
             if (matchOver && matchWinner.HasValue)
             {
-                EndMatch(matchWinner.Value);
+                // Server drives the full end-of-match handoff/reset.
+                if (IsServer) EndMatchServer(matchWinner.Value, "win");
+                else EndMatch(matchWinner.Value);
+                yield break;
             }
             else
             {
@@ -577,6 +594,13 @@ namespace Game.Net
 
         void EndMatch(TeamId winner)
         {
+            // If we're on the server, use the authoritative path so we also kick & reset.
+            if (IsServer)
+            {
+                EndMatchServer(winner, "win");
+                return;
+            }
+
             _state.Value = MatchState.MatchEnd;
             ClearDeathRecapsClientRpc();
             ShowMatchEndClientRpc(winner);
@@ -610,6 +634,70 @@ namespace Game.Net
                 if (winnerText)
                     winnerText.text = $"Team {winner} Wins the Match!\n{_winsTeamA.Value} - {_winsTeamB.Value}";
             }
+        }
+
+        // Authoritative end-of-match: set state, show winner UI, kick players, then reset server.
+        void EndMatchServer(TeamId winner, string reason)
+        {
+            if (!IsServer) return;
+
+            _state.Value = MatchState.MatchEnd;
+
+            // 1) Let clients see the result panel first.
+            ClearDeathRecapsClientRpc();
+            ShowMatchEndClientRpc(winner);
+
+            // 2) Push all clients back to Lobby, with a short grace so the panel is visible.
+            KickAllClientsToLobbyClientRpc(true);
+
+            // 3) Reset this box for the next match.
+            StartCoroutine(CoResetServerAfterClientsLeft());
+        }
+
+        [ClientRpc]
+        void KickAllClientsToLobbyClientRpc(bool showWinAndDelay = true)
+        {
+            StartCoroutine(CoKickToLobby(showWinAndDelay));
+        }
+
+        IEnumerator CoKickToLobby(bool showWinAndDelay)
+        {
+            // Reuse the same local logic as the "Return to Lobby" button.
+            if (showWinAndDelay && winPanel) yield return new WaitForSecondsRealtime(3f);
+            OnReturnToLobby(); // calls NetworkManager.Singleton.Shutdown() then loads "Lobby"
+        }
+
+        IEnumerator CoResetServerAfterClientsLeft()
+        {
+            if (!IsServer) yield break;
+            var nm = NetworkManager;
+
+            // Wait up to ~5s for all non-server clients to disconnect cleanly.
+            float t = 5f;
+            while (t > 0f)
+            {
+                bool anyClient = false;
+                var list = nm.ConnectedClientsList;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i].ClientId != NetworkManager.ServerClientId) { anyClient = true; break; }
+                }
+                if (!anyClient) break;
+                t -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            // Clean slate: despawn any lingering player objects and reset counters/state.
+            DespawnAllPlayersServer();
+            _roundNumber.Value = 1;
+            _winsTeamA.Value = 0;
+            _winsTeamB.Value = 0;
+            _suddenDeath.Value = false;
+            _state.Value = MatchState.Waiting;
+
+            // Reload the same scene to wipe ephemeral objects and return to "Waiting".
+            if (nm && nm.SceneManager != null)
+                nm.SceneManager.LoadScene("Match_1v1", UnityEngine.SceneManagement.LoadSceneMode.Single);
         }
 
         // Apply or restore transparency on configured objects
@@ -1010,6 +1098,18 @@ namespace Game.Net
                 killer = killerClient.PlayerObject ? killerClient.PlayerObject.GetComponent<PlayerNetwork>() : null;
 
             player.ApplyHealthDelta(healthDelta, killer);
+        }
+
+        private TeamId DetermineRemainingTeam(ulong leaver)
+        {
+            foreach (var id in NetworkManager.ConnectedClientsIds)
+            {
+                if (id == NetworkManager.ServerClientId || id == leaver) continue;
+                if (!NetworkManager.ConnectedClients.TryGetValue(id, out var client)) continue;
+                var p = client.PlayerObject?.GetComponent<PlayerNetwork>();
+                if (p && p.GetHealth() > 0) return p.GetTeam();
+            }
+            return TeamId.A;
         }
 
         void StopCoroutineSafe(ref Coroutine co)

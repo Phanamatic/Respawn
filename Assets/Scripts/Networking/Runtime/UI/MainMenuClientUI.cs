@@ -33,6 +33,9 @@ namespace Game.Net
         [SerializeField] private bool singleJoinPerRun = true;
         private static bool s_DidJoinThisRun;
 
+        private static bool s_AutoJoinLobbyOncePublicFlag;
+        public static void SetAutoJoinLobbyOnce() { s_AutoJoinLobbyOncePublicFlag = true; }
+
         // --- Shared throttle and cache across all instances ---
         private static double s_NextAllowedQueryTime;            // token-bucket style min interval
         // Adaptable global throttle (shared across scene reloads)
@@ -114,6 +117,13 @@ namespace Game.Net
             // Start a single refresh loop. Do not restart it on Play.
             StartCoroutine(UpdateLobbyListLoop());
             SetStatus("Ready");
+
+            // Auto-join a Lobby once when returning from a Match
+            if (s_AutoJoinLobbyOncePublicFlag)
+            {
+                s_AutoJoinLobbyOncePublicFlag = false;
+                OnPlayClicked();
+            }
         }
 
         public void OnPlayClicked()

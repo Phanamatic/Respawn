@@ -437,7 +437,7 @@ GameObject:
   - component: {fileID: 1002578233353316948}
   - component: {fileID: 6200893167718697824}
   - component: {fileID: 2195496392959884960}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: PlayerAvatar
   m_TagString: Player
   m_Icon: {fileID: 0}
@@ -1379,6 +1379,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 699c2c7e320cc674bad7e29f9291ad21, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  visualHeightOffset: 0.03
+  sourceColliderOverride: {fileID: 0}
   Visual: {fileID: 0}
   Source: {fileID: 5914470287193299296}
 --- !u!1 &7769304657473620615
