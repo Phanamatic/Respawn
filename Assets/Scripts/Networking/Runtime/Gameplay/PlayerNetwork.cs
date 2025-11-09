@@ -1036,6 +1036,22 @@ public void ForceActiveSlotServer(byte slot)
                 var wu = GetComponent<WeaponUtilityController>();
                 if (wu) { Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); wu.Equip((UtilityType)_netLoadout.Value.util); } else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
+
+            // Publish an atomic snapshot for clients (server only).
+            if (IsServer)
+            {
+                var sync = GetComponent<Game.Net.Weapons.LoadoutSnapshotSync>();
+                if (sync)
+                {
+                    var snap = sync.State.Value;
+                    // Fill from your current controllers/state (sample reads shown – map to your fields):
+                    snap.activeSlot = (byte)_activeSlot.Value; // 0..3
+                    // snap.primaryId/secondaryId/... = your current weapon ids
+                    // snap.primaryName/.../ammo/reserve/reload = from your weapon controllers
+
+                    sync.ServerPublish(snap, incrementVersion: true);
+                }
+            }
         }
         // Prevents client from issuing equip calls that clear views with "None" just as the round starts.
         // Related context: owner-side local equip is triggered by _activeSlot.OnValueChanged【turn41file1†PlayerNetwork.cs†L57-L99】.
@@ -1598,11 +1614,27 @@ void OnReloadInput()
 
             // CRITICAL: Guarantee no None values before sending to server
             // This ensures players ALWAYS have a full loadout (AR/Pistol/Knife/Grenade)
-            if (lo.Primary == PrimaryType.None) lo.Primary = PrimaryType.AR;
-            if (lo.Secondary == SecondaryType.None) lo.Secondary = SecondaryType.Pistol;
-            if (lo.Utility == UtilityType.None) lo.Utility = UtilityType.Grenade;
+            bool changed = false;
+            if (lo.Primary == PrimaryType.None) { lo.Primary = PrimaryType.AR; changed = true; }
+            if (lo.Secondary == SecondaryType.None) { lo.Secondary = SecondaryType.Pistol; changed = true; }
+            if (lo.Utility == UtilityType.None) { lo.Utility = UtilityType.Grenade; changed = true; }
 
             _myLoadout = lo;
+            
+            // Self-healing: if we sanitized, save the corrected loadout back to Cloud Save
+            if (changed)
+            {
+                var csc = CloudSaveClient.Instance;
+                if (csc != null)
+                {
+                    var saveTask = csc.SaveLoadoutAsync(lo);
+                    while (!saveTask.IsCompleted) yield return null;
+                    if (!saveTask.Result)
+                    {
+                        Debug.LogWarning("[PlayerNetwork] Self-healing save failed");
+                    }
+                }
+            }
             
             // Send via LoadoutHandshake (same path as LoadoutUI)
             var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO

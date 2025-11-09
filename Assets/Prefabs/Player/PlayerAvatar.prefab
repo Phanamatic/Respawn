@@ -291,6 +291,8 @@ GameObject:
   - component: {fileID: 4477007281245444062}
   - component: {fileID: 207561597042908200}
   - component: {fileID: 1635704192221264307}
+  - component: {fileID: 1002578233353316948}
+  - component: {fileID: 6200893167718697824}
   m_Layer: 0
   m_Name: PlayerAvatar
   m_TagString: Player
@@ -1015,6 +1017,209 @@ MonoBehaviour:
   - {fileID: 5771216552047593964}
   sortingPriority: 50
   sortingOrder: 50
+--- !u!114 &1002578233353316948
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7629307799589511846}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97b14b0568d62ae4db4c68aad65a3e54, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  ShowTopMostFoldoutHeaderGroup: 1
+  State:
+    m_InternalValue:
+      primaryId: 0
+      secondaryId: 0
+      meleeId: 0
+      utilityId: 0
+      activeSlot: 0
+      version: 0
+      primaryMag: 0
+      primaryReserve: 0
+      secondaryMag: 0
+      secondaryReserve: 0
+      primaryName:
+        utf8LengthInBytes: 0
+        bytes:
+          offset0000:
+            byte0000: 0
+            byte0001: 0
+            byte0002: 0
+            byte0003: 0
+            byte0004: 0
+            byte0005: 0
+            byte0006: 0
+            byte0007: 0
+            byte0008: 0
+            byte0009: 0
+            byte0010: 0
+            byte0011: 0
+            byte0012: 0
+            byte0013: 0
+            byte0014: 0
+            byte0015: 0
+          byte0016: 0
+          byte0017: 0
+          byte0018: 0
+          byte0019: 0
+          byte0020: 0
+          byte0021: 0
+          byte0022: 0
+          byte0023: 0
+          byte0024: 0
+          byte0025: 0
+          byte0026: 0
+          byte0027: 0
+          byte0028: 0
+          byte0029: 0
+      secondaryName:
+        utf8LengthInBytes: 0
+        bytes:
+          offset0000:
+            byte0000: 0
+            byte0001: 0
+            byte0002: 0
+            byte0003: 0
+            byte0004: 0
+            byte0005: 0
+            byte0006: 0
+            byte0007: 0
+            byte0008: 0
+            byte0009: 0
+            byte0010: 0
+            byte0011: 0
+            byte0012: 0
+            byte0013: 0
+            byte0014: 0
+            byte0015: 0
+          byte0016: 0
+          byte0017: 0
+          byte0018: 0
+          byte0019: 0
+          byte0020: 0
+          byte0021: 0
+          byte0022: 0
+          byte0023: 0
+          byte0024: 0
+          byte0025: 0
+          byte0026: 0
+          byte0027: 0
+          byte0028: 0
+          byte0029: 0
+      meleeName:
+        utf8LengthInBytes: 0
+        bytes:
+          offset0000:
+            byte0000: 0
+            byte0001: 0
+            byte0002: 0
+            byte0003: 0
+            byte0004: 0
+            byte0005: 0
+            byte0006: 0
+            byte0007: 0
+            byte0008: 0
+            byte0009: 0
+            byte0010: 0
+            byte0011: 0
+            byte0012: 0
+            byte0013: 0
+            byte0014: 0
+            byte0015: 0
+          byte0016: 0
+          byte0017: 0
+          byte0018: 0
+          byte0019: 0
+          byte0020: 0
+          byte0021: 0
+          byte0022: 0
+          byte0023: 0
+          byte0024: 0
+          byte0025: 0
+          byte0026: 0
+          byte0027: 0
+          byte0028: 0
+          byte0029: 0
+      utilityName:
+        utf8LengthInBytes: 0
+        bytes:
+          offset0000:
+            byte0000: 0
+            byte0001: 0
+            byte0002: 0
+            byte0003: 0
+            byte0004: 0
+            byte0005: 0
+            byte0006: 0
+            byte0007: 0
+            byte0008: 0
+            byte0009: 0
+            byte0010: 0
+            byte0011: 0
+            byte0012: 0
+            byte0013: 0
+            byte0014: 0
+            byte0015: 0
+          byte0016: 0
+          byte0017: 0
+          byte0018: 0
+          byte0019: 0
+          byte0020: 0
+          byte0021: 0
+          byte0022: 0
+          byte0023: 0
+          byte0024: 0
+          byte0025: 0
+          byte0026: 0
+          byte0027: 0
+          byte0028: 0
+          byte0029: 0
+      isReloadingPrimary: 0
+      reloadProgressPrimary: 0
+      isReloadingSecondary: 0
+      reloadProgressSecondary: 0
+--- !u!114 &6200893167718697824
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7629307799589511846}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 13f765db7f2b99346a593f784c39f420, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  handMount: {fileID: 5985286790363318194}
+  primaryViewPrefabs:
+  - {fileID: 0}
+  - {fileID: 1320136905488848831, guid: 418483a92ecabaf4a9a09a5b07140856, type: 3}
+  - {fileID: 6776639112133972933, guid: 3c407bca2c11a7349bff994d9fde64f4, type: 3}
+  - {fileID: 706467030345849074, guid: ca42192916f0b43488c678edcdf43c95, type: 3}
+  - {fileID: 5483994221210110396, guid: ef1f0620da6a91c47b41ddf9d18d6e83, type: 3}
+  - {fileID: 802215045012410911, guid: 5b10706169b04b540aa8ead51ea79adf, type: 3}
+  secondaryViewPrefabs:
+  - {fileID: 0}
+  - {fileID: 5483994221210110396, guid: 0010a22cc1ec09a438bd4f9a4f1257e7, type: 3}
+  - {fileID: 5483994221210110396, guid: f0e82e540aec3c24f9c7c37f9a7ee09f, type: 3}
+  meleeViewPrefabs:
+  - {fileID: 0}
+  - {fileID: 1772275987025050834, guid: 6c2a8a735f2405f40b8ef87e7f7e19c0, type: 3}
+  utilityViewPrefabs:
+  - {fileID: 0}
+  - {fileID: 6496715479139210789, guid: e6f6d111fdf4d0b4db4c091a82e008d1, type: 3}
+  - {fileID: 6496715479139210789, guid: 315f3f3e62408e144831972bb140055c, type: 3}
+  - {fileID: 6496715479139210789, guid: f293c968efd2e174387fef9401fe9e05, type: 3}
+  primaryName: {fileID: 0}
+  primaryAmmo: {fileID: 0}
+  primaryReloadFill: {fileID: 0}
+  secondaryName: {fileID: 0}
+  secondaryAmmo: {fileID: 0}
+  secondaryReloadFill: {fileID: 0}
 --- !u!1 &7769304657473620615
 GameObject:
   m_ObjectHideFlags: 0

@@ -248,7 +248,17 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            // If using deterministic snapshot-driven driver, skip legacy RPC path.
+            if (GetComponent<Game.Net.Weapons.DeterministicLoadoutViewDriver>())
+                return;
+
             if (!IsOwner) return;
+
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
 
             if (_view) Destroy(_view.gameObject);
             _view = null;
@@ -301,6 +311,7 @@ namespace Game.Net.Weapons
 
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
+// [Weapons] Clears stale children before spawning Secondary local view.
 
         // ====== Defaults if no SO assigned ======
         static readonly Dictionary<Game.Net.SecondaryType, SecondaryStats> _defaults = new();
