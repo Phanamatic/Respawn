@@ -107,6 +107,9 @@ public sealed class FovMesh : MonoBehaviour
         _mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
         _mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
 
+        // Force the FOV root to a world-neutral rotation at enable to ensure we start aligned to the world.
+        transform.rotation = Quaternion.identity;
+
         if (showVisual) EnsureVisualRenderer();
         else DisableVisualRenderer();
     }
@@ -124,12 +127,18 @@ public sealed class FovMesh : MonoBehaviour
         {
             transform.position = follow.position;
         }
+
+        // Lock the FOV root to a world-neutral rotation so it never inherits the player's yaw/pitch/roll.
+        // Because this object is a child of the player, forcing world rotation here prevents any inherited rotation.
+        if (transform.rotation != Quaternion.identity)
+            transform.rotation = Quaternion.identity;
         
         // Reset only the FOV child object rotations, NOT the player's rotation
         if (_meshGO && _meshGO.transform.localRotation != Quaternion.identity)
             _meshGO.transform.localRotation = Quaternion.identity;
         if (_visualGO && _visualGO.transform.localRotation != Quaternion.identity)
             _visualGO.transform.localRotation = Quaternion.identity;
+        // Keeps FOV world-aligned every frame even if the parent rotates mid-frame.
 
         // update fill properties on material
         if (_mr != null)
