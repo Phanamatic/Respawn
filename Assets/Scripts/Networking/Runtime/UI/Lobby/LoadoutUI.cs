@@ -64,6 +64,10 @@ namespace Game.Net
         Coroutine _notifRoutine;
         Coroutine _savingRoutine;
 
+        Coroutine _autoSaveRoutine;
+        float _lastChangeTime;
+        const float AutoSaveDelay = 3f;
+
         PlayerLoadout _saved = PlayerLoadout.Default;
         PlayerLoadout _working = PlayerLoadout.Default;
         bool _loaded;
@@ -185,17 +189,10 @@ namespace Game.Net
             RefreshImages();
         }
 
-        async void OnSaveClicked()
+        void OnSaveClicked()
         {
-            StartSavingNotification();
-            var ok = await CloudSaveClient.Instance.SaveLoadoutAsync(_working);
-            StopSavingNotification(ok);
-            if (ok)
-            {
-                _saved = _working;
-                SessionContext.SetLoadout(_saved);
-                BroadcastLoadoutReady(); // <— keep the in-scene equipment/currently equipped in sync
-            }
+            if (_autoSaveRoutine != null) StopCoroutine(_autoSaveRoutine);
+            _autoSaveRoutine = StartCoroutine(CoSaveNow());
         }
 
         async void OnDiscardClicked()
@@ -204,6 +201,55 @@ namespace Game.Net
             RefreshImages();
             Notify("Loadout changes discarded!");
             await Task.Yield();
+        }
+
+        void ScheduleAutoSave()
+        {
+            _lastChangeTime = Time.time;
+            if (_autoSaveRoutine != null) StopCoroutine(_autoSaveRoutine);
+            _autoSaveRoutine = StartCoroutine(CoAutoSave());
+        }
+
+        IEnumerator CoAutoSave()
+        {
+            yield return new WaitForSecondsRealtime(AutoSaveDelay);
+
+            var csc = CloudSaveClient.Instance;
+            if (csc == null) { _autoSaveRoutine = null; yield break; }
+
+            StartSavingNotification();
+            var task = csc.SaveLoadoutAsync(_working);
+            while (!task.IsCompleted) yield return null;
+            var ok = task.Result;
+
+            StopSavingNotification(ok);
+            if (ok)
+            {
+                _saved = _working;
+                SessionContext.SetLoadout(_saved);
+                BroadcastLoadoutReady();
+            }
+            _autoSaveRoutine = null;
+        }
+
+        IEnumerator CoSaveNow()
+        {
+            var csc = CloudSaveClient.Instance;
+            if (csc == null) yield break;
+
+            StartSavingNotification();
+
+            var task = csc.SaveLoadoutAsync(_working);
+            while (!task.IsCompleted) yield return null;
+            var ok = task.Result;
+
+            StopSavingNotification(ok);
+            if (ok)
+            {
+                _saved = _working;
+                SessionContext.SetLoadout(_saved);
+                BroadcastLoadoutReady();
+            }
         }
 
         void BroadcastLoadoutReady()
@@ -397,6 +443,7 @@ namespace Game.Net
                     break;
             }
             RefreshImages();
+            ScheduleAutoSave();
         }
 
         Sprite SpriteForPrimary(PrimaryType p)

@@ -248,6 +248,10 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            // If using deterministic snapshot-driven driver, skip legacy RPC path.
+            if (GetComponent<Game.Net.Weapons.DeterministicLoadoutViewDriver>())
+                return;
+
             if (!IsOwner) return;
 
             if (sockets && sockets.handMount)
