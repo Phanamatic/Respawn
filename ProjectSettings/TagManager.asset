@@ -23,6 +23,7 @@ TagManager:
   - SFX
   - Ground
   - Smoke
+  - Lobby R2
   layers:
   - Default
   - TransparentFX

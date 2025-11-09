@@ -39,6 +39,7 @@ namespace Game.Net.Weapons
         WeaponView _view;
         Game.Net.PlayerNetwork _player;
         bool _hasEquippedPrimary;
+        bool _hasSnappedGrip;
 
         const int InfiniteReserve = -1;
     const float ProjectileLifetimeSeconds = 10f;
@@ -46,6 +47,7 @@ namespace Game.Net.Weapons
         void Awake()
         {
             _player = GetComponent<Game.Net.PlayerNetwork>();
+            if (!sockets) sockets = GetComponent<PlayerWeaponSockets>(); // runtime fallback
         }
 
         // ====== API ======
@@ -209,6 +211,24 @@ namespace Game.Net.Weapons
             }
         }
 
+        void LateUpdate()
+        {
+            if (!IsOwner) return;
+            if (_view == null || sockets == null) return;
+
+            // Ensure single precise snap of Grip → HandMount after spawn/rebuild.
+            if (!_hasSnappedGrip && sockets.handMount)
+            {
+                _view.SnapGripTo(sockets.handMount);
+                _hasSnappedGrip = true;
+            }
+
+            // Aim toward mouse each frame on owner. Fallback to Front if camera/mouse missing.
+            var cam = Camera.main;
+            var aimed = _view.AimAtMouse(cam, sockets.handMount ? sockets.handMount.position.y : transform.position.y);
+            if (!aimed && sockets.front) _view.SnapAimTo(sockets.front);
+        }
+
         void TryFireOnce()
         {
             if (magazineAmmo.Value <= 0)
@@ -236,6 +256,8 @@ namespace Game.Net.Weapons
 
                 // Nudge forward to avoid self-collision, then ignore shooter colliders.
                 pos += dir * 0.3f;
+                // Ensure plane-lock again in case of external edits
+                pos.y = transform.position.y;
                 var go = Instantiate(_stats.projectilePrefab, pos, rot);
                 var projCol = go.GetComponent<Collider>();
                 if (projCol)
@@ -270,10 +292,15 @@ namespace Game.Net.Weapons
 
         Vector3 GetMuzzleWorld()
         {
-            // If we have a local view on server, use it. Else use sockets.front.
-            if (_view && _view.muzzle) return _view.muzzle.position;
-            if (sockets && sockets.front) return sockets.front.position;
-            return transform.position + GetAimDir() * 0.5f;
+            // Prefer local view muzzle (owner), else the Front socket (server-safe), else fallback.
+            Vector3 p;
+            if (_view && _view.muzzle) p = _view.muzzle.position;
+            else if (sockets && sockets.front) p = sockets.front.position;
+            else p = transform.position + GetAimDir() * 0.5f;
+
+            // Lock to player's Y plane so projectiles travel where players are.
+            p.y = transform.position.y;
+            return p;
         }
 
         bool HasReserveAmmo()
@@ -304,6 +331,7 @@ namespace Game.Net.Weapons
 
             if (_view) Destroy(_view.gameObject);
             _view = null;
+            _hasSnappedGrip = false; // Reset so LateUpdate will snap the new view
 
             var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
             Debug.Log($"[Weapons] RebuildLocalView (client) primary={primaryType}");
@@ -342,16 +370,14 @@ namespace Game.Net.Weapons
             _view = go.GetComponent<WeaponView>();
 
             var t = go.transform;
-            if (_view && _view.grip)
-            {
-                t.SetParent(sockets.handMount, false);
-                t.position = sockets.handMount.position;
-                t.rotation = sockets.handMount.rotation;
-            }
-            else
-            {
-                t.SetParent(transform, false);
-            }
+
+            // Always parent to HandMount and align by Grip so hands line up.
+            t.SetParent(sockets.handMount, true);
+            if (_view) _view.SnapGripTo(sockets.handMount);
+            else { t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation; }
+
+            // Default immediate facing toward Front (in case mouse aim hasn't ticked yet).
+            if (_view && sockets.front) _view.SnapAimTo(sockets.front);
 
             Debug.Log($"[Weapons] Local view spawned prefab={go.name}");
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));

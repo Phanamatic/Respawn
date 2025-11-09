@@ -17204,8 +17204,13 @@ MonoBehaviour:
   secondaryAmmoText: {fileID: 815630908}
   secondaryWeaponName: {fileID: 815630906}
   meleeWeaponName: {fileID: 1239405835}
-  utilityAmmoText: {fileID: 0}
+  utilityAmmoText: {fileID: 1672744100}
   utilityWeaponName: {fileID: 98428753}
+  equipScale: 1.15
+  equipLerpSpeed: 12
+  equipBold: 1
+  equipGlowColor: {r: 1, g: 1, b: 1, a: 0.85}
+  equipGlowWidth: 0.25
 --- !u!4 &214724278
 Transform:
   m_ObjectHideFlags: 0
@@ -127130,6 +127135,17 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!114 &1672744100 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 3751587539201562754, guid: 2002d36d84754944db7424e8971d76d6, type: 3}
+  m_PrefabInstance: {fileID: 815630903}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!43 &1672822713
 Mesh:
   m_ObjectHideFlags: 0

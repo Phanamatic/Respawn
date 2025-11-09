@@ -12,6 +12,7 @@ namespace Game.Net.Weapons
         public float damage;
 
         float _alive;
+        float _spawnY;
         Game.Net.PlayerNetwork _owner;
         TeamId _ownerTeam = TeamId.A;
         ulong _ownerClientId = ulong.MaxValue;
@@ -69,6 +70,7 @@ namespace Game.Net.Weapons
                 trail.emitting = true;
             }
 
+            _spawnY = transform.position.y;    // remember the plane we spawned on
             if (!IsServer)
                 enabled = false; // server moves it
 
@@ -79,13 +81,14 @@ namespace Game.Net.Weapons
         {
             if (!IsServer) return;
 
-            // Horizontal-only move (XZ). Ignore any Y in forward.
-            var fwd = transform.forward;
+            var fwd = transform.forward; // horizontal only
             fwd.y = 0f;
             if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
             fwd.Normalize();
 
-            transform.position += fwd * speed * Time.deltaTime;
+            var p = transform.position + fwd * speed * Time.deltaTime;
+            p.y = _spawnY;                  // hard-lock to spawn plane
+            transform.position = p;
 
             _alive += Time.deltaTime;
             if (_alive >= lifetime) { Debug.Log($"[Weapons] Projectile despawn (lifetime) t={_alive:0.00}"); Despawn(); }

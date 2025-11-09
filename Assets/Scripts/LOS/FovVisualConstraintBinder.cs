@@ -15,6 +15,9 @@ using UnityEditor;
 [AddComponentMenu("LOS/FOV Visual Constraint (Edit & Play)")]
 public sealed class FovVisualConstraintBinder : MonoBehaviour
 {
+    // Always keep the FOV visual on this world height.
+    private const float FixedY = 0.97f;
+
     [Tooltip("The child visual to constrain. If left empty, this will try to find a child named \"__FOVVisual\" or the first Renderer under this object.")]
     public Transform Visual;
 
@@ -45,13 +48,18 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
     private void Update()
     {
 #if UNITY_EDITOR
-        // Safe place (in Edit Mode) to do component adds after OnValidate finished.
         if (!Application.isPlaying && _deferBind)
         {
             _deferBind = false;
             TryBind();
         }
 #endif
+        // Keep Y locked every frame (edit & play).
+        if (Visual)
+        {
+            var p = Visual.position;
+            if (!Mathf.Approximately(p.y, FixedY)) { p.y = FixedY; Visual.position = p; }
+        }
     }
 
     private void TryBind()
@@ -70,7 +78,8 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
         int idx = pc.AddSource(src);
 
         // Follow position on all axes; DO NOT inherit rotation.
-        pc.translationAxis = Axis.X | Axis.Y | Axis.Z;
+        // Follow X/Z only; Y is fixed by us.
+        pc.translationAxis = Axis.X | Axis.Z;
         pc.rotationAxis     = 0; // Axis.None
 
         // Preserve offsets explicitly (no maintainOffset in Unity 6).
@@ -82,7 +91,11 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
         pc.constraintActive = true;
         pc.enabled          = true;
 
-        // Make sure it’s visible in the Inspector.
+        // Snap Y now so the initial pose is correct.
+        var p = Visual.position;
+        if (!Mathf.Approximately(p.y, FixedY)) { p.y = FixedY; Visual.position = p; }
+
+        // Make sure it's visible in the Inspector.
         pc.hideFlags = HideFlags.None;
         Visual.hideFlags = HideFlags.None;
 

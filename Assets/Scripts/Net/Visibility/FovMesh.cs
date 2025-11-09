@@ -12,6 +12,9 @@ using Game.Net;
 [RequireComponent(typeof(Transform))]
 public sealed class FovMesh : MonoBehaviour
 {
+    // Visual disc should always sit on this world height.
+    const float VisualFixedY = 0.97f;
+
     [Range(0.5f, 50f)] public float radiusMeters = 12f;
     [Range(16, 512)] public int rayCount = 220;
     public LayerMask occluderMask;
@@ -171,27 +174,12 @@ public sealed class FovMesh : MonoBehaviour
                 _visualMpb.SetFloat(_RadiusId, Mathf.Max(0.1f, radiusMeters));
                 _visualRenderer.SetPropertyBlock(_visualMpb);
                 
-                // Position visual just above ground
+                // Hard-lock visual to Y = VisualFixedY in world space.
                 if (_visualGO)
                 {
-                    var centerWS = follow ? follow.position : transform.position;
-                    float groundY = centerWS.y;
-                    
-                    // Raycast to find ground
-                    if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out RaycastHit groundHit, 100f, LayerMask.GetMask("Ground")))
-                    {
-                        groundY = groundHit.point.y;
-                    }
-                    else if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out groundHit, 100f))
-                    {
-                        if (groundHit.collider.CompareTag("Ground"))
-                        {
-                            groundY = groundHit.point.y;
-                        }
-                    }
-                    
-                    float localGroundOffset = groundY - centerWS.y + visualHeightOffset;
-                    _visualGO.transform.localPosition = new Vector3(0f, localGroundOffset, 0f);
+                    var vt = _visualGO.transform;
+                    var wp = vt.position;
+                    if (!Mathf.Approximately(wp.y, VisualFixedY)) { wp.y = VisualFixedY; vt.position = wp; }
                 }
             }
         }
@@ -341,7 +329,8 @@ public sealed class FovMesh : MonoBehaviour
         // Add the source and capture its index so we can set offsets manually.
         var idx = pc.AddSource(src);
         // Drive position on all axes; do NOT inherit any rotation from the parent.
-        pc.translationAxis = Axis.X | Axis.Y | Axis.Z;
+        // Follow only X/Z from the source; we'll clamp Y ourselves.
+        pc.translationAxis = Axis.X | Axis.Z;
         pc.rotationAxis     = 0; // Axis.None
         // Preserve current world-space offset (Unity 6 ParentConstraint lacks `maintainOffset`).
         var visualT = _visualGO.transform;
@@ -351,6 +340,11 @@ public sealed class FovMesh : MonoBehaviour
         pc.locked           = true;
         pc.constraintActive = true;
         pc.enabled          = true;
+
+        // Initialize world Y to the fixed plane.
+        var vt = _visualGO.transform;
+        var wp = vt.position;
+        if (!Mathf.Approximately(wp.y, VisualFixedY)) { wp.y = VisualFixedY; vt.position = wp; }
     }
 
     void DisableVisualRenderer()

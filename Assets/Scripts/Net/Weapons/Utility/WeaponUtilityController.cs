@@ -40,6 +40,7 @@ namespace Game.Net.Weapons
         void Awake()
         {
             _player = GetComponent<Game.Net.PlayerNetwork>();
+            if (!sockets) sockets = GetComponent<PlayerWeaponSockets>(); // runtime fallback
         }
 
         // ====== API ======
@@ -131,10 +132,14 @@ namespace Game.Net.Weapons
             _view = go.GetComponent<WeaponView>();
 
             var t = go.transform;
-            // Precisely snap 'grip' to Hand Mount for utilities too
+
+            // Bind Grip → Hand Mount
             t.SetParent(sockets.handMount, false);
             if (_view) _view.SnapGripTo(sockets.handMount);
             else { t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation; }
+
+            // Default facing toward Front point (uses tip if present)
+            if (_view && sockets.front) _view.SnapAimTo(sockets.front);
 
             if (_view && sockets.equipStart && sockets.front)
             {

@@ -19,7 +19,7 @@ public sealed class LineOfSightTransparency : MonoBehaviour
     [Min(1)]  public int   maxHits     = 32;
 
     [Header("Behaviour")]
-    [Range(0f, 1f)] public float occludedAlpha = 0.3f;
+    [Range(0f, 1f)] public float occludedAlpha = 0.6f;
     [Min(0f)] public float fadeSpeed = 12f;
     [Tooltip("How often to refresh cached renderers for a tag (seconds).")]
     [Min(0.1f)] public float recacheInterval = 2f;

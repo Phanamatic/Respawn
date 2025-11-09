@@ -83,6 +83,10 @@ namespace Game.Net
             {
                 // Turn FOV/LOS on only in Match, off in Lobby
                 SetFovAndLosEnabled(newPhase == PlayerPhase.Match);
+
+                // Always keep camera occluder transparency on in both phases.
+                // Lobby uses only the "Occluder" layer; Match uses Occluder + OccluderExtra.
+                EnsureCameraOccluderTransparencyActive(newPhase == PlayerPhase.Lobby);
             }
 
             if (IsOwner && newPhase == PlayerPhase.Match)
@@ -407,6 +411,9 @@ namespace Game.Net
 
                 // NEW: Only enable FOV/LOS in Match
                 SetFovAndLosEnabled(_phase == PlayerPhase.Match);
+
+                // Also enable the simple camera occluder transparency in Lobby as well.
+                EnsureCameraOccluderTransparencyActive(_phase == PlayerPhase.Lobby);
 
                 BeginSubmitNameRoutine();
 
@@ -2340,7 +2347,14 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
                 if (_colliders[i]) _colliders[i].enabled = enabled;
         }
 
-        public TeamId GetTeam() => _team.Value;
+    public TeamId GetTeam() => _team.Value;
+
+    // === UI accessors (read-only) ===
+    /// <summary>Current equipped slot (0=Primary, 1=Secondary, 2=Melee, 3=Utility) for local UI.</summary>
+    public Game.Net.WeaponSlot GetActiveSlot() => (Game.Net.WeaponSlot)_activeSlot.Value;
+
+    /// <summary>Replicated loadout so UI can show names without waiting for per-slot equip.</summary>
+    public Game.Net.NetLoadout GetCurrentNetLoadout() => _netLoadout.Value;
         public void SetTeam(TeamId team) { if (IsServer) _team.Value = team; }
 
         public float GetHealth() => _health.Value;
@@ -2535,16 +2549,14 @@ void SetFovAndLosEnabled(bool enabled)
         if (_cam != null)
         {
             var los = _cam.GetComponent<LineOfSightTransparency>();
-            if (!los)
-            {
-                los = _cam.gameObject.AddComponent<LineOfSightTransparency>();
-                los.target = transform;
-            }
-            else
-            {
-                los.target = transform;
-                los.enabled = true;
-            }
+            if (!los) los = _cam.gameObject.AddComponent<LineOfSightTransparency>();
+
+            // Match phase keeps your original behavior, but we explicitly set the knobs:
+            los.target = transform;
+            los.occluderLayers = LayerMask.GetMask("Occluder", "OccluderExtra");
+            los.occludedAlpha = 0.6f; // 40% transparent everywhere
+
+            los.enabled = true;
 
             // Prevent occlusion culling issues with our transparent fades
             _cam.useOcclusionCulling = false;
@@ -2575,6 +2587,28 @@ void RemoveLosFromCamera()
     // Remove camera LOS transparency in lobby so players never get faded
     var los = _cam.GetComponent<LineOfSightTransparency>();
     if (los) Destroy(los);
+}
+
+// Keep simple camera→target occluder transparency active regardless of phase.
+// Lobby = only "Occluder" layer; Match = "Occluder" + "OccluderExtra".
+void EnsureCameraOccluderTransparencyActive(bool lobbyOnly = false)
+{
+    if (!IsOwner) return;
+    if (_cam == null) TryBindCamera();
+    if (_cam == null) return;
+
+    var los = _cam.GetComponent<LineOfSightTransparency>();
+    if (!los) los = _cam.gameObject.AddComponent<LineOfSightTransparency>();
+
+    los.target = transform;
+    los.occludedAlpha = 0.6f; // 40% transparent
+    los.occluderLayers = lobbyOnly
+        ? LayerMask.GetMask("Occluder")
+        : LayerMask.GetMask("Occluder", "OccluderExtra");
+    los.enabled = true;
+
+    // Avoid culling fights with faded occluders.
+    _cam.useOcclusionCulling = false;
 }
 
         void SetSprint(bool on)
