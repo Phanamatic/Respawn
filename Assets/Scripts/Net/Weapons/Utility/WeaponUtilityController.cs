@@ -24,12 +24,18 @@ namespace Game.Net.Weapons
         [SerializeField] GameObject smokePrefab;
         [SerializeField] GameObject stunPrefab;
 
+        [Header("Utility View Prefabs (for hand mount)")]
+        [SerializeField] GameObject grenadeViewPrefab;
+        [SerializeField] GameObject smokeViewPrefab;
+        [SerializeField] GameObject stunViewPrefab;
+
         [Header("Settings")]
         [SerializeField] float throwForce = 20f;
         [SerializeField] float throwAngle = 30f; // degrees upward
 
         Game.Net.PlayerNetwork _player;
         bool _hasEquippedUtility;
+        WeaponView _view;
 
         void Awake()
         {
@@ -67,6 +73,79 @@ namespace Game.Net.Weapons
             ammoCount.Value = 2; // Default 2 per utility
             equippedWeaponName.Value = t.ToString();
             _hasEquippedUtility = true;
+
+            RebuildLocalViewClientRpc();
+        }
+
+        // ====== Client visuals ======
+        [ClientRpc] void RebuildLocalViewClientRpc()
+        {
+            RebuildLocalViewImmediate();
+        }
+
+        public void RebuildLocalViewImmediate()
+        {
+            if (!IsOwner) return;
+
+            if (_view) Destroy(_view.gameObject);
+            _view = null;
+
+            if (!_hasEquippedUtility) return;
+            var utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
+            if (utilityType == Game.Net.UtilityType.None) return;
+
+            if (!sockets)
+            {
+                Debug.LogWarning("[Weapons] PlayerWeaponSockets missing on player. Cannot attach Utility WeaponView.");
+                return;
+            }
+            if (!sockets.handMount)
+            {
+                Debug.LogWarning("[Weapons] sockets.handMount not assigned. Cannot attach Utility WeaponView.");
+                return;
+            }
+
+            GameObject viewPrefab = utilityType switch
+            {
+                Game.Net.UtilityType.Grenade => grenadeViewPrefab,
+                Game.Net.UtilityType.Smoke => smokeViewPrefab,
+                Game.Net.UtilityType.Stun => stunViewPrefab,
+                _ => null
+            };
+
+            if (!viewPrefab)
+            {
+                Debug.LogWarning($"[Weapons] No view prefab for {utilityType}. Assign in inspector.");
+                return;
+            }
+
+            // Ensure only one weapon view exists under the Hand Mount
+            if (sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
+            var go = Instantiate(viewPrefab);
+            go.name = $"{utilityType}_View(Local)";
+            _view = go.GetComponent<WeaponView>();
+
+            var t = go.transform;
+            if (_view && _view.grip)
+            {
+                t.SetParent(sockets.handMount, false);
+                t.position = sockets.handMount.position;
+                t.rotation = sockets.handMount.rotation;
+            }
+            else
+            {
+                t.SetParent(transform, false);
+            }
+
+            if (_view && sockets.equipStart && sockets.front)
+            {
+                StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
+            }
         }
 
         [ServerRpc] void RequestThrowServerRpc(ServerRpcParams p = default)

@@ -11,6 +11,7 @@ using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement; // allow server to check active scene name
 using TMPro;
 using Game.Net.Weapons;
 using Unity.Collections;
@@ -97,7 +98,9 @@ namespace Game.Net
         }
 // Brief dev comment.
 // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.        // Simple server rate-limits
-        float _lastSwitchServerTime, _lastThrowServerTime;
+    float _lastSwitchServerTime, _lastThrowServerTime;
+    // New slot switch rate-limit timestamp (next allowed server-side switch time)
+    float _nextAllowedSlotSwitch;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
         const float k_MinThrowInterval = 0.5f;    // guard spam
         [Header("Movement")]
@@ -437,7 +440,8 @@ namespace Game.Net
 
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
-                _inputPaused = false;
+                // Actively unpause & ensure input map is enabled when phase is set.
+                SetInputPaused(false);
 
                 UpdateHealthUI(_health.Value);
                 _statsLastPersisted = default;
@@ -459,7 +463,12 @@ namespace Game.Net
 
             // Always subscribe to yaw changes for new sync system
             _netYaw.OnValueChanged += OnYawChanged;
+
+            // Phase resync safety net for owner: flip quickly once we're in a Match_* scene.
+            if (IsOwner)
+                StartCoroutine(CoPhaseReconcileKickoff());
         }
+        // Ensures local phase doesn't linger as Lobby after entering Match_*.
 
         void Awake()
         {
@@ -905,23 +914,91 @@ public void ForceActiveSlotServer(byte slot)
     Debug.Log($"[Weapons] ForceActiveSlotServer -> {slot} cid={OwnerClientId}");
 }
 
+        // ===== Helpers / misc =====
+        bool IsInMatchScene()
+        {
+            // Treat any scene that starts with "Match_" as match gameplay context.
+            // This avoids client-side phase desync blocking weapon switches.
+            var name = SceneManager.GetActiveScene().name;
+            return !string.IsNullOrEmpty(name) && name.StartsWith("Match_");
+        }
+
+        bool IsInMatchSceneServer()
+        {
+            var name = SceneManager.GetActiveScene().name;
+            return !string.IsNullOrEmpty(name) && name.StartsWith("Match_");
+        }
+        // Server accepts slot switches whenever running a Match_* scene (phase relax).
+
+        // Client coroutine: for a few seconds after spawn, ask server to reconcile phase.
+        System.Collections.IEnumerator CoPhaseReconcileKickoff()
+        {
+            // Apply current networked phase immediately once (helps late-joiners).
+            SetPhase(_netPhase.Value);
+
+            float start = Time.unscaledTime;
+            while (Time.unscaledTime - start < 5f)
+            {
+                if (IsInMatchScene() && _phase != PlayerPhase.Match)
+                    RequestPhaseReconcileServerRpc();
+
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
+        }
+
         void RequestSwitchSlot(byte slot)
         {
-            if (_inputPaused) return;
-            if (_phase != PlayerPhase.Match) return;
+            // Still respect pause hard-stop
+            if (_inputPaused)
+            {
+                Debug.Log($"[Weapons] Slot switch ignored: paused={_inputPaused} phase={_phase} req={slot}");
+                return;
+            }
+
+            // Allow switching if either (a) phase says Match, or (b) we're already in a Match_* scene.
+            bool inMatchScene = IsInMatchScene();
+            bool phaseOk = (_phase == PlayerPhase.Match);
+
+            if (!phaseOk && !inMatchScene)
+            {
+                Debug.Log($"[Weapons] Slot switch ignored: not in match context (phase={_phase}, scene='{SceneManager.GetActiveScene().name}') req={slot}");
+                return;
+            }
+
+            Debug.Log($"[Weapons] Slot switch request -> {slot} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
             if (slot > 3) return;
             RequestSwitchSlotServerRpc(slot);
         }
 
-        [ServerRpc]
-        void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
+        [ServerRpc(RequireOwnership = false)]
+        void RequestSwitchSlotServerRpc(int slot, ServerRpcParams p = default)
         {
-            if (_phase != PlayerPhase.Match) return;
-            if (slot > 3) return;
+            if (!IsServer) return;
+            var from = p.Receive.SenderClientId;
 
-            // Min interval
-            if (Time.time - _lastSwitchServerTime < k_MinSwitchInterval) return;
-            _lastSwitchServerTime = Time.time;
+            // Allow during Match_* scenes even if server-side phase hasn't flipped yet.
+            bool inMatchScene = IsInMatchSceneServer();
+            bool phaseOk = (_phase == PlayerPhase.Match);
+            if (!phaseOk && !inMatchScene)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (not in match context). cid={from} req={slot} phase={_phase} scene='{SceneManager.GetActiveScene().name}'");
+                return;
+            }
+
+            if (slot < 0 || slot > 3)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (bad slot). cid={from} req={slot}");
+                return;
+            }
+
+            // Rate limit: prevent spam.
+            var now = Time.unscaledTime;
+            if (now < _nextAllowedSlotSwitch)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (rate-limit). cid={from} req={slot}");
+                return;
+            }
+            _nextAllowedSlotSwitch = now + k_MinSwitchInterval;
 
             // Validate against equipped loadout: Primary/Secondary always valid; Melee always allowed; Utility only if set
             bool allowed =
@@ -929,13 +1006,30 @@ public void ForceActiveSlotServer(byte slot)
                 slot == 1 ||
                 slot == 2 || // melee fixed
                 (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
+            if (!allowed)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (utility none). cid={from} req={slot}");
+                return;
+            }
 
-            if (!allowed) { Debug.Log($"[Weapons] Slot switch rejected -> {slot} (not allowed) cid={OwnerClientId}"); return; }
-
-            _activeSlot.Value = slot;
-            Debug.Log($"[Weapons] Active slot -> {slot} cid={OwnerClientId}");
-            // TODO: later handle firing state teardown and equip animations.
+            _activeSlot.Value = (byte)slot;
+            Debug.Log($"[Weapons] Active slot -> {slot} from cid={from} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
         }
+
+        // Ask the server to write the authoritative phase for this player (scene-driven fallback).
+        [ServerRpc(RequireOwnership = false)]
+        void RequestPhaseReconcileServerRpc(ServerRpcParams p = default)
+        {
+            if (!IsServer) return;
+
+            var desired = IsInMatchSceneServer() ? PlayerPhase.Match : PlayerPhase.Lobby;
+            if (_netPhase.Value != desired)
+            {
+                _netPhase.Value = desired;
+                Debug.Log($"[Phase] Reconciled phase -> {desired} for cid={OwnerClientId}");
+            }
+        }
+        // Server computes desired phase from its active scene and writes `_netPhase`.
 
         void RequestThrowUtility()
         {
@@ -1005,6 +1099,8 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log($"[Weapons] Equip primary request -> {type}"); 
                     primary.Equip(type, null);
                     primary.SetVisible(true);
+                    // Owner gets instant local view; server RPC still follows for authority.
+                    primary.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
@@ -1017,9 +1113,12 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log($"[Weapons] Equip secondary request -> {type}"); 
                     secondary.Equip(type, null);
                     secondary.SetVisible(true);
+                    // Show it now for the owner; server will still validate/state-sync.
+                    secondary.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
+            // Rebuild immediately on the owner so the hand mount never looks empty.
             else if (slot == 2) // Melee
             {
                 if (melee) 
@@ -1027,6 +1126,8 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log("[Weapons] Equip melee (Knife)"); 
                     melee.Equip();
                     melee.SetVisible(true);
+                    // Prevents a visible gap when swapping quickly to melee.
+                    melee.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
@@ -1034,7 +1135,14 @@ public void ForceActiveSlotServer(byte slot)
             {
                 if (_netLoadout.Value.util == (byte)UtilityType.None) { Debug.LogWarning("[Weapons] Equip utility skipped: None"); return; }
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu) { Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); wu.Equip((UtilityType)_netLoadout.Value.util); } else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
+                if (wu) 
+                { 
+                    Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); 
+                    wu.Equip((UtilityType)_netLoadout.Value.util);
+                    // Utility shows up on the owner immediately as well.
+                    wu.RebuildLocalViewImmediate();
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
 
             // Publish an atomic snapshot for clients (server only).
@@ -1084,10 +1192,15 @@ public void ForceActiveSlotServer(byte slot)
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
+            _aSlot1.AddBinding("<Keyboard>/numpad1"); // support numpad
             _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
+            _aSlot2.AddBinding("<Keyboard>/numpad2");
             _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
+            _aSlot3.AddBinding("<Keyboard>/numpad3");
             _aSlot4 = _map.AddAction(name: "Slot4", type: InputActionType.Button, binding: "<Keyboard>/4");
+            _aSlot4.AddBinding("<Keyboard>/numpad4");
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
+            // Brief dev comment: users often hit numpad 1–4; bind both.
             _aScoreboard = _map.AddAction(name: "Scoreboard", type: InputActionType.Button, binding: "<Keyboard>/tab");
 
             _aDash.performed += OnDashPerformed;
@@ -1208,8 +1321,19 @@ void OnReloadInput()
             {
                 var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
             }
-            if (paused) _map?.Disable(); else _map?.Enable();
-            if (paused) ShowScoreboard(false);
+
+            if (paused)
+            {
+                _map?.Disable();
+                ShowScoreboard(false);
+            }
+            else
+            {
+                // Guard: after phase changes or reconnects the map may be disabled – force enable.
+                if (_map != null && !_map.enabled) _map.Enable();
+            }
+
+            Debug.Log($"[Input] SetInputPaused -> {paused} mapEnabled={(_map != null && _map.enabled)} phase={_phase}");
         }
 
         void TryBindCamera()

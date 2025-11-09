@@ -248,10 +248,11 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
-            // If using deterministic snapshot-driven driver, skip legacy RPC path.
-            if (GetComponent<Game.Net.Weapons.DeterministicLoadoutViewDriver>())
-                return;
+            RebuildLocalViewImmediate();
+        }
 
+        public void RebuildLocalViewImmediate()
+        {
             if (!IsOwner) return;
 
             if (sockets && sockets.handMount)
@@ -311,6 +312,7 @@ namespace Game.Net.Weapons
 
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
+        // Mirrors Primary: owner can rebuild instantly; server fan-out still uses the RPC.
 // [Weapons] Clears stale children before spawning Secondary local view.
 
         // ====== Defaults if no SO assigned ======
