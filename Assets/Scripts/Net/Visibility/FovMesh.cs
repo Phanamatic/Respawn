@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Animations; // ParentConstraint
 using Game.Net;
+// Add Animations namespace so we can add/configure a Parent Constraint at runtime.
 
 /// <summary>
 /// Builds a 360° field-of-view mesh around the local player by raycasting against Occluder layer.
@@ -107,8 +109,10 @@ public sealed class FovMesh : MonoBehaviour
         _mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
         _mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
 
-        // Force the FOV root to a world-neutral rotation at enable to ensure we start aligned to the world.
-        transform.rotation = Quaternion.identity;
+    // Do NOT touch the owning object's rotation.
+    // If this component sits on the Player root, forcing rotation here would kill mouse-aim.
+    // Visual children are handled via ParentConstraint instead.
+    // (If you mount FovMesh on a separate helper object, you can safely keep it identity-rotated.)
 
         if (showVisual) EnsureVisualRenderer();
         else DisableVisualRenderer();
@@ -128,16 +132,13 @@ public sealed class FovMesh : MonoBehaviour
             transform.position = follow.position;
         }
 
-        // Lock the FOV root to a world-neutral rotation so it never inherits the player's yaw/pitch/roll.
-        // Because this object is a child of the player, forcing world rotation here prevents any inherited rotation.
-        if (transform.rotation != Quaternion.identity)
-            transform.rotation = Quaternion.identity;
-        
-        // Reset only the FOV child object rotations, NOT the player's rotation
+        // Do not modify the player's rotation here; mouse-aim logic owns yaw.
+        // Keep child visuals neutral locally; the ParentConstraint on the visual prevents inheriting rotation in world space.
         if (_meshGO && _meshGO.transform.localRotation != Quaternion.identity)
             _meshGO.transform.localRotation = Quaternion.identity;
         if (_visualGO && _visualGO.transform.localRotation != Quaternion.identity)
             _visualGO.transform.localRotation = Quaternion.identity;
+        // [LOS] Player yaw is untouched; visual stays world-aligned via ParentConstraint.
         // Keeps FOV world-aligned every frame even if the parent rotates mid-frame.
 
         // update fill properties on material
@@ -328,7 +329,28 @@ public sealed class FovMesh : MonoBehaviour
         _visualRenderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
         _visualRenderer.enabled = (_visualRenderer.sharedMaterial != null);
         if (_visualGO && !_visualGO.activeSelf) _visualGO.SetActive(_visualRenderer.enabled);
-        _visualGO.transform.localPosition = new Vector3(0f, visualHeightOffset, 0f);
+    _visualGO.transform.localPosition = new Vector3(0f, visualHeightOffset, 0f);
+    // Ensure a stable, searchable name for the child visual so tooling can find it.
+    if (_visualGO.name != "__FOVVisual") _visualGO.name = "__FOVVisual";
+    // Dev: Named child so the constraint helper can auto-bind even in Edit Mode.
+        // ParentConstraint setup: ensure the visual follows position but not rotation.
+        var pc = _visualGO.GetComponent<ParentConstraint>();
+        if (!pc) pc = _visualGO.AddComponent<ParentConstraint>();
+        for (int i = pc.sourceCount - 1; i >= 0; i--) pc.RemoveSource(i);
+        var src = new ConstraintSource { sourceTransform = follow ? follow : transform, weight = 1f };
+        // Add the source and capture its index so we can set offsets manually.
+        var idx = pc.AddSource(src);
+        // Drive position on all axes; do NOT inherit any rotation from the parent.
+        pc.translationAxis = Axis.X | Axis.Y | Axis.Z;
+        pc.rotationAxis     = 0; // Axis.None
+        // Preserve current world-space offset (Unity 6 ParentConstraint lacks `maintainOffset`).
+        var visualT = _visualGO.transform;
+        var sourceT = follow ? follow : transform;
+        pc.SetTranslationOffset(idx, visualT.position - sourceT.position);
+        pc.SetRotationOffset(idx, Vector3.zero);
+        pc.locked           = true;
+        pc.constraintActive = true;
+        pc.enabled          = true;
     }
 
     void DisableVisualRenderer()
