@@ -46831,7 +46831,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &619738985
 RectTransform:
   m_ObjectHideFlags: 0
@@ -98614,13 +98614,14 @@ GameObject:
   - component: {fileID: 1513861098}
   - component: {fileID: 1513861100}
   - component: {fileID: 1513861099}
+  - component: {fileID: 1513861101}
   m_Layer: 5
   m_Name: Panel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1513861098
 RectTransform:
   m_ObjectHideFlags: 0
@@ -98678,6 +98679,18 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1513861097}
   m_CullTransparentMesh: 1
+--- !u!225 &1513861101
+CanvasGroup:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1513861097}
+  m_Enabled: 1
+  m_Alpha: 1
+  m_Interactable: 1
+  m_BlocksRaycasts: 1
+  m_IgnoreParentGroups: 0
 --- !u!1001 &1528952976
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -112190,6 +112203,7 @@ GameObject:
   - component: {fileID: 6628932833679073909}
   - component: {fileID: 3946146966110220746}
   - component: {fileID: 6369312593438363805}
+  - component: {fileID: 9086412479215908270}
   m_Layer: 5
   m_Name: Armoury Panel
   m_TagString: Untagged
@@ -114093,7 +114107,7 @@ MonoBehaviour:
   secondaryTabBtn: {fileID: 1687659087521077911}
   meleeTabBtn: {fileID: 8004550547207291848}
   utilityTabBtn: {fileID: 4099347095827091930}
-  knifeSprite: {fileID: 21300000, guid: 2db755892af5537478ab2a3aa771dbfa, type: 3}
+  knifeSprite: {fileID: -1422437730, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
   saveBtn: {fileID: 6241223156727250574}
   discardBtn: {fileID: 462350842062355329}
   notificationPanel: {fileID: 6257347937092168051}
@@ -116577,6 +116591,30 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4031972799295634118}
   m_CullTransparentMesh: 1
+--- !u!114 &9086412479215908270
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4031972799295634118}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: efcb6be038773714aa0acd50c9510b4c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  bootPanel: {fileID: 1513861097}
+  bootPanelCanvasGroup: {fileID: 1513861101}
+  bootText: {fileID: 619738986}
+  finalStatusText: {fileID: 359386391}
+  initMessage: Initiating Armoury Systems...
+  onlineMessage: '[ARMOURY ONLINE]'
+  typingSpeed: 20
+  messageDelay: 1.5
+  minAlpha: 0.39
+  maxAlpha: 0.61
+  pulseSpeed: 2
+  scaleDownDuration: 0.15
 --- !u!1 &9143742397326933997
 GameObject:
   m_ObjectHideFlags: 0
