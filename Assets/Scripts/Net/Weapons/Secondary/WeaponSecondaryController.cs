@@ -38,7 +38,7 @@ namespace Game.Net.Weapons
         bool _hasEquippedSecondary;
 
         const int InfiniteReserve = -1;
-        const float ProjectileLifetimeSeconds = 3f;
+    const float ProjectileLifetimeSeconds = 10f;
 
         void Awake()
         {
@@ -50,6 +50,15 @@ namespace Game.Net.Weapons
         {
             if (!IsServer) { RequestEquipServerRpc((byte)secondaryType); }
             else ServerEquip(secondaryType, stats);
+        }
+
+        /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (_view && _view.gameObject)
+            {
+                _view.gameObject.SetActive(visible);
+            }
         }
 
         public void OnSprintChanged(bool on) { if (isReloading.Value) _reloadPaused = on; }
@@ -239,6 +248,8 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            if (!IsOwner) return;
+
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
@@ -263,6 +274,13 @@ namespace Game.Net.Weapons
             {
                 Debug.LogWarning($"[Weapons] No WeaponView prefab set for {secondaryType}. Assign SecondaryStats.weaponViewPrefab.");
                 return;
+            }
+
+            // Ensure only one weapon view exists under the Hand Mount
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
             }
 
             var go = Instantiate(localStats.weaponViewPrefab);

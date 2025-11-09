@@ -41,7 +41,7 @@ namespace Game.Net.Weapons
         bool _hasEquippedPrimary;
 
         const int InfiniteReserve = -1;
-        const float ProjectileLifetimeSeconds = 3f;
+    const float ProjectileLifetimeSeconds = 10f;
 
         void Awake()
         {
@@ -53,6 +53,15 @@ namespace Game.Net.Weapons
         {
             if (!IsServer) { RequestEquipServerRpc((byte)primaryType); } // validate server-side
             else ServerEquip(primaryType, stats);
+        }
+
+        /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (_view && _view.gameObject)
+            {
+                _view.gameObject.SetActive(visible);
+            }
         }
 
         public void OnSprintChanged(bool on)   { if (isReloading.Value) _reloadPaused = on; }
@@ -75,10 +84,12 @@ namespace Game.Net.Weapons
 
         void ServerEquip(Game.Net.PrimaryType t, GunStats provided)
         {
+            Debug.Log($"[Weapons] ServerEquip start cid={OwnerClientId} type={t} provided={(provided!=null)}");
             _netPrimaryType.Value = (byte)t;
             var nextStats = provided ?? LookupAssigned(t) ?? GetDefaults(t);
             if (nextStats == null)
             {
+                Debug.LogWarning($"[Weapons] ServerEquip aborted: no GunStats found for {t}. Clearing state.");
                 _stats = null;
                 _hasEquippedPrimary = false;
                 magazineAmmo.Value = 0;
@@ -104,6 +115,11 @@ namespace Game.Net.Weapons
                 equippedWeaponName.Value = t.ToString();
                 _reloadRemain = 0f;
                 _hasEquippedPrimary = true;
+                Debug.Log($"[Weapons] Equipped new primary={t} mag={magazineAmmo.Value} reserve={(reserveAmmo.Value < 0 ? "INF" : reserveAmmo.Value.ToString())} fireRate={_stats.fireRate} auto={_stats.automatic}");
+            }
+            else
+            {
+                Debug.Log($"[Weapons] Re-equipping same primary={t} (refresh view only).");
             }
 
             _fireCooldown = 0f;
@@ -112,19 +128,37 @@ namespace Game.Net.Weapons
             RebuildLocalViewClientRpc();
         }
 
-        [ServerRpc] void RequestFireStartServerRpc(ServerRpcParams p = default) { _firing = true; }
-        [ServerRpc] void RequestFireStopServerRpc(ServerRpcParams p = default)  { _firing = false; }
+        [ServerRpc] void RequestFireStartServerRpc(ServerRpcParams p = default)
+        {
+            _firing = true;
+            Debug.Log($"[Weapons] FireStart cid={OwnerClientId} gun={_stats?.type.ToString() ?? "<null>"} mag={magazineAmmo.Value} reserve={(reserveAmmo.Value < 0 ? "INF" : reserveAmmo.Value.ToString())}");
+        }
+        [ServerRpc] void RequestFireStopServerRpc(ServerRpcParams p = default)
+        {
+            _firing = false;
+            Debug.Log($"[Weapons] FireStop cid={OwnerClientId}");
+        }
 
         [ServerRpc] void RequestReloadServerRpc(ServerRpcParams p = default)
         {
-            if (isReloading.Value) return;
-            if (magazineAmmo.Value >= _stats.magazineSize) return;
-            if (!HasReserveAmmo()) return;
+            if (isReloading.Value) { Debug.Log($"[Weapons] Reload rejected: already reloading (cid={OwnerClientId})"); return; }
+            if (_stats == null)    { Debug.LogWarning($"[Weapons] Reload rejected: no stats (cid={OwnerClientId})"); return; }
+            if (magazineAmmo.Value >= _stats.magazineSize)
+            {
+                Debug.Log($"[Weapons] Reload rejected: magazine full ({magazineAmmo.Value}/{_stats.magazineSize}) cid={OwnerClientId}");
+                return;
+            }
+            if (!HasReserveAmmo())
+            {
+                Debug.Log($"[Weapons] Reload rejected: no reserve ammo cid={OwnerClientId}");
+                return;
+            }
 
             isReloading.Value = true;
             _reloadPaused = false;
             _reloadRemain = _stats.reloadSeconds;
             reloadProgress.Value = 0f;
+            Debug.Log($"[Weapons] Reload start cid={OwnerClientId} mag={magazineAmmo.Value} reserve={(reserveAmmo.Value < 0 ? "INF" : reserveAmmo.Value.ToString())} t={_reloadRemain:0.00}s");
         }
 
         bool _firing;
@@ -145,6 +179,7 @@ namespace Game.Net.Weapons
                 {
                     int need = Mathf.Max(0, _stats.magazineSize - magazineAmmo.Value);
                     int take = need;
+                    int beforeReserve = reserveAmmo.Value;
                     if (reserveAmmo.Value >= 0)
                     {
                         take = Mathf.Min(need, reserveAmmo.Value);
@@ -153,6 +188,7 @@ namespace Game.Net.Weapons
                     magazineAmmo.Value += take;
                     isReloading.Value = false;
                     reloadProgress.Value = 1f;
+                    Debug.Log($"[Weapons] Reload complete cid={OwnerClientId} +{take} → mag={magazineAmmo.Value}/{_stats.magazineSize} reserve={(reserveAmmo.Value < 0 ? "INF" : reserveAmmo.Value.ToString())} (was {beforeReserve})");
                 }
                 return;
             }
@@ -177,12 +213,15 @@ namespace Game.Net.Weapons
         {
             if (magazineAmmo.Value <= 0)
             {
+                Debug.Log($"[Weapons] Dry fire cid={OwnerClientId} gun={_stats?.type} reserve={(reserveAmmo.Value < 0 ? "INF" : reserveAmmo.Value.ToString())} -> autoReload={(HasReserveAmmo())}");
                 // auto-reload if we have reserve
                 if (HasReserveAmmo()) { RequestReloadServerRpc(); }
                 return;
             }
 
+            int before = magazineAmmo.Value;
             magazineAmmo.Value--;
+            Debug.Log($"[Weapons] FireOne cid={OwnerClientId} gun={_stats?.type} mag {before-1}/{_stats.magazineSize} (before={before}) pellets={Mathf.Max(1,_stats.pellets)}");
 
             // Spawn projectile(s)
             int count = Mathf.Max(1, _stats.pellets);
@@ -215,7 +254,9 @@ namespace Game.Net.Weapons
                     proj.ConfigureServer(_stats.bulletSpeed, ProjectileLifetimeSeconds, _stats.damage, OwnerClientId, ownerTeam, owner);
                 }
                 if (nob) nob.Spawn(true);
-// Prevents immediate despawn-on-self-hit and makes bullets visibly travel.
+
+                if (i == 0)
+                    Debug.Log($"[Weapons] Spawn projectile prefab={_stats.projectilePrefab?.name ?? "<null>"} pos={pos} dir={dir} speed={_stats.bulletSpeed}");
             }
         }
 
@@ -243,12 +284,16 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            if (!IsOwner) return;
+
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
             var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
+            Debug.Log($"[Weapons] RebuildLocalView (client) primary={primaryType}");
             if (primaryType == Game.Net.PrimaryType.None)
             {
+                Debug.LogWarning("[Weapons] RebuildLocalView aborted: primary=None");
                 return;
             }
             var localStats = LookupAssigned(primaryType) ?? GetDefaults(primaryType);
@@ -269,6 +314,13 @@ namespace Game.Net.Weapons
                 return;
             }
 
+            // Ensure only one weapon view exists under the Hand Mount
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
             var go = Instantiate(localStats.weaponViewPrefab);
             go.name = $"{primaryType}_View(Local)";
             _view = go.GetComponent<WeaponView>();
@@ -285,6 +337,7 @@ namespace Game.Net.Weapons
                 t.SetParent(transform, false);
             }
 
+            Debug.Log($"[Weapons] Local view spawned prefab={go.name}");
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
 

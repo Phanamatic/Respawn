@@ -38337,8 +38337,6 @@ GameObject:
   - component: {fileID: 277799593}
   - component: {fileID: 277799592}
   - component: {fileID: 277799591}
-  - component: {fileID: 277799594}
-  - component: {fileID: 277799590}
   m_Layer: 0
   m_Name: Stats Header Text
   m_TagString: Untagged
@@ -38346,27 +38344,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &277799590
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 277799589}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9537288956292ee4abfe711eaa0ce538, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  triggerRadius: 15
-  openDuration: 0.5
-  closeDuration: 1
-  spinSpeedOpen: 500
-  faceCamera: 1
-  yOnly: 0
-  flipFacing180: 1
-  target: {fileID: 0}
-  showOnlyForOwner: 0
 --- !u!114 &277799591
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -38418,7 +38395,7 @@ MonoBehaviour:
   m_fontSizeBase: 11
   m_fontWeight: 400
   m_enableAutoSizing: 1
-  m_fontSizeMin: 6
+  m_fontSizeMin: 13.3
   m_fontSizeMax: 13.3
   m_fontStyle: 1
   m_HorizontalAlignment: 2
@@ -38525,31 +38502,6 @@ RectTransform:
   m_AnchoredPosition: {x: -206.62, y: 768.6211}
   m_SizeDelta: {x: 5.8299, y: 3.2002}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!114 &277799594
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 277799589}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 1425352812
-  InScenePlacedSourceGlobalObjectIdHash: 0
-  DeferredDespawnTick: 0
-  Ownership: 0
-  AlwaysReplicateAsRoot: 0
-  SynchronizeTransform: 0
-  ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 0
-  SpawnWithObservers: 1
-  DontDestroyWithOwner: 0
-  AutoObjectParentSync: 1
-  SyncOwnerTransformWhenParented: 1
-  AllowOwnerToParent: 0
 --- !u!1001 &289618527
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -43069,8 +43021,6 @@ GameObject:
   - component: {fileID: 486179134}
   - component: {fileID: 486179133}
   - component: {fileID: 486179132}
-  - component: {fileID: 486179136}
-  - component: {fileID: 486179135}
   m_Layer: 0
   m_Name: Play Header Text
   m_TagString: Untagged
@@ -43125,11 +43075,11 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 11.6
+  m_fontSize: 13.3
   m_fontSizeBase: 11
   m_fontWeight: 400
   m_enableAutoSizing: 1
-  m_fontSizeMin: 6
+  m_fontSizeMin: 13.3
   m_fontSizeMax: 11.6
   m_fontStyle: 1
   m_HorizontalAlignment: 2
@@ -43236,52 +43186,6 @@ RectTransform:
   m_AnchoredPosition: {x: -815.02, y: 643.44}
   m_SizeDelta: {x: 20, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!114 &486179135
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 486179130}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9537288956292ee4abfe711eaa0ce538, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  triggerRadius: 15
-  openDuration: 0.5
-  closeDuration: 1
-  spinSpeedOpen: 500
-  faceCamera: 1
-  yOnly: 0
-  flipFacing180: 1
-  target: {fileID: 0}
-  showOnlyForOwner: 0
---- !u!114 &486179136
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 486179130}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 2690128209
-  InScenePlacedSourceGlobalObjectIdHash: 0
-  DeferredDespawnTick: 0
-  Ownership: 1
-  AlwaysReplicateAsRoot: 0
-  SynchronizeTransform: 0
-  ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 0
-  SpawnWithObservers: 1
-  DontDestroyWithOwner: 0
-  AutoObjectParentSync: 1
-  SyncOwnerTransformWhenParented: 1
-  AllowOwnerToParent: 0
 --- !u!43 &487293725
 Mesh:
   m_ObjectHideFlags: 0
@@ -107620,8 +107524,6 @@ GameObject:
   - component: {fileID: 1971843837}
   - component: {fileID: 1971843836}
   - component: {fileID: 1971843835}
-  - component: {fileID: 1971843838}
-  - component: {fileID: 1971843834}
   m_Layer: 0
   m_Name: Armoury Header Text
   m_TagString: Untagged
@@ -107629,27 +107531,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1971843834
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1971843833}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9537288956292ee4abfe711eaa0ce538, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  triggerRadius: 15
-  openDuration: 0.5
-  closeDuration: 1
-  spinSpeedOpen: 500
-  faceCamera: 1
-  yOnly: 0
-  flipFacing180: 1
-  target: {fileID: 0}
-  showOnlyForOwner: 0
 --- !u!114 &1971843835
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -107701,7 +107582,7 @@ MonoBehaviour:
   m_fontSizeBase: 11
   m_fontWeight: 400
   m_enableAutoSizing: 1
-  m_fontSizeMin: 6
+  m_fontSizeMin: 10
   m_fontSizeMax: 10
   m_fontStyle: 1
   m_HorizontalAlignment: 2
@@ -107735,7 +107616,7 @@ MonoBehaviour:
   m_VertexBufferAutoSizeReduction: 0
   m_useMaxVisibleDescender: 1
   m_pageToDisplay: 1
-  m_margin: {x: 6.7211366, y: 0.9151746, z: 7.259773, w: 1.5119462}
+  m_margin: {x: -0.022596838, y: 0.9151746, z: -0.077858925, w: 1.5119462}
   m_isUsingLegacyAnimationComponent: 0
   m_isVolumetricText: 0
   _SortingLayer: 0
@@ -107797,7 +107678,7 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1971843833}
   m_LocalRotation: {x: 0.000019785015, y: -0.25103587, z: -0.00006840306, w: 0.9679778}
-  m_LocalPosition: {x: 0, y: 0, z: 97.69}
+  m_LocalPosition: {x: 0, y: 0, z: 97.14}
   m_LocalScale: {x: 1.617153, y: 1, z: 0.3259778}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -107805,34 +107686,9 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: -29.078, z: -0.008}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -654.02, y: 765.94}
-  m_SizeDelta: {x: 20, y: 5}
+  m_AnchoredPosition: {x: -654.2896, y: 766.0901}
+  m_SizeDelta: {x: 7.4168, y: 3.8249}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!114 &1971843838
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1971843833}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 1767326041
-  InScenePlacedSourceGlobalObjectIdHash: 0
-  DeferredDespawnTick: 0
-  Ownership: 1
-  AlwaysReplicateAsRoot: 0
-  SynchronizeTransform: 0
-  ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 0
-  SpawnWithObservers: 1
-  DontDestroyWithOwner: 0
-  AutoObjectParentSync: 1
-  SyncOwnerTransformWhenParented: 1
-  AllowOwnerToParent: 0
 --- !u!1 &1997186837
 GameObject:
   m_ObjectHideFlags: 0

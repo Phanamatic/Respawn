@@ -80,6 +80,19 @@ namespace Game.Net
             pos.y += yLift;
 
             var inst = Instantiate(playerPrefab, pos, rot);
+            
+            // CRITICAL: Set phase based on server type BEFORE spawn.
+            // This fallback spawner is used when there's no Match controller, so detect server type.
+            var pn = inst.GetComponent<PlayerNetwork>();
+            if (pn)
+            {
+                var serverType = SessionContext.Type;
+                var phase = (serverType == ServerType.OneVOne || serverType == ServerType.TwoVTwo) 
+                    ? PlayerPhase.Match 
+                    : PlayerPhase.Lobby;
+                pn.SeedPhasePreSpawnServer(phase);
+            }
+            
             // Do NOT register instances at runtime; NetworkManager must already know this prefab.
             inst.SpawnAsPlayerObject(clientId);
             // Remove the runtime AddNetworkPrefab that was corrupting prefab tables.

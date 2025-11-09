@@ -5,6 +5,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using PlayFab;
 using PlayFab.ClientModels;
+using Unity.Services.Authentication;
+// Add UGS auth import for Unity PlayerId fallback.
 
 namespace Game.UI.Common
 {
@@ -15,6 +17,17 @@ namespace Game.UI.Common
         [SerializeField] Image profileImage;         // optional
         [SerializeField] RawImage profileRawImage;   // optional
         [SerializeField] TMP_Text usernameText;      // required
+
+        [Header("Account UI (assign in Inspector)")]
+        [SerializeField] TMP_Text emailText;         // shows player's contact email (PlayFab)
+        [SerializeField] TMP_Text regionText;        // shows player's region (country code)
+        [SerializeField] TMP_Text accountIdText;     // shows player's account id (PlayFabId or Unity PlayerId fallback)
+
+        [Header("Change Email UI")]
+        [SerializeField] Button changeEmailButton;   // clicking triggers update
+        [SerializeField] TMP_InputField changeEmailInput; // input field for new email
+        [SerializeField] TMP_Text changeEmailStatus; // optional status/hint text
+// New serialized references so you can wire up the texts and button in the Inspector.
 
         [Header("Icon Mapping (id -> sprite)")]
         [SerializeField] List<IconEntry> iconMap = new();
@@ -45,8 +58,15 @@ namespace Game.UI.Common
 
         void Start()
         {
+            if (changeEmailButton) changeEmailButton.onClick.AddListener(OnChangeEmailClicked);
             if (autoRunOnStart) _ = RefreshAsync();
         }
+
+        void OnDestroy()
+        {
+            if (changeEmailButton) changeEmailButton.onClick.RemoveListener(OnChangeEmailClicked);
+        }
+// Hook up the Change Email button safely.
 
         public async Task RefreshAsync()
         {
@@ -62,9 +82,27 @@ namespace Game.UI.Common
             if (logDebug) Debug.Log($"[MainMenuPlayerHeader] iconId='{iconId}'  map={iconMap.Count}");
             ApplyIcon(iconId);
 
+            // 3) Account details: email, region, id
+            var emailTask  = GetPlayerEmailAsync(8000);
+            var regionTask = GetPlayerRegionAsync(6000);
+
+            string accountId = null;
+            try { accountId = PlayFab.PlayFabSettings.staticPlayer?.PlayFabId; } catch { }
+            if (string.IsNullOrWhiteSpace(accountId))
+            {
+                try { accountId = AuthenticationService.Instance?.PlayerId; } catch { /* ignore */ }
+            }
+
+            await Task.WhenAll(emailTask, regionTask);
+
+            if (emailText)    emailText.text    = CleanUi(emailTask.Result)  ?? "—";
+            if (regionText)   regionText.text   = CleanUi(regionTask.Result) ?? "—";
+            if (accountIdText) accountIdText.text = CleanUi(accountId)       ?? "—";
+
             // Fade avatar in once everything resolved
             SetConnectingVisuals(false);
         }
+// Populates email / region / account ID once resolved.
 // Brief dev comment: Swap placeholder to "Connecting…" during resolve, defer icon visibility until resolve completes.
 
         async Task<string> GetPlayerNameAsync(int timeoutMs)
@@ -203,5 +241,123 @@ namespace Game.UI.Common
             _iconGroup.alpha = end;
             _iconFadeCo = null;
         }
+
+        // ===== New helpers (email/region + change email) =====
+        async Task<string> GetPlayerEmailAsync(int timeoutMs = 8000)
+        {
+            // Uses PlayFab GetAccountInfo -> PrivateInfo.Email (player-visible)
+            try
+            {
+                var task = GetAccountInfoAsyncCompat(new GetAccountInfoRequest());
+                var done = await Task.WhenAny(task, Task.Delay(timeoutMs));
+                if (done == task)
+                {
+                    var (res, err) = await task;
+                    if (err == null)
+                    {
+                        var email = res?.AccountInfo?.PrivateInfo?.Email;
+                        if (!string.IsNullOrWhiteSpace(email)) return email;
+                    }
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
+        async Task<string> GetPlayerRegionAsync(int timeoutMs = 6000)
+        {
+            // Uses PlayFab GetPlayerProfile -> Locations.CountryCode
+            try
+            {
+                var req = new GetPlayerProfileRequest
+                {
+                    PlayFabId = PlayFab.PlayFabSettings.staticPlayer?.PlayFabId,
+                    ProfileConstraints = new PlayerProfileViewConstraints { ShowLocations = true }
+                };
+                var task = GetPlayerProfileAsyncCompat(req);
+                var done = await Task.WhenAny(task, Task.Delay(timeoutMs));
+                if (done == task)
+                {
+                    var (res, err) = await task;
+                    if (err == null)
+                    {
+                        var locs = res?.PlayerProfile?.Locations;
+                        if (locs != null && locs.Count > 0)
+                        {
+                            // Prefer the first entry; PlayFab does not guarantee order
+                            var cc = locs[0].CountryCode;
+                            if (cc != null) return cc.ToString();
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
+        static Task<(GetPlayerProfileResult result, PlayFabError error)> GetPlayerProfileAsyncCompat(GetPlayerProfileRequest req)
+        {
+            var tcs = new TaskCompletionSource<(GetPlayerProfileResult, PlayFabError)>();
+            PlayFabClientAPI.GetPlayerProfile(
+                req,
+                r => tcs.TrySetResult((r, null)),
+                e => tcs.TrySetResult((null, e))
+            );
+            return tcs.Task;
+        }
+
+        void OnChangeEmailClicked()
+        {
+            _ = ChangeEmailAsync();
+        }
+
+        async Task ChangeEmailAsync()
+        {
+            string newEmail = changeEmailInput ? changeEmailInput.text : null;
+            if (string.IsNullOrWhiteSpace(newEmail) || !newEmail.Contains("@"))
+            {
+                SetEmailStatus("Enter a valid email address.");
+                return;
+            }
+
+            SetEmailUiBusy(true);
+
+            string error = null;
+            var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+            var req = new AddOrUpdateContactEmailRequest { EmailAddress = newEmail };
+
+            PlayFabClientAPI.AddOrUpdateContactEmail(
+                req,
+                _ => tcs.TrySetResult(true),
+                e => { error = e.GenerateErrorReport(); tcs.TrySetResult(false); }
+            );
+
+            var ok = await tcs.Task;
+            SetEmailUiBusy(false);
+
+            if (ok)
+            {
+                if (emailText) emailText.text = newEmail;
+                SetEmailStatus("Email updated. Check your inbox to verify.");
+            }
+            else
+            {
+                SetEmailStatus($"Update failed: {error}");
+            }
+        }
+
+        void SetEmailUiBusy(bool busy)
+        {
+            if (changeEmailButton) changeEmailButton.interactable = !busy;
+            if (changeEmailInput)  changeEmailInput.interactable  = !busy;
+        }
+
+        void SetEmailStatus(string msg)
+        {
+            if (changeEmailStatus) changeEmailStatus.text = msg;
+        }
+
+        static string CleanUi(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+        // Helpers for account info and change-email actions.
     }
 }

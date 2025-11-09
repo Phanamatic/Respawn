@@ -22,6 +22,7 @@ TagManager:
   - No spawn
   - SFX
   - Ground
+  - Smoke
   layers:
   - Default
   - TransparentFX
@@ -29,7 +30,7 @@ TagManager:
   - Ground
   - Water
   - UI
-  - Projectile
+  - gffgfg
   - 
   - 
   - 

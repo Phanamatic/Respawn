@@ -154,25 +154,35 @@ namespace Game.Net
             }
         }
 
-        public async void Opened()
+        public async void Opened(bool forceReload = true)
         {
-            if (!_loaded)
-                await LoadFromCloud();
-
+            await LoadFromCloud(forceReload);   // always refresh from Cloud Save when the UI opens
             RefreshImages();
             // Default to Primary list on open
             ShowCategory(UIScripts.WeaponCategory.Primary);
+
+            // Let interested systems (e.g., PlayerNetwork) react so "currently equipped" matches UI
+            BroadcastLoadoutReady();
         }
 
-        async Task LoadFromCloud()
+        async Task LoadFromCloud(bool forceReload = false)
         {
-            _saved = await CloudSaveClient.Instance.LoadLoadoutAsync(PlayerLoadout.Default);
-            // sanitize old saves if any (values outside enum range)
-            if ((byte)_saved.Utility > (byte)UtilityType.Stun) _saved.Utility = UtilityType.Grenade;
-            _working = _saved;
-            _loaded = true;
+            // Force a pull when the UI opens, or do a one-time load on first use.
+            if (!_loaded || forceReload)
+            {
+                _saved = await CloudSaveClient.Instance.LoadLoadoutAsync(PlayerLoadout.Default);
+
+                // sanitize old saves if any (values outside enum range)
+                if ((byte)_saved.Utility > (byte)UtilityType.Stun) _saved.Utility = UtilityType.Grenade;
+
+                _working = _saved;
+                _loaded = true;
+
+                // Keep session snapshot in sync for any systems that read SessionContext
+                SessionContext.SetLoadout(_saved);
+            }
+
             RefreshImages();
-            SessionContext.SetLoadout(_saved);
         }
 
         async void OnSaveClicked()
@@ -184,6 +194,7 @@ namespace Game.Net
             {
                 _saved = _working;
                 SessionContext.SetLoadout(_saved);
+                BroadcastLoadoutReady(); // <— keep the in-scene equipment/currently equipped in sync
             }
         }
 
@@ -193,6 +204,22 @@ namespace Game.Net
             RefreshImages();
             Notify("Loadout changes discarded!");
             await Task.Yield();
+        }
+
+        void BroadcastLoadoutReady()
+        {
+            // Build the same DTO the handshake uses (melee fixed to 1 = Knife as per project)
+            var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO
+            {
+                version   = 1,
+                primary   = (byte)_working.Primary,
+                secondary = (byte)_working.Secondary,
+                melee     = 1,
+                utility   = (byte)_working.Utility
+            };
+
+            // Notify listeners (e.g., PlayerNetwork or a handshake bridge) so world state mirrors UI
+            CloudSaveClient.PublishLoadoutReady(dto);
         }
 
         void RefreshImages()

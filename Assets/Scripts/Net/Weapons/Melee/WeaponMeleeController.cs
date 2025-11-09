@@ -40,6 +40,15 @@ namespace Game.Net.Weapons
             else ServerEquip();
         }
 
+        /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (_view && _view.gameObject)
+            {
+                _view.gameObject.SetActive(visible);
+            }
+        }
+
         public void RequestSwing()
         {
             if (!IsOwner) return;
@@ -113,6 +122,8 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            if (!IsOwner) return;
+
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
@@ -132,6 +143,13 @@ namespace Game.Net.Weapons
             {
                 Debug.LogWarning("[Weapons] No Knife WeaponView prefab set. Assign knifeViewPrefab.");
                 return;
+            }
+
+            // Ensure only one weapon view exists under the Hand Mount
+            if (sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
             }
 
             var go = Instantiate(knifeViewPrefab);

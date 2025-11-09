@@ -147,6 +147,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   targetPanel: {fileID: 0}
+  oppositePanelToClose: {fileID: 0}
   buttonImage: {fileID: 8577616692051116265}
   fillHoverImage: {fileID: 0}
   activeBackgroundImage: {fileID: 0}

@@ -32,6 +32,12 @@ namespace Game.Net
         // Server will broadcast this to clients at spawn; a mismatch means mixed builds.
         private const int NETWORK_LAYOUT_VERSION = 3;
 
+        // Loading-phase flags reported back to server (match controller).
+        [System.Flags]
+        public enum LoadingReady : byte { None = 0, Phase = 1, Los = 2, Loadout = 4 }
+
+        /* Expose a tiny flags enum so both ends speak the same bit language. */
+
         [ClientRpc]
         private void AssertLayoutVersionClientRpc(int serverVersion, ClientRpcParams rpcParams = default)
         {
@@ -62,7 +68,7 @@ namespace Game.Net
         // Replicated phase so clients are told when we've transitioned into Match.
         readonly NetworkVariable<PlayerPhase> _netPhase =
             new NetworkVariable<PlayerPhase>(
-                PlayerPhase.Lobby,
+                PlayerPhase.Match,
                 NetworkVariableReadPermission.Everyone,
                 NetworkVariableWritePermission.Server);
 
@@ -72,21 +78,25 @@ namespace Game.Net
         void OnPhaseNetChanged(PlayerPhase oldPhase, PlayerPhase newPhase)
         {
             _phase = newPhase;
+            if (IsOwner)
+            {
+                // Turn FOV/LOS on only in Match, off in Lobby
+                SetFovAndLosEnabled(newPhase == PlayerPhase.Match);
+            }
+
             if (IsOwner && newPhase == PlayerPhase.Match)
             {
                 if (!_loadoutRequested)
                 {
+                    // Skip client-side loadout send in Match; server already applied pre-join.
+                    Debug.Log("[PlayerNetwork] Phase changed to Match; pre-join loadout already applied.");
                     _loadoutRequested = true;
-                    StartCoroutine(CoLoadAndSendLoadout());
                 }
-
                 OnActiveSlotChanged();
             }
         }
 // Brief dev comment.
-        // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.
-
-        // Simple server rate-limits
+// Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.        // Simple server rate-limits
         float _lastSwitchServerTime, _lastThrowServerTime;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
         const float k_MinThrowInterval = 0.5f;    // guard spam
@@ -132,7 +142,7 @@ namespace Game.Net
         private float _lastSentYaw;
         private float _nextYawSendTime;
         // Owner drives yaw; others follow _netYaw. Throttled to reduce bandwidth.
-        [SerializeField] PlayerPhase initialPhase = PlayerPhase.Lobby;
+    [SerializeField] PlayerPhase initialPhase = PlayerPhase.Match;
 
         [Header("HUD (scene refs; assign via binder)")]
         [SerializeField] Image sprintFill;
@@ -227,9 +237,10 @@ namespace Game.Net
             }
         }
 
-        InputActionMap _map;
-        InputAction _aMove, _aMouse, _aSprint, _aDash;
-        InputAction _aScoreboard;
+    InputActionMap _map;
+    InputAction _aMove, _aMouse, _aSprint, _aDash;
+    InputAction _aFire, _aReload;
+    InputAction _aScoreboard;
         public bool IsSprinting { get; private set; }
         public bool IsDashing { get; private set; }
         public event System.Action<bool> SprintChanged;
@@ -264,6 +275,7 @@ namespace Game.Net
 
         public override void OnNetworkSpawn()
         {
+            enabled = true;
             if (!_rb)
             {
                 _rb = GetComponent<Rigidbody>();
@@ -274,9 +286,19 @@ namespace Game.Net
             if (IsServer)
                 AssertLayoutVersionClientRpc(NETWORK_LAYOUT_VERSION);
 
-            _phase = _netPhase.Value; // mirror replicated value if server already set it
+            // CRITICAL: Set phase FIRST before any other initialization.
+            // For Match servers, SeedPhasePreSpawnServer already set _netPhase.Value to Match before spawn.
+            // This ensures all subsequent logic (loadout fetch, FOV/LOS, weapon equip) sees the correct phase.
+            // IMPORTANT: Use initialPhase, not _netPhase.Value, because NetworkVariables don't replicate until AFTER OnNetworkSpawn.
+            _phase = initialPhase;
             _netPhase.OnValueChanged += OnPhaseNetChanged;
-            // Brief dev comment: Subscribe early so we react if the server flips to Match right after spawn.
+
+            // Ensure we respect the replicated phase immediately on spawn (e.g., Match servers).
+            var replicatedPhase = _netPhase.Value;
+            if (_phase != replicatedPhase)
+            {
+                OnPhaseNetChanged(_phase, replicatedPhase);
+            }
 
             _identitySubmitted = false;
             if (_identitySubmitCo != null)
@@ -306,14 +328,25 @@ namespace Game.Net
             // Client: send saved loadout to server after spawn
             // Only pull/send the saved loadout once we are actually in a Match.
             // In Lobby we skip this to avoid nulls and unnecessary traffic.
+            // SKIP if server already applied pre-join loadout (prevents overwrite race).
             if (IsOwner && _phase == PlayerPhase.Match && !_loadoutRequested)
             {
+                // The match spawner already applied the pre-join loadout server-side.
+                // Client only needs to send if no pre-join was available (e.g., reconnect).
+                // For now, skip the client-side send entirely in Match spawns since
+                // ApplyPreJoinLoadoutServer handles it authoritatively.
+                Debug.Log("[PlayerNetwork] Owner spawned in Match; pre-join loadout already applied by server.");
+                _loadoutRequested = true; // Mark as handled
+            }
+            else if (IsOwner && _phase == PlayerPhase.Lobby && !_loadoutRequested)
+            {
+                // In Lobby, load from Cloud Save and send to server for caching
                 _loadoutRequested = true;
                 StartCoroutine(CoLoadAndSendLoadout());
             }
             else if (IsOwner)
             {
-                Debug.Log("[PlayerNetwork] Owner spawned in Lobby; deferring loadout fetch until Match.");
+                Debug.Log("[PlayerNetwork] Owner spawned; loadout already requested.");
             }
             // Defers Cloud Save roundtrip until Match phase to avoid Lobby-time NREs.
             // Brief dev comment: Guard prevents duplicate Cloud Save reads if host-side also calls SetPhase().
@@ -338,6 +371,19 @@ namespace Game.Net
                     _rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
                 }
 
+                // CRITICAL: Force phase based on server type if not already set correctly.
+                // This is a safety net in case SeedPhasePreSpawnServer wasn't called before spawn.
+                if ((SessionContext.Type == ServerType.OneVOne || SessionContext.Type == ServerType.TwoVTwo) && initialPhase != PlayerPhase.Match)
+                {
+                    Debug.LogWarning($"[PlayerNetwork] Match server detected but initialPhase was {initialPhase}. Forcing to Match.");
+                    initialPhase = PlayerPhase.Match;
+                }
+                else if (SessionContext.Type == ServerType.Lobby && initialPhase != PlayerPhase.Lobby)
+                {
+                    Debug.LogWarning($"[PlayerNetwork] Lobby server detected but initialPhase was {initialPhase}. Forcing to Lobby.");
+                    initialPhase = PlayerPhase.Lobby;
+                }
+
                 SetPhase(initialPhase);
                 if (initialPhase == PlayerPhase.Match)
                 {
@@ -356,29 +402,9 @@ namespace Game.Net
                 TryBindScoreboard();
                 CacheLocalIdentitySnapshot();
 
-                // Install client-side LOS FOV visualization for local player.
-                var fov = gameObject.GetComponent<FovMesh>();
-                if (!fov) fov = gameObject.AddComponent<FovMesh>();
-                fov.radiusMeters = 12f;                                  // LOS radius
-                fov.rayCount = 220;                                      // tuned for perf
-                // Detect both LOS layers.
-                fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
-                fov.showFill = true;
-                fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f); // bright inside
-                fov.fillIntensity = 1.15f;
-                fov.edgeFeather = 0.15f;
-                fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
-                // Anchor FOV to visual root if provided so the stencil sits on the model.
-                fov.follow = modelRoot ? modelRoot : transform;
+                // NEW: Only enable FOV/LOS in Match
+                SetFovAndLosEnabled(_phase == PlayerPhase.Match);
 
-                var losLight = GetComponent<PlayerLosLight>();
-                if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
-                losLight.fovSource = fov;
-                losLight.intensity = 1.3f;
-                losLight.rangeScale = 0.9f;
-                losLight.castShadows = true;
-
-                FogOfWarOverlayPlane.InstallFor(Camera.main);
                 BeginSubmitNameRoutine();
 
                 // Force local model fully visible each spawn (guards against any fade components).
@@ -525,6 +551,22 @@ namespace Game.Net
         {
             base.OnNetworkDespawn();
             _netLoadout.OnValueChanged -= OnNetLoadoutChanged;
+            _netYaw.OnValueChanged -= OnYawChanged;
+            if (useLegacyStateReplication)
+            {
+                _netPosition.OnValueChanged -= OnPositionChanged;
+                _netVelocity.OnValueChanged -= OnVelocityChanged;
+                _netIsDashing.OnValueChanged -= OnDashingChanged;
+            }
+
+            CleanupInputActions();
+            enabled = false;
+        }
+
+        public override void OnDestroy()
+        {
+            base.OnDestroy();
+            CleanupInputActions();
         }
 
         void OnCombatStatsChanged(CombatStats previous, CombatStats current)
@@ -612,7 +654,7 @@ namespace Game.Net
             if (_scoreboard == panel) _scoreboard = null;
         }
 
-        static ClientRpcParams TargetClientParams(ulong clientId)
+        public static ClientRpcParams TargetClientParams(ulong clientId)
         {
             return new ClientRpcParams
             {
@@ -766,8 +808,102 @@ namespace Game.Net
             if (!IsOwner) return;
             s_onHideDeathRecap?.Invoke();
         }
+        
+        #region Loading Phase RPCs
+
+        /// <summary>Targeted to the owning client when the round’s Loading phase begins.</summary>
+        [ClientRpc]
+        public void BeginLoadingPhaseClientRpc(ClientRpcParams rpcParams = default)
+        {
+            if (!IsOwner) return;
+
+            // Ensure LOS/FOV visuals are active locally in Match.
+            SetFovAndLosEnabled(true);
+
+            // Immediately report LOS ready (client-side visuals enabled).
+            ReportLoadingReadyToServerRpc((byte)LoadingReady.Los);
+
+            // Kick off Cloud Save fetch → handshake → then report Loadout ready.
+            StartCoroutine(CoEnsureLoadoutThenAck());
+        }
+
+        /// <summary>Owner → Server: report completion of a loading step (LOS/Loadout).</summary>
+        [ServerRpc]
+        public void ReportLoadingReadyToServerRpc(byte bits, ServerRpcParams serverRpcParams = default)
+        {
+            if (!IsServer) return;
+
+#if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
+            var ctrl = FindFirstObjectByType<Game.Net.Match1v1Controller>(FindObjectsInactive.Exclude);
+#else
+            var ctrl = FindObjectOfType<Game.Net.Match1v1Controller>(false);
+#endif
+            ctrl?.OnClientLoadingBits(OwnerClientId, bits);
+        }
+
+        /// <summary>
+        /// Owner-only: Ensure we have a Cloud Save loadout, send it to server via the existing handshake,
+        /// then tell the server our loadout step is ready.
+        /// </summary>
+        System.Collections.IEnumerator CoEnsureLoadoutThenAck()
+        {
+            if (!IsOwner) yield break;
+
+            // Try session cache first
+            PlayerLoadout lo = PlayerLoadout.Default;
+            bool hasCached = false;
+            try { hasCached = SessionContext.TryGetLoadout(out lo); } catch { lo = PlayerLoadout.Default; }
+
+            if (!hasCached)
+            {
+                var csc = CloudSaveClient.Instance;
+                if (csc != null)
+                {
+                    var task = csc.LoadLoadoutAsync(PlayerLoadout.Default);
+                    while (!task.IsCompleted) yield return null;
+                    lo = task.Result;
+                }
+                else
+                {
+                    Debug.LogWarning("[PlayerNetwork] CloudSaveClient.Instance missing; falling back to defaults.");
+                    lo = PlayerLoadout.Default;
+                }
+                try { SessionContext.SetLoadout(lo); } catch { /* ignore */ }
+            }
+
+            // Sanitize before sending to server
+            if (lo.Primary == PrimaryType.None)    lo.Primary   = PrimaryType.AR;
+            if (lo.Secondary == SecondaryType.None)lo.Secondary = SecondaryType.Pistol;
+            if (lo.Utility == UtilityType.None)    lo.Utility   = UtilityType.Grenade;
+
+            // Send to server through existing handshake channel so it applies authoritatively.
+            var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO
+            {
+                version = 1,
+                primary   = (byte)lo.Primary,
+                secondary = (byte)lo.Secondary,
+                melee     = 1, // Knife
+                utility   = (byte)lo.Utility
+            };
+            LoadoutHandshake.SendFromClient(dto);
+
+            // Let server know our Loadout step is complete.
+            ReportLoadingReadyToServerRpc((byte)LoadingReady.Loadout);
+            yield break;
+        }
+
+        #endregion
         // ================================================
         // ===== Weapons: equip, switch, throw (server authoritative) =====
+
+// Server-only helper used by match controller to force an equipped slot.
+public void ForceActiveSlotServer(byte slot)
+{
+    if (!IsServer) return;
+    if (slot > 3) return;
+    _activeSlot.Value = slot;
+    Debug.Log($"[Weapons] ForceActiveSlotServer -> {slot} cid={OwnerClientId}");
+}
 
         void RequestSwitchSlot(byte slot)
         {
@@ -794,24 +930,24 @@ namespace Game.Net
                 slot == 2 || // melee fixed
                 (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
 
-            if (!allowed) return;
+            if (!allowed) { Debug.Log($"[Weapons] Slot switch rejected -> {slot} (not allowed) cid={OwnerClientId}"); return; }
 
             _activeSlot.Value = slot;
-#if UNITY_EDITOR
-    Debug.Log($"[Weapons] Active slot -> {slot}");
-#endif
+            Debug.Log($"[Weapons] Active slot -> {slot} cid={OwnerClientId}");
             // TODO: later handle firing state teardown and equip animations.
         }
 
         void RequestThrowUtility()
         {
             if (_inputPaused) return;
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (client gate)
             RequestThrowUtilityServerRpc();
         }
 
         [ServerRpc]
         void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
         {
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (server gate)
             if (_netLoadout.Value.util == (byte)UtilityType.None) return;
 
             if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
@@ -837,34 +973,68 @@ namespace Game.Net
         {
             // Owner requests equip. Remotes wait for server fan-out.
             if (!IsOwner) return;
-// Brief dev comment.
 
             byte slot = _activeSlot.Value;
+            Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
 
+            // Hide all weapon views first
+            var primary = GetComponent<WeaponPrimaryController>();
+            var secondary = GetComponent<WeaponSecondaryController>();
+            var melee = GetComponent<WeaponMeleeController>();
+            
+            if (primary) primary.SetVisible(false);
+            if (secondary) secondary.SetVisible(false);
+            if (melee) melee.SetVisible(false);
+
+            // Hard guarantee: only ONE child under Hand Mount before equipping
+            var sockets = GetComponent<PlayerWeaponSockets>();
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
+            // Now show and equip the active slot
+            // [DirectNet] Central purge prevents multiple views when swapping fast / race conditions.
             if (slot == 0) // Primary
             {
                 var type = (PrimaryType)_netLoadout.Value.primary;
-                if (type == PrimaryType.None) return; // never equip "None" locally
-                var wp = GetComponent<WeaponPrimaryController>();
-                if (wp) wp.Equip(type, null);
+                if (type == PrimaryType.None) { Debug.LogWarning("[Weapons] Equip primary skipped: None"); return; }
+                if (primary) 
+                { 
+                    Debug.Log($"[Weapons] Equip primary request -> {type}"); 
+                    primary.Equip(type, null);
+                    primary.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
             else if (slot == 1) // Secondary
             {
                 var type = (SecondaryType)_netLoadout.Value.secondary;
-                if (type == SecondaryType.None) return; // never equip "None" locally
-                var ws = GetComponent<WeaponSecondaryController>();
-                if (ws) ws.Equip(type, null);
+                if (type == SecondaryType.None) { Debug.LogWarning("[Weapons] Equip secondary skipped: None"); return; }
+                if (secondary) 
+                { 
+                    Debug.Log($"[Weapons] Equip secondary request -> {type}"); 
+                    secondary.Equip(type, null);
+                    secondary.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
-            else if (slot == 2) // Melee is fixed Knife — always allowed
+            else if (slot == 2) // Melee
             {
-                var wm = GetComponent<WeaponMeleeController>();
-                if (wm) wm.Equip();
+                if (melee) 
+                { 
+                    Debug.Log("[Weapons] Equip melee (Knife)"); 
+                    melee.Equip();
+                    melee.SetVisible(true);
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
             else if (slot == 3) // Utility
             {
-                if (_netLoadout.Value.util == (byte)UtilityType.None) return;
+                if (_netLoadout.Value.util == (byte)UtilityType.None) { Debug.LogWarning("[Weapons] Equip utility skipped: None"); return; }
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu) wu.Equip((UtilityType)_netLoadout.Value.util);
+                if (wu) { Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); wu.Equip((UtilityType)_netLoadout.Value.util); } else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
         }
         // Prevents client from issuing equip calls that clear views with "None" just as the round starts.
@@ -872,6 +1042,8 @@ namespace Game.Net
 
         void SetupInputAndCamera()
         {
+            CleanupInputActions();
+
             _map = new InputActionMap("Player");
 
             _aMove = _map.AddAction(name: "Move", type: InputActionType.Value, expectedControlLayout: "Vector2");
@@ -882,17 +1054,17 @@ namespace Game.Net
                   .With("Right", "<Keyboard>/d");
 
             _aMouse = _map.AddAction(name: "MousePos", type: InputActionType.Value, binding: "<Pointer>/position");
-            var aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
-            var aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
+            _aFire = _map.AddAction(name: "Fire", type: InputActionType.Button, binding: "<Mouse>/leftButton");
+            _aReload = _map.AddAction(name: "Reload", type: InputActionType.Button, binding: "<Keyboard>/r");
 
-            aFire.performed += _ => OnFireInput(true);
-            aFire.canceled += _ => OnFireInput(false);
-            aReload.performed += _ => OnReloadInput();
+            _aFire.performed += OnFirePerformed;
+            _aFire.canceled += OnFireCanceled;
+            _aReload.performed += OnReloadPerformed;
             _aSprint = _map.AddAction(name: "Sprint", type: InputActionType.Button, binding: "<Keyboard>/leftShift");
             _aDash = _map.AddAction(name: "Dash", type: InputActionType.Button, binding: "<Keyboard>/space");
 
-            _aSprint.performed += _ => SetSprint(true);
-            _aSprint.canceled += _ => SetSprint(false);
+            _aSprint.performed += OnSprintPerformed;
+            _aSprint.canceled += OnSprintCanceled;
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
@@ -904,11 +1076,11 @@ namespace Game.Net
 
             _aDash.performed += OnDashPerformed;
             // forward dash state to weapon controller via OnDashingChanged callback already patched.
-            _aSlot1.performed += _ => RequestSwitchSlot(0);
-            _aSlot2.performed += _ => RequestSwitchSlot(1);
-            _aSlot3.performed += _ => RequestSwitchSlot(2);
-            _aSlot4.performed += _ => RequestSwitchSlot(3);
-            _aThrow.performed += _ => RequestThrowUtility();
+            _aSlot1.performed += OnSlot1Performed;
+            _aSlot2.performed += OnSlot2Performed;
+            _aSlot3.performed += OnSlot3Performed;
+            _aSlot4.performed += OnSlot4Performed;
+            _aThrow.performed += OnThrowPerformed;
             _aScoreboard.performed += OnScoreboardPerformed;
             _aScoreboard.canceled += OnScoreboardCanceled;
 
@@ -917,47 +1089,97 @@ namespace Game.Net
             TryBindScoreboard();
         }
 
+        void OnFirePerformed(InputAction.CallbackContext ctx) => OnFireInput(true);
+        void OnFireCanceled(InputAction.CallbackContext ctx) => OnFireInput(false);
+        void OnReloadPerformed(InputAction.CallbackContext ctx) => OnReloadInput();
+        void OnSprintPerformed(InputAction.CallbackContext ctx) => SetSprint(true);
+        void OnSprintCanceled(InputAction.CallbackContext ctx) => SetSprint(false);
+        void OnSlot1Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(0);
+        void OnSlot2Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(1);
+        void OnSlot3Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(2);
+        void OnSlot4Performed(InputAction.CallbackContext ctx) => RequestSwitchSlot(3);
+        void OnThrowPerformed(InputAction.CallbackContext ctx) => RequestThrowUtility();
+
+        void CleanupInputActions()
+        {
+            if (_aFire != null)
+            {
+                _aFire.performed -= OnFirePerformed;
+                _aFire.canceled -= OnFireCanceled;
+            }
+
+            if (_aReload != null)
+                _aReload.performed -= OnReloadPerformed;
+
+            if (_aSprint != null)
+            {
+                _aSprint.performed -= OnSprintPerformed;
+                _aSprint.canceled -= OnSprintCanceled;
+            }
+
+            if (_aDash != null)
+                _aDash.performed -= OnDashPerformed;
+
+            if (_aSlot1 != null) _aSlot1.performed -= OnSlot1Performed;
+            if (_aSlot2 != null) _aSlot2.performed -= OnSlot2Performed;
+            if (_aSlot3 != null) _aSlot3.performed -= OnSlot3Performed;
+            if (_aSlot4 != null) _aSlot4.performed -= OnSlot4Performed;
+            if (_aThrow != null) _aThrow.performed -= OnThrowPerformed;
+
+            if (_aScoreboard != null)
+            {
+                _aScoreboard.performed -= OnScoreboardPerformed;
+                _aScoreboard.canceled -= OnScoreboardCanceled;
+            }
+
+            _map?.Disable();
+            _map?.Dispose();
+
+            if (IsOwner)
+                ShowScoreboard(false);
+
+            _aMove = null;
+            _aMouse = null;
+            _aSprint = null;
+            _aDash = null;
+            _aFire = null;
+            _aReload = null;
+            _aScoreboard = null;
+            _aSlot1 = _aSlot2 = _aSlot3 = _aSlot4 = _aThrow = null;
+            _map = null;
+        }
+
         void OnDashPerformed(InputAction.CallbackContext ctx)
         {
             if (_inputPaused) return;
             _dashQueuedUntil = Time.time + dashInputBuffer;
         }
 
-        void OnFireInput(bool firing)
-        {
-            if (_inputPaused) return;
-            
-            byte slot = _activeSlot.Value;
-            if (slot == 0) // Primary
-            {
-                GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
-            }
-            else if (slot == 1) // Secondary
-            {
-                GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
-            }
-            else if (slot == 2) // Melee
-            {
-                if (firing) // Only swing on press, not release
-                    GetComponent<WeaponMeleeController>()?.RequestSwing();
-            }
-        }
+// Owner-side input gate: allowed only when we're in Match phase.
+void OnFireInput(bool firing)
+{
+    if (!IsOwner) return;
+    if (_inputPaused) return;
+    if (_phase != PlayerPhase.Match) return;
 
-        void OnReloadInput()
-        {
-            if (_inputPaused) return;
-            
-            byte slot = _activeSlot.Value;
-            if (slot == 0) // Primary
-            {
-                GetComponent<WeaponPrimaryController>()?.RequestReload();
-            }
-            else if (slot == 1) // Secondary
-            {
-                GetComponent<WeaponSecondaryController>()?.RequestReload();
-            }
-            // Melee and utility don't reload
-        }
+    var slot = _activeSlot.Value;
+    if (slot == 0)      GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
+    else if (slot == 1) GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
+    else if (slot == 2) { if (firing) GetComponent<WeaponMeleeController>()?.RequestSwing(); }
+}
+// [DirectNet] Phase-driven gate fixes the “lobby lockout” that was blocking fire in Match.
+
+// Same phase-driven gate for reload as fire.
+void OnReloadInput()
+{
+    if (!IsOwner) return;
+    if (_inputPaused) return;
+    if (_phase != PlayerPhase.Match) return;
+
+    var slot = _activeSlot.Value;
+    if (slot == 0)      GetComponent<WeaponPrimaryController>()?.RequestReload();
+    else if (slot == 1) GetComponent<WeaponSecondaryController>()?.RequestReload();
+}
 
         public void SetInputPaused(bool paused)
         {
@@ -986,16 +1208,25 @@ namespace Game.Net
             {
                 _isoCam = _cam.GetComponent<IsometricCamera>() ?? _cam.gameObject.AddComponent<IsometricCamera>();
                 _isoCam.follow = transform;
-                _isoCam.enabled = true; // ensure camera is active after (re)spawn — avoids staying on spawn-select view
+                _isoCam.enabled = true;
 
-                var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
-                los.target = transform;
+                // Only install LOS transparency + fog-of-war during MATCH
+                if (_phase == PlayerPhase.Match)
+                {
+                    var los = _cam.GetComponent<LineOfSightTransparency>() ?? _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                    los.target = transform;
 
-                // Prevent baked/dynamic occlusion from hiding players behind now-transparent occluders.
-                _cam.useOcclusionCulling = false;
+                    // Prevent occlusion culling issues with our transparent fades
+                    _cam.useOcclusionCulling = false;
 
-                FogOfWarOverlayPlane.InstallFor(_cam); // guarantees culling mask includes LOS layer once camera exists
-                                                       // Disables camera occlusion culling when LOS transparency is active so faded occluders can't fully hide the player.
+                    // Ensure the fog overlay plane exists now that we have a camera
+                    FogOfWarOverlayPlane.InstallFor(_cam);
+                }
+                else
+                {
+                    // In Lobby, keep the camera clean
+                    RemoveLosFromCamera();
+                }
             }
         }
 
@@ -1216,6 +1447,19 @@ namespace Game.Net
             if (_inputPaused) { UpdateUI(); return; }
         }
 
+        bool CanWriteYaw()
+        {
+            if (!networkSyncYaw) return false;
+            if (!IsSpawned) return false;
+            if (!IsOwner) return false;
+
+            var nm = NetworkManager.Singleton;
+            if (nm == null) return false;
+            if (!nm.IsClient || !nm.IsConnectedClient) return false;
+
+            return nm.LocalClientId == OwnerClientId;
+        }
+
         void Update()
         {
             if (!IsOwner) { InterpolateRemotePlayer(); return; }
@@ -1256,7 +1500,7 @@ namespace Game.Net
                             _targetYaw = yaw;
                             _hasValidYaw = true;
 
-                            if (networkSyncYaw && NetworkManager.Singleton && NetworkManager.Singleton.IsConnectedClient)
+                            if (CanWriteYaw())
                             {
                                 float now = Time.unscaledTime;
                                 if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) >= yawSendThresholdDeg)
@@ -1299,7 +1543,7 @@ namespace Game.Net
                             _targetYaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
                             solved = true;
 
-                            if (networkSyncYaw)
+                            if (CanWriteYaw())
                             {
                                 float now = Time.unscaledTime;
                                 if (now >= _nextYawSendTime || Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, _targetYaw)) >= yawSendThresholdDeg)
@@ -1324,9 +1568,8 @@ namespace Game.Net
         // Load CloudSave -> send to server (owner only). Validated server-side.
         System.Collections.IEnumerator CoLoadAndSendLoadout()
         {
-            // Defensive guards: this coroutine is for Match only.
+            // This coroutine now runs in LOBBY phase to load and send the loadout for caching
             if (!IsOwner) yield break;
-            if (_phase != PlayerPhase.Match) yield break;
 
             // Be defensive around lobby-time singletons.
             PlayerLoadout lo = PlayerLoadout.Default;
@@ -1353,11 +1596,28 @@ namespace Game.Net
                 try { SessionContext.SetLoadout(lo); } catch { /* optional cache; ignore if context absent */ }
             }
 
+            // CRITICAL: Guarantee no None values before sending to server
+            // This ensures players ALWAYS have a full loadout (AR/Pistol/Knife/Grenade)
+            if (lo.Primary == PrimaryType.None) lo.Primary = PrimaryType.AR;
+            if (lo.Secondary == SecondaryType.None) lo.Secondary = SecondaryType.Pistol;
+            if (lo.Utility == UtilityType.None) lo.Utility = UtilityType.Grenade;
+
             _myLoadout = lo;
-            var net = NetLoadout.From(lo);
-            EquipLoadoutServerRpc(net.primary, net.secondary, net.util);
+            
+            // Send via LoadoutHandshake (same path as LoadoutUI)
+            var dto = new CloudSaveClient.PlayerConnectionLoadoutDTO
+            {
+                version = 1,
+                primary = (byte)lo.Primary,
+                secondary = (byte)lo.Secondary,
+                melee = 1, // Knife
+                utility = (byte)lo.Utility
+            };
+            
+            Debug.Log($"[PlayerNetwork] Sending loadout via handshake: P={lo.Primary} S={lo.Secondary} M=Knife U={lo.Utility}");
+            LoadoutHandshake.SendFromClient(dto);
         }
-        // Only runs in Match; Lobby spawns will no-op. Prevents NREs when lobby services aren't present.
+        // Runs in Lobby to load from Cloud Save and send to server for pre-join caching.
 
         void FixedUpdate()
         {
@@ -1474,7 +1734,7 @@ namespace Game.Net
 
         // Authoritative equip. Validates indices and applies to replicated var.
         [ServerRpc(RequireOwnership = true)]
-        void EquipLoadoutServerRpc(byte primary, byte secondary, byte util, ServerRpcParams p = default)
+        void EquipLoadoutServerRpc(byte primary, byte secondary, byte melee, byte util, ServerRpcParams p = default)
         {
 // Validate ranges
 if (primary > (byte)PrimaryType.Sniper) primary = 0;
@@ -1484,17 +1744,18 @@ if (util > (byte)UtilityType.Stun) util = (byte)UtilityType.Grenade;
 // Server-only fallback: never allow None in any slot
 if (primary == 0) primary = (byte)PrimaryType.AR;
 if (secondary == 0) secondary = (byte)SecondaryType.Pistol;
+if (melee == 0) melee = 1; // Knife
 // Utility already clamped above; also fix None explicitly:
 if (util == 0) util = (byte)UtilityType.Grenade;
 
-_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, util = util };
+_netLoadout.Value = new NetLoadout { primary = primary, secondary = secondary, melee = melee, util = util };
 
 // Hard guarantee: sanitize + health = 100, then equip primary.
 ServerEnsureValidLoadoutAndHealth();
 
 // Log for traceability
 #if UNITY_EDITOR
-Debug.Log($"[PlayerNetwork] Equipped loadout (sanitized) P={(PrimaryType)_netLoadout.Value.primary} S={(SecondaryType)_netLoadout.Value.secondary} M=Knife U={(UtilityType)_netLoadout.Value.util} for {OwnerClientId}");
+Debug.Log($"[PlayerNetwork] Equipped loadout (sanitized) P={(PrimaryType)_netLoadout.Value.primary} S={(SecondaryType)_netLoadout.Value.secondary} M={_netLoadout.Value.melee} U={(UtilityType)_netLoadout.Value.util} for {OwnerClientId}");
 #endif
 // Called from the same area where loadout RPC is processed【turn42file6†PlayerNetwork.cs†L1-L20】.
 
@@ -1734,8 +1995,19 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
             else radius = cap.radius * Mathf.Max(ls.x, ls.z);
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
+[ServerRpc(RequireOwnership = false)]
+public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
+
+// Pre-spawn seed so clients spawn with phase=Match and skip "Lobby" log spam.
+// Safe to call only on server before SpawnAsPlayerObject().
+public void SeedPhasePreSpawnServer(PlayerPhase phase)
+{
+    if (!IsServer) return;
+    initialPhase = phase;   // server OnNetworkSpawn will use this
+    _phase = phase;
+    _netPhase.Value = phase;
+}
+// Brief dev comment: Sets initial phase & NV prior to spawn so the spawn payload carries phase=Match.
 
         void SetPhase(PlayerPhase phase)
         {
@@ -1752,8 +2024,9 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
                 {
                     if (!_loadoutRequested)
                     {
+                        // Skip client-side loadout send; server already applied pre-join.
+                        Debug.Log("[PlayerNetwork] SetPhase Match; pre-join loadout already applied.");
                         _loadoutRequested = true;
-                        StartCoroutine(CoLoadAndSendLoadout());
                     }
                     OnActiveSlotChanged();
                 }
@@ -1769,6 +2042,14 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
             }
         }
         // Brief dev comment: Server writes the replicated phase; owner also kicks Cloud Save fetch if phase==Match.
+
+        // Server-side helper used by controller to verify server actually has a loadout applied.
+        public bool ServerHasValidLoadout()
+        {
+            if (!IsServer) return false;
+            var lo = _netLoadout.Value;
+            return lo.primary != 0 && lo.secondary != 0 && lo.melee != 0; // util may be None-less after sanitize
+        }
 
         // ------- Freeze / Visibility -------
 
@@ -1910,6 +2191,8 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
             int damageInt = tookDamage ? Mathf.RoundToInt(-delta) : 0;
             bool died = previous > 0f && target <= 0f;
 
+            Debug.Log($"[Weapons] Health delta cid={OwnerClientId} delta={delta} prev={previous:0} now={target:0} attackerCid={(attacker?attacker.OwnerClientId:ulong.MaxValue)} died={died}");
+
             if (died)
             {
                 var victimStats = _combatStats.Value;
@@ -1961,6 +2244,7 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
         public void ServerAutoEquipPrimary()
         {
             if (!IsServer) return;
+            Debug.Log($"[Weapons] ServerAutoEquipPrimary cid={OwnerClientId}");
 
             // Always sanitize first so we never carry "None" into equip.
             ServerEnsureValidLoadoutAndHealth(sanitizeOnly: true);
@@ -2016,6 +2300,11 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
 
             if (changed) _netLoadout.Value = net;
 
+            if (changed || !sanitizeOnly)
+            {
+                Debug.Log($"[PlayerNetwork] Loadout validated/set: P={(PrimaryType)net.primary} S={(SecondaryType)net.secondary} M={(net.melee == 1 ? "Knife" : "None")} U={(UtilityType)net.util} for cid={OwnerClientId} (changed={changed})");
+            }
+
             if (sanitizeOnly) return;
 
             _activeSlot.Value = 0;
@@ -2032,6 +2321,86 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
         }
 // Brief dev comment: replace nonexistent MeleeType enum with byte convention and fix PrimaryType.AR.
         // Server-only fallback that guarantees "no None" and a healthy spawn.
+
+// --- FOV / LOS enable/disable helpers (Match only) ---
+void SetFovAndLosEnabled(bool enabled)
+{
+    if (!IsOwner) return;
+
+    // FOV mesh on the local player
+    var fov = GetComponent<FovMesh>();
+    var losLight = GetComponent<PlayerLosLight>();
+
+    if (enabled)
+    {
+        // Ensure camera is bound before setting up LOS
+        if (_cam == null) TryBindCamera();
+
+        if (!fov) fov = gameObject.AddComponent<FovMesh>();
+        // Same configuration you currently set on spawn:
+        fov.radiusMeters = 12f;
+        fov.rayCount = 220;
+        fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
+        fov.showFill = true;
+        fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f);
+        fov.fillIntensity = 1.15f;
+        fov.edgeFeather = 0.15f;
+        fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
+        fov.follow = modelRoot ? modelRoot : transform;
+        fov.enabled = true; // Explicitly enable
+
+        if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
+        losLight.fovSource = fov;
+        losLight.intensity = 1.3f;
+        losLight.rangeScale = 0.9f;
+        losLight.castShadows = true;
+        losLight.enabled = true;
+
+        // Install camera LOS components
+        if (_cam != null)
+        {
+            var los = _cam.GetComponent<LineOfSightTransparency>();
+            if (!los)
+            {
+                los = _cam.gameObject.AddComponent<LineOfSightTransparency>();
+                los.target = transform;
+            }
+            else
+            {
+                los.target = transform;
+                los.enabled = true;
+            }
+
+            // Prevent occlusion culling issues with our transparent fades
+            _cam.useOcclusionCulling = false;
+
+            // Ensure the fog overlay plane exists
+            FogOfWarOverlayPlane.InstallFor(_cam);
+        }
+    }
+    else
+    {
+        if (losLight) losLight.enabled = false;
+        if (fov) fov.enabled = false;
+
+        // Remove fog overlay + line-of-sight transparency from camera
+        RemoveLosFromCamera();
+    }
+}
+
+void RemoveLosFromCamera()
+{
+    if (_cam == null)
+        return;
+
+    // Kill the fog overlay child, if present
+    var overlay = _cam.GetComponentInChildren<FogOfWarOverlayPlane>(true);
+    if (overlay) Destroy(overlay.gameObject);
+
+    // Remove camera LOS transparency in lobby so players never get faded
+    var los = _cam.GetComponent<LineOfSightTransparency>();
+    if (los) Destroy(los);
+}
 
         void SetSprint(bool on)
         {

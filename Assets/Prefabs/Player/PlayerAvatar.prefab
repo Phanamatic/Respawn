@@ -278,13 +278,11 @@ GameObject:
   - component: {fileID: 7211393495198156950}
   - component: {fileID: 3171105039355217481}
   - component: {fileID: 3191172038672659176}
-  - component: {fileID: 8807297918959326603}
   - component: {fileID: 5591393596735128251}
   - component: {fileID: 4918574695991783337}
   - component: {fileID: 643495328251867668}
   - component: {fileID: 3944781503140636565}
   - component: {fileID: 6125363240826229288}
-  - component: {fileID: 4610652831622128449}
   - component: {fileID: 6948204331012536248}
   - component: {fileID: 6409565688786376842}
   - component: {fileID: 6800541382982696214}
@@ -423,19 +421,6 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
---- !u!114 &8807297918959326603
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7629307799589511846}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a3fcf49600e79634da14847ef25300f2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  ShowTopMostFoldoutHeaderGroup: 1
 --- !u!114 &5591393596735128251
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -594,19 +579,6 @@ MonoBehaviour:
   skin: 0.02
   probeUp: 2
   probeDown: 6
---- !u!114 &4610652831622128449
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7629307799589511846}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a042a4f580cd6ab4899376ac09f1b08f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  visualRoot: {fileID: 2175930713061618387}
 --- !u!114 &6948204331012536248
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -840,7 +812,7 @@ MonoBehaviour:
         byte0059: 0
         byte0060: 0
         byte0061: 0
-  knifeViewPrefab: {fileID: 2354712556141103704, guid: 8894f6fd00cc6db43a79321a835d0504, type: 3}
+  knifeViewPrefab: {fileID: 1772275987025050834, guid: 6c2a8a735f2405f40b8ef87e7f7e19c0, type: 3}
 --- !u!114 &4477007281245444062
 MonoBehaviour:
   m_ObjectHideFlags: 0

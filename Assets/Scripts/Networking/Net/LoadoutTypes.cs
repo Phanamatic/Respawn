@@ -38,7 +38,8 @@ namespace Game.Net
         public override int GetHashCode() => (primary << 16) ^ (secondary << 8) ^ (melee << 4) ^ util;
 
         public static NetLoadout From(PlayerLoadout lo) =>
-            new NetLoadout { primary = (byte)lo.Primary, secondary = (byte)lo.Secondary, melee = 0, util = (byte)lo.Utility };
+            new NetLoadout { primary = (byte)lo.Primary, secondary = (byte)lo.Secondary, melee = 1, util = (byte)lo.Utility };
+            // Melee always defaults to 1 (Knife) since there's only one melee weapon
 
         public PlayerLoadout ToModel() =>
             new PlayerLoadout { Primary = (PrimaryType)primary, Secondary = (SecondaryType)secondary, Utility = (UtilityType)util };
