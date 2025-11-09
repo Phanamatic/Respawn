@@ -97,7 +97,9 @@ namespace Game.Net
         }
 // Brief dev comment.
 // Brief dev comment: Clients didn’t know when phase changed. This NV tells them and kicks off loadout fetch once.        // Simple server rate-limits
-        float _lastSwitchServerTime, _lastThrowServerTime;
+    float _lastSwitchServerTime, _lastThrowServerTime;
+    // New slot switch rate-limit timestamp (next allowed server-side switch time)
+    float _nextAllowedSlotSwitch;
         const float k_MinSwitchInterval = 0.08f;   // ~10/s
         const float k_MinThrowInterval = 0.5f;    // guard spam
         [Header("Movement")]
@@ -437,7 +439,8 @@ namespace Game.Net
 
                 _rb.isKinematic = false;
                 _rb.useGravity = true;
-                _inputPaused = false;
+                // Actively unpause & ensure input map is enabled when phase is set.
+                SetInputPaused(false);
 
                 UpdateHealthUI(_health.Value);
                 _statsLastPersisted = default;
@@ -907,21 +910,41 @@ public void ForceActiveSlotServer(byte slot)
 
         void RequestSwitchSlot(byte slot)
         {
-            if (_inputPaused) return;
-            if (_phase != PlayerPhase.Match) return;
+            // Be explicit about why a switch is ignored; this will show up in client logs.
+            if (_inputPaused || _phase != PlayerPhase.Match)
+            {
+                Debug.Log($"[Weapons] Slot switch ignored: paused={_inputPaused} phase={_phase} req={slot}");
+                return;
+            }
             if (slot > 3) return;
             RequestSwitchSlotServerRpc(slot);
         }
 
-        [ServerRpc]
-        void RequestSwitchSlotServerRpc(byte slot, ServerRpcParams p = default)
+        [ServerRpc(RequireOwnership = false)]
+        void RequestSwitchSlotServerRpc(int slot, ServerRpcParams p = default)
         {
-            if (_phase != PlayerPhase.Match) return;
-            if (slot > 3) return;
+            if (!IsServer) return;
+            var from = p.Receive.SenderClientId;
 
-            // Min interval
-            if (Time.time - _lastSwitchServerTime < k_MinSwitchInterval) return;
-            _lastSwitchServerTime = Time.time;
+            if (_phase != PlayerPhase.Match)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (not Match). cid={from} req={slot} phase={_phase}");
+                return;
+            }
+            if (slot < 0 || slot > 3)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (bad slot). cid={from} req={slot}");
+                return;
+            }
+
+            // Rate limit: prevent spam.
+            var now = Time.unscaledTime;
+            if (now < _nextAllowedSlotSwitch)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (rate-limit). cid={from} req={slot}");
+                return;
+            }
+            _nextAllowedSlotSwitch = now + k_MinSwitchInterval;
 
             // Validate against equipped loadout: Primary/Secondary always valid; Melee always allowed; Utility only if set
             bool allowed =
@@ -929,12 +952,14 @@ public void ForceActiveSlotServer(byte slot)
                 slot == 1 ||
                 slot == 2 || // melee fixed
                 (slot == 3 && _netLoadout.Value.util != (byte)UtilityType.None);
+            if (!allowed)
+            {
+                Debug.Log($"[Weapons] Server denied slot switch (utility none). cid={from} req={slot}");
+                return;
+            }
 
-            if (!allowed) { Debug.Log($"[Weapons] Slot switch rejected -> {slot} (not allowed) cid={OwnerClientId}"); return; }
-
-            _activeSlot.Value = slot;
-            Debug.Log($"[Weapons] Active slot -> {slot} cid={OwnerClientId}");
-            // TODO: later handle firing state teardown and equip animations.
+            _activeSlot.Value = (byte)slot;
+            Debug.Log($"[Weapons] Active slot -> {slot} from cid={from}");
         }
 
         void RequestThrowUtility()
@@ -1084,10 +1109,15 @@ public void ForceActiveSlotServer(byte slot)
 
             // Weapon inputs
             _aSlot1 = _map.AddAction(name: "Slot1", type: InputActionType.Button, binding: "<Keyboard>/1");
+            _aSlot1.AddBinding("<Keyboard>/numpad1"); // support numpad
             _aSlot2 = _map.AddAction(name: "Slot2", type: InputActionType.Button, binding: "<Keyboard>/2");
+            _aSlot2.AddBinding("<Keyboard>/numpad2");
             _aSlot3 = _map.AddAction(name: "Slot3", type: InputActionType.Button, binding: "<Keyboard>/3");
+            _aSlot3.AddBinding("<Keyboard>/numpad3");
             _aSlot4 = _map.AddAction(name: "Slot4", type: InputActionType.Button, binding: "<Keyboard>/4");
+            _aSlot4.AddBinding("<Keyboard>/numpad4");
             _aThrow = _map.AddAction(name: "Throw", type: InputActionType.Button, binding: "<Keyboard>/g");
+            // Brief dev comment: users often hit numpad 1–4; bind both.
             _aScoreboard = _map.AddAction(name: "Scoreboard", type: InputActionType.Button, binding: "<Keyboard>/tab");
 
             _aDash.performed += OnDashPerformed;
@@ -1208,8 +1238,19 @@ void OnReloadInput()
             {
                 var v = _rb.linearVelocity; v.x = 0f; v.z = 0f; _rb.linearVelocity = v;
             }
-            if (paused) _map?.Disable(); else _map?.Enable();
-            if (paused) ShowScoreboard(false);
+
+            if (paused)
+            {
+                _map?.Disable();
+                ShowScoreboard(false);
+            }
+            else
+            {
+                // Guard: after phase changes or reconnects the map may be disabled – force enable.
+                if (_map != null && !_map.enabled) _map.Enable();
+            }
+
+            Debug.Log($"[Input] SetInputPaused -> {paused} mapEnabled={(_map != null && _map.enabled)} phase={_phase}");
         }
 
         void TryBindCamera()
