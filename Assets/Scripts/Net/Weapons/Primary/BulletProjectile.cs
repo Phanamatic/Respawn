@@ -4,43 +4,83 @@ using Game.Net;
 
 namespace Game.Net.Weapons
 {
-    /// Server-driven horizontal projectile.
-    [RequireComponent(typeof(Collider))]
+    /// <summary>
+    /// Server-authoritative bullet with FixedUpdate sweep raycasting.
+    /// Prevents tunneling and ensures reliable hit detection on PlayerHitbox|Occluder|ExtraOccluder layers.
+    /// </summary>
+    [RequireComponent(typeof(NetworkObject))]
     public sealed class BulletProjectile : NetworkBehaviour
     {
-        public float speed;
-        public float lifetime;
-        public float damage;
+        [Header("Bullet Properties")]
+        [SerializeField] private float _speed = 38f;
+        [SerializeField] private int _damage = 9;
+        [SerializeField] private float _lifetime = 10f;
+        
+        [Header("Hit Detection")]
+        [SerializeField] private LayerMask _hitMask; // PlayerHitbox|Occluder|ExtraOccluder
+        [SerializeField] private float _skin = 0.05f; // Extra sweep distance
+        
+        [Header("Gameplay Plane")]
+        [SerializeField] private float _lockY = 0f; // Set by spawner to gameplay plane Y
+        
+        [Header("Visual")]
+        [SerializeField] private TrailRenderer trail;
+        
+        private Vector3 _lastPos;
+        private float _life;
+        private bool _impacted;
+        private ulong _ownerClientId;
+        private float _spawnIgnoreSelfWindow = 0.08f; // Grace period to avoid muzzle self-hits
+        
+        private static Material s_trailMaterial;
 
-        // Server-authoritative replication (no prefab NetworkTransform needed)
-        private readonly NetworkVariable<Vector3> _netPos = new(writePerm: NetworkVariableWritePermission.Server);
-        private readonly NetworkVariable<Quaternion> _netRot = new(writePerm: NetworkVariableWritePermission.Server);
+        
+        /// <summary>
+        /// Called by spawner on server immediately after Instantiate, before Spawn().
+        /// </summary>
+        public void ServerInit(Vector3 forward, ulong ownerClientId, float yPlane)
+        {
+            if (!IsServer) return;
+            transform.forward = forward;
+            _ownerClientId = ownerClientId;
+            _lockY = yPlane;
+            Debug.Log($"[Weapons] Projectile ServerInit owner={ownerClientId} dir={forward} yPlane={yPlane}");
+        }
 
-        float _alive;
-        float _spawnY;
-        Game.Net.PlayerNetwork _owner;
-        TeamId _ownerTeam = TeamId.A;
-        ulong _ownerClientId = ulong.MaxValue;
-        bool _hasImpacted;
-        [SerializeField] TrailRenderer trail;
-        static Material s_trailMaterial;
-
-        // Collision filter: only collide with Player, Occluder, and OccluderExtra layers
-        static LayerMask s_validCollisionLayers;
-        static bool s_layerMaskInitialized;
+        /// <summary>
+        /// Configure bullet properties on server before spawn. Called by weapon controllers.
+        /// </summary>
+        public void ConfigureServer(float speed, float lifetime, float damage, ulong ownerClientId, Game.Net.TeamId ownerTeam, Game.Net.PlayerNetwork owner)
+        {
+            if (!IsServer) return;
+            _speed = speed;
+            _lifetime = lifetime;
+            _damage = Mathf.RoundToInt(damage);
+            _ownerClientId = ownerClientId;
+            _lockY = owner ? owner.transform.position.y : 0f;
+            Debug.Log($"[Weapons] Projectile ConfigureServer owner={ownerClientId} team={ownerTeam} speed={speed} dmg={damage} lifetime={lifetime}");
+        }
 
         public override void OnNetworkSpawn()
         {
             base.OnNetworkSpawn();
 
-            // Initialize collision layer mask once
-            if (!s_layerMaskInitialized)
+            Debug.Log($"[Weapons] Projectile spawn netId={NetworkObjectId} srv={IsServer} speed={_speed} dmg={_damage} lifetime={_lifetime}");
+            
+            _life = _lifetime;
+            _lastPos = transform.position;
+            
+            // Lock to gameplay plane
+            if (_lockY != 0f)
             {
-                s_validCollisionLayers = LayerMask.GetMask("Player", "Occluder", "OccluderExtra");
-                s_layerMaskInitialized = true;
-                Debug.Log($"[Weapons] Projectile collision layers configured: Player, Occluder, OccluderExtra (mask={s_validCollisionLayers.value})");
+                var pos = transform.position;
+                pos.y = _lockY;
+                transform.position = pos;
+                _lastPos = pos;
             }
 
+
+            // Setup trail renderer
             if (!trail)
                 trail = GetComponentInChildren<TrailRenderer>();
             if (!trail)
@@ -53,6 +93,7 @@ namespace Game.Net.Weapons
                 trail.numCornerVertices = 4;
                 trail.numCapVertices = 2;
                 trail.alignment = LineAlignment.View;
+                
                 if (!s_trailMaterial)
                 {
                     var shader = Shader.Find("Sprites/Default");
@@ -74,138 +115,91 @@ namespace Game.Net.Weapons
                 trail.Clear();
                 trail.emitting = true;
             }
-
-            _spawnY = transform.position.y; // remember the plane we spawned on
-
-            // Ensure trigger collider & kinematic rigidbody for reliable trigger hits.
-            var col = GetComponent<Collider>();
-            if (col) col.isTrigger = true;
-            var rb = GetComponent<Rigidbody>();
-            if (!rb) rb = gameObject.AddComponent<Rigidbody>();
-            rb.isKinematic = true;
-            rb.useGravity = false;
-
-            // Push current transform into NVs for late-joining clients
-            if (IsServer)
-            {
-                _netPos.Value = transform.position;
-                _netRot.Value = transform.rotation;
-            }
-
-            Debug.Log($"[Weapons] Projectile spawn netId={(NetworkObject?NetworkObjectId:0)} srv={IsServer} speed={speed} damage={damage} lifetime={lifetime}");
         }
 
-        void Update()
+        private void FixedUpdate()
         {
-            if (IsServer)
+            if (!IsServer || _impacted || !IsSpawned) return;
+
+            // Lifetime check
+            _life -= Time.fixedDeltaTime;
+            if (_life <= 0f)
             {
-                var fwd = transform.forward; // horizontal only
-                fwd.y = 0f;
-                if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
-                fwd.Normalize();
+                Debug.Log($"[Weapons] Projectile despawn (lifetime expired) netId={NetworkObjectId}");
+                Despawn(false);
+                return;
+            }
 
-                var p = transform.position + fwd * speed * Time.deltaTime;
-                p.y = _spawnY; // hard-lock to spawn plane
-                transform.position = p;
+            // Advance bullet and sweep for hits
+            var dir = transform.forward;
+            var step = _speed * Time.fixedDeltaTime;
+            var start = transform.position;
+            var end = start + dir * step;
+            
+            // Lock to gameplay plane
+            if (_lockY != 0f)
+            {
+                end.y = _lockY;
+            }
 
-                // Replicate to clients
-                _netPos.Value = transform.position;
-                _netRot.Value = transform.rotation;
-
-                _alive += Time.deltaTime;
-                if (_alive >= lifetime)
+            var dist = (end - start).magnitude;
+            
+            // Raycast sweep from last position to next position (prevents tunneling)
+            if (Physics.Raycast(start, dir, out var hit, dist + _skin, _hitMask, QueryTriggerInteraction.Ignore))
+            {
+                // Grace window: ignore owner hits for first few frames to avoid muzzle self-hits
+                if (_spawnIgnoreSelfWindow > 0f)
                 {
-                    Debug.Log($"[Weapons] Projectile despawn (lifetime) t={_alive:0.00}");
-                    Despawn();
+                    _spawnIgnoreSelfWindow -= Time.fixedDeltaTime;
+                    
+                    var pn = hit.collider.GetComponentInParent<Game.Net.PlayerNetwork>();
+                    if (pn && pn.OwnerClientId == _ownerClientId)
+                    {
+                        // Still in grace window, ignore self hit and continue
+                        transform.position = end;
+                        _lastPos = transform.position;
+                        return;
+                    }
                 }
+
+                // Valid hit detected
+                Debug.Log($"[Weapons] Projectile hit collider={hit.collider.name} point={hit.point} netId={NetworkObjectId}");
+
+                // Try to apply damage via Health component
+                var health = hit.collider.GetComponentInParent<Health>();
+                if (health && health.HasServerAuthority)
+                {
+                    Debug.Log($"[Weapons] Applying damage={_damage} to Health on {hit.collider.name}");
+                    health.ApplyDamage(_damage, _ownerClientId, hit.point);
+                }
+
+                // Notify clients to play impact FX
+                PlayImpactClientRpc(hit.point, hit.normal);
+
+                _impacted = true;
+                Despawn(true);
             }
             else
             {
-                // Client: follow server
-                transform.SetPositionAndRotation(_netPos.Value, _netRot.Value);
+                // No hit, advance bullet
+                transform.position = end;
+                _lastPos = transform.position;
             }
         }
 
-        void OnTriggerEnter(Collider other)
+        [ClientRpc]
+        private void PlayImpactClientRpc(Vector3 point, Vector3 normal)
         {
-            if (!IsServer || _hasImpacted) return;
-            if (!other) return;
-            if (other.attachedRigidbody && other.attachedRigidbody.gameObject == this.gameObject) return;
-
-            // CRITICAL: Only collide with Player, Occluder, and OccluderExtra layers
-            int otherLayer = other.gameObject.layer;
-            if ((s_validCollisionLayers.value & (1 << otherLayer)) == 0)
-            {
-                // Ignore collision with this layer (e.g., Ground, UI, etc.)
-                return;
-            }
-
-            var target = other.GetComponentInParent<Game.Net.PlayerNetwork>();
-            if (target)
-            {
-                if ((_owner && target == _owner) || target.OwnerClientId == _ownerClientId) return; // ignore shooter collider edge cases
-
-                _hasImpacted = true;
-
-                bool friendly = _owner && target.GetTeam() == _ownerTeam;
-                Debug.Log($"[Weapons] Projectile hit player victimCid={target.OwnerClientId} attackerCid={_ownerClientId} friendly={friendly} dmg={damage}");
-                if (!friendly)
-                {
-                    target.ApplyHealthDelta(-Mathf.Abs(damage), _owner);
-                }
-
-                Despawn();
-                return;
-            }
-
-            _hasImpacted = true;
-            Debug.Log($"[Weapons] Projectile hit non-player collider={other.name} layer={LayerMask.LayerToName(otherLayer)}");
-            Despawn();
+            // TODO: Spawn impact VFX/SFX on all clients if desired
+            Debug.Log($"[Weapons] Impact FX at {point} (clientside)");
         }
 
-        void Despawn()
+        private void Despawn(bool impacted)
         {
-            if (IsSpawned) NetworkObject.Despawn();
-        }
-
-        const float kSpeedMultiplier = 10f;
-        const float kMinimumLifetime = 10f;
-
-        public void ConfigureServer(float speedValue, float lifetimeSeconds, float damageValue, ulong ownerClientId, TeamId ownerTeam, Game.Net.PlayerNetwork owner)
-        {
-            speed = speedValue * kSpeedMultiplier;
-            lifetime = Mathf.Max(kMinimumLifetime, lifetimeSeconds);
-            damage = damageValue;
-            _owner = owner;
-            _ownerTeam = ownerTeam;
-            _ownerClientId = ownerClientId;
-            _alive = 0f;
-            _hasImpacted = false;
-            IgnoreOwnerColliders(owner);
-            Debug.Log($"[Weapons] Projectile configured ownerCid={_ownerClientId} team={_ownerTeam} speed={speed} dmg={damage} life={lifetime}");
-        }
-
-        void IgnoreOwnerColliders(Game.Net.PlayerNetwork owner)
-        {
-            if (!owner) return;
-
-            var projectileColliders = GetComponentsInChildren<Collider>();
-            if (projectileColliders == null || projectileColliders.Length == 0) return;
-
-            var ownerColliders = owner.GetComponentsInChildren<Collider>(true);
-            if (ownerColliders == null || ownerColliders.Length == 0) return;
-
-            for (int i = 0; i < projectileColliders.Length; i++)
+            if (_impacted != impacted) _impacted = impacted;
+            if (IsSpawned)
             {
-                var projCol = projectileColliders[i];
-                if (!projCol) continue;
-
-                for (int j = 0; j < ownerColliders.Length; j++)
-                {
-                    var ownerCol = ownerColliders[j];
-                    if (!ownerCol) continue;
-                    Physics.IgnoreCollision(projCol, ownerCol, true);
-                }
+                NetworkObject.Despawn();
             }
         }
 
@@ -213,10 +207,7 @@ namespace Game.Net.Weapons
         {
             base.OnNetworkDespawn();
             if (trail) trail.emitting = false;
-            Debug.Log($"[Weapons] Projectile despawn netId={(NetworkObject?NetworkObjectId:0)} impacted={_hasImpacted}");
-            _owner = null;
-            _hasImpacted = false;
-            _alive = 0f;
+            Debug.Log($"[Weapons] Projectile despawn netId={NetworkObjectId} impacted={_impacted}");
         }
     }
 }
