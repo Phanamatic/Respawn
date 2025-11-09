@@ -11,6 +11,7 @@ using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement; // allow server to check active scene name
 using TMPro;
 using Game.Net.Weapons;
 using Unity.Collections;
@@ -908,14 +909,42 @@ public void ForceActiveSlotServer(byte slot)
     Debug.Log($"[Weapons] ForceActiveSlotServer -> {slot} cid={OwnerClientId}");
 }
 
+        // ===== Helpers / misc =====
+        bool IsInMatchScene()
+        {
+            // Treat any scene that starts with "Match_" as match gameplay context.
+            // This avoids client-side phase desync blocking weapon switches.
+            var name = SceneManager.GetActiveScene().name;
+            return !string.IsNullOrEmpty(name) && name.StartsWith("Match_");
+        }
+
+        bool IsInMatchSceneServer()
+        {
+            var name = SceneManager.GetActiveScene().name;
+            return !string.IsNullOrEmpty(name) && name.StartsWith("Match_");
+        }
+        // Server accepts slot switches whenever running a Match_* scene (phase relax).
+
         void RequestSwitchSlot(byte slot)
         {
-            // Be explicit about why a switch is ignored; this will show up in client logs.
-            if (_inputPaused || _phase != PlayerPhase.Match)
+            // Still respect pause hard-stop
+            if (_inputPaused)
             {
                 Debug.Log($"[Weapons] Slot switch ignored: paused={_inputPaused} phase={_phase} req={slot}");
                 return;
             }
+
+            // Allow switching if either (a) phase says Match, or (b) we're already in a Match_* scene.
+            bool inMatchScene = IsInMatchScene();
+            bool phaseOk = (_phase == PlayerPhase.Match);
+
+            if (!phaseOk && !inMatchScene)
+            {
+                Debug.Log($"[Weapons] Slot switch ignored: not in match context (phase={_phase}, scene='{SceneManager.GetActiveScene().name}') req={slot}");
+                return;
+            }
+
+            Debug.Log($"[Weapons] Slot switch request -> {slot} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
             if (slot > 3) return;
             RequestSwitchSlotServerRpc(slot);
         }
@@ -926,11 +955,15 @@ public void ForceActiveSlotServer(byte slot)
             if (!IsServer) return;
             var from = p.Receive.SenderClientId;
 
-            if (_phase != PlayerPhase.Match)
+            // Allow during Match_* scenes even if server-side phase hasn't flipped yet.
+            bool inMatchScene = IsInMatchSceneServer();
+            bool phaseOk = (_phase == PlayerPhase.Match);
+            if (!phaseOk && !inMatchScene)
             {
-                Debug.Log($"[Weapons] Server denied slot switch (not Match). cid={from} req={slot} phase={_phase}");
+                Debug.Log($"[Weapons] Server denied slot switch (not in match context). cid={from} req={slot} phase={_phase} scene='{SceneManager.GetActiveScene().name}'");
                 return;
             }
+
             if (slot < 0 || slot > 3)
             {
                 Debug.Log($"[Weapons] Server denied slot switch (bad slot). cid={from} req={slot}");
@@ -959,7 +992,7 @@ public void ForceActiveSlotServer(byte slot)
             }
 
             _activeSlot.Value = (byte)slot;
-            Debug.Log($"[Weapons] Active slot -> {slot} from cid={from}");
+            Debug.Log($"[Weapons] Active slot -> {slot} from cid={from} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
         }
 
         void RequestThrowUtility()
