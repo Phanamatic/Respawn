@@ -1336,6 +1336,25 @@ void OnReloadInput()
             Debug.Log($"[Input] SetInputPaused -> {paused} mapEnabled={(_map != null && _map.enabled)} phase={_phase}");
         }
 
+        // Local-only helper so stuns can briefly pause input on the affected client.
+        Coroutine _inputPauseCo;
+        public void StartLocalInputPause(float seconds)
+        {
+            if (!IsOwner) return; // only the local owner should drive local input pause
+            if (_inputPauseCo != null) StopCoroutine(_inputPauseCo);
+            _inputPauseCo = StartCoroutine(CoLocalInputPause(seconds));
+        }
+
+        System.Collections.IEnumerator CoLocalInputPause(float seconds)
+        {
+            SetInputPaused(true);
+            float end = Time.unscaledTime + Mathf.Max(0f, seconds);
+            while (Time.unscaledTime < end) yield return null;
+            SetInputPaused(false);
+            _inputPauseCo = null;
+        }
+        // Brief dev comment: gives stun projectiles a safe client-side way to pause/unpause input.
+
         void TryBindCamera()
         {
             _cam = Camera.main;
