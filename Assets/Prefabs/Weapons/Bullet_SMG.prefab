@@ -179,3 +179,4 @@ MonoBehaviour:
   speed: 38
   lifetime: 1
   damage: 9
+  trail: {fileID: 0}
