@@ -162,21 +162,17 @@ namespace Game.Net.Weapons
             _view = go.GetComponent<WeaponView>();
 
             var t = go.transform;
-            if (_view && _view.grip)
-            {
-                t.SetParent(sockets.handMount, false);
-                t.position = sockets.handMount.position;
-                t.rotation = sockets.handMount.rotation;
-            }
-            else
-            {
-                t.SetParent(transform, false);
-            }
+            // Precisely snap 'grip' to Hand Mount (keeps correct model offsets)
+            t.SetParent(sockets.handMount, false);
+            if (_view) _view.SnapGripTo(sockets.handMount);
+            else { t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation; }
 
             if (_view && sockets.equipStart && sockets.front)
             {
+                // Uses WeaponView.tip if assigned (falls back to muzzle/transform)
                 StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
             }
+// Brief dev comment: uses new SnapGripTo() for perfect alignment and 'tip' for equip facing.
         }
 
         [ClientRpc] void PlaySwingClientRpc()

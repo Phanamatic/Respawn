@@ -173,7 +173,7 @@ Transform:
   m_GameObject: {fileID: 6525475090509400097}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.552, y: -0.090953946, z: 1.217}
+  m_LocalPosition: {x: 0.552, y: 0.002, z: 1.634}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -996,6 +996,9 @@ MonoBehaviour:
   fragGrenadePrefab: {fileID: 6496715479139210789, guid: e6f6d111fdf4d0b4db4c091a82e008d1, type: 3}
   smokePrefab: {fileID: 6496715479139210789, guid: f293c968efd2e174387fef9401fe9e05, type: 3}
   stunPrefab: {fileID: 6496715479139210789, guid: 315f3f3e62408e144831972bb140055c, type: 3}
+  grenadeViewPrefab: {fileID: 0}
+  smokeViewPrefab: {fileID: 0}
+  stunViewPrefab: {fileID: 0}
   throwForce: 20
   throwAngle: 30
 --- !u!114 &1635704192221264307
@@ -1245,7 +1248,7 @@ Transform:
   m_GameObject: {fileID: 7769304657473620615}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.552, y: 0.922, z: 0.19}
+  m_LocalPosition: {x: 0.621, y: 0.922, z: 0.19}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
