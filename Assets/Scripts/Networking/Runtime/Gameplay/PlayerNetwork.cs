@@ -977,7 +977,16 @@ namespace Game.Net
             if (secondary) secondary.SetVisible(false);
             if (melee) melee.SetVisible(false);
 
+            // Hard guarantee: only ONE child under Hand Mount before equipping
+            var sockets = GetComponent<PlayerWeaponSockets>();
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
             // Now show and equip the active slot
+            // [DirectNet] Central purge prevents multiple views when swapping fast / race conditions.
             if (slot == 0) // Primary
             {
                 var type = (PrimaryType)_netLoadout.Value.primary;
@@ -1137,43 +1146,31 @@ namespace Game.Net
             _dashQueuedUntil = Time.time + dashInputBuffer;
         }
 
-        void OnFireInput(bool firing)
-        {
-            if (_inputPaused) return;
-            if (_phase != PlayerPhase.Match) return;    // Lobby: block fire
-            
-            byte slot = _activeSlot.Value;
-            if (slot == 0) // Primary
-            {
-                GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
-            }
-            else if (slot == 1) // Secondary
-            {
-                GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
-            }
-            else if (slot == 2) // Melee
-            {
-                if (firing) // Only swing on press, not release
-                    GetComponent<WeaponMeleeController>()?.RequestSwing();
-            }
-        }
+void OnFireInput(bool firing)
+{
+    if (!IsOwner) return;
+    if (_inputPaused) return;
+    // Block only on Lobby servers; avoid client-side phase desyncs killing fire in Match.
+    if (SessionContext.Type == ServerType.Lobby) return;
+
+    var slot = _activeSlot.Value;
+    if (slot == 0) GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
+    else if (slot == 1) GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
+    else if (slot == 2 && !firing) GetComponent<WeaponMeleeController>()?.RequestSwing();
+}
+// [DirectNet] Use server type for gating; keeps lobby safe and restores firing in matches.
 
         void OnReloadInput()
         {
+            if (!IsOwner) return;
             if (_inputPaused) return;
-            if (_phase != PlayerPhase.Match) return;    // Lobby: block reload
-            
-            byte slot = _activeSlot.Value;
-            if (slot == 0) // Primary
-            {
-                GetComponent<WeaponPrimaryController>()?.RequestReload();
-            }
-            else if (slot == 1) // Secondary
-            {
-                GetComponent<WeaponSecondaryController>()?.RequestReload();
-            }
-            // Melee and utility don't reload
+            if (SessionContext.Type == ServerType.Lobby) return;
+
+            var slot = _activeSlot.Value;
+            if (slot == 0) GetComponent<WeaponPrimaryController>()?.RequestReload();
+            else if (slot == 1) GetComponent<WeaponSecondaryController>()?.RequestReload();
         }
+// [DirectNet] Same server-type gate as fire; avoids match-time reload lockout.
 
         public void SetInputPaused(bool paused)
         {

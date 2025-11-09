@@ -143,6 +143,13 @@ namespace Game.Net.Weapons
                 return;
             }
 
+            // Ensure only one weapon view exists under the Hand Mount
+            if (sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
             var go = Instantiate(knifeViewPrefab);
             go.name = "Knife_View(Local)";
             _view = go.GetComponent<WeaponView>();
