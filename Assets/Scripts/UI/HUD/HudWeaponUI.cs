@@ -26,7 +26,9 @@ namespace Game.UI.HUD
 
         // cached defaults so we can cleanly restore when cues stop
         Color _primaryAmmoBaseColor, _secondaryAmmoBaseColor;
+        Color _primaryReloadBaseColor, _secondaryReloadBaseColor;
         Vector3 _primaryReloadBaseScale = Vector3.one, _secondaryReloadBaseScale = Vector3.one;
+// Keep UI components always enabled; we control visibility via alpha, never by disabling components.
 // Adds serialized knobs and caches for tint/pulse behavior.
 
         [SerializeField] Image primaryReloadFill;     // type = Filled
@@ -76,17 +78,16 @@ namespace Game.UI.HUD
             int reserve = _primary.reserveAmmo.Value;
             bool hasAmmo = magazine > 0 || reserve != 0;
             
-            // Show UI if weapon name is set OR if we have ammo (handles replication delay)
+            // Visible when we have a name or ammo info (handles replication delay).
             bool showUI = equipped || hasAmmo;
             
             if (primaryWeaponName)
             {
-                primaryWeaponName.enabled = showUI;
                 if (equipped) primaryWeaponName.text = _primary.equippedWeaponName.Value.ToString();
+                SetAlpha(primaryWeaponName, showUI ? 1f : 0f);
             }
             if (primaryAmmoText)
             {
-                primaryAmmoText.enabled = showUI;
                 if (showUI)
                 {
                     string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
@@ -96,6 +97,13 @@ namespace Game.UI.HUD
                     var normal = _primaryAmmoBaseColor;
                     primaryAmmoText.color = ChooseAmmoColor(magazine, normal, ammoLowColor, ammoCriticalColor);
                 }
+                else
+                {
+                    primaryAmmoText.text = "";
+                    // restore base color to avoid lingering low/critical tint when we fade back in
+                    primaryAmmoText.color = _primaryAmmoBaseColor;
+                }
+                SetAlpha(primaryAmmoText, showUI ? 1f : 0f);
             }
             
             if (primaryReloadFill)
@@ -104,11 +112,17 @@ namespace Game.UI.HUD
                 float progress = reloading ? _primary.reloadProgress.Value : 0f;
                 
                 primaryReloadFill.fillAmount = progress;
-                primaryReloadFill.enabled = reloading;
+                SetAlpha(primaryReloadFill, reloading ? 1f : 0f);
                 
                 // Pulse the circle near completion to telegraph the end of reload.
                 bool nearDone = reloading && progress >= reloadPulseThreshold;
                 ApplyReloadPulse(primaryReloadFill, _primaryReloadBaseScale, reloading, nearDone);
+                
+                if (!reloading)
+                {
+                    // restore base color/scale for next reload
+                    primaryReloadFill.color = new Color(_primaryReloadBaseColor.r, _primaryReloadBaseColor.g, _primaryReloadBaseColor.b, primaryReloadFill.color.a);
+                }
             }
         }
 
@@ -121,26 +135,28 @@ namespace Game.UI.HUD
             int reserve = _secondary.reserveAmmo.Value;
             bool hasAmmo = magazine > 0 || reserve != 0;
             
-            // Show UI if weapon name is set OR if we have ammo (handles replication delay)
             bool showUI = equipped || hasAmmo;
             
             if (secondaryWeaponName)
             {
-                secondaryWeaponName.enabled = showUI;
                 if (equipped) secondaryWeaponName.text = _secondary.equippedWeaponName.Value.ToString();
+                SetAlpha(secondaryWeaponName, showUI ? 1f : 0f);
             }
             if (secondaryAmmoText)
             {
-                secondaryAmmoText.enabled = showUI;
                 if (showUI)
                 {
                     string reserveText = reserve < 0 ? "INF" : Mathf.Max(0, reserve).ToString("D3");
                     secondaryAmmoText.text = $"{magazine.ToString("D3")}/{reserveText}";
-                    
-                    // Contextual tint when low/critical
                     var normal = _secondaryAmmoBaseColor;
                     secondaryAmmoText.color = ChooseAmmoColor(magazine, normal, ammoLowColor, ammoCriticalColor);
                 }
+                else
+                {
+                    secondaryAmmoText.text = "";
+                    secondaryAmmoText.color = _secondaryAmmoBaseColor;
+                }
+                SetAlpha(secondaryAmmoText, showUI ? 1f : 0f);
             }
             
             if (secondaryReloadFill)
@@ -149,11 +165,15 @@ namespace Game.UI.HUD
                 float progress = reloading ? _secondary.reloadProgress.Value : 0f;
                 
                 secondaryReloadFill.fillAmount = progress;
-                secondaryReloadFill.enabled = reloading;
+                SetAlpha(secondaryReloadFill, reloading ? 1f : 0f);
                 
-                // Pulse the circle near completion to telegraph the end of reload.
                 bool nearDone = reloading && progress >= reloadPulseThreshold;
                 ApplyReloadPulse(secondaryReloadFill, _secondaryReloadBaseScale, reloading, nearDone);
+                
+                if (!reloading)
+                {
+                    secondaryReloadFill.color = new Color(_secondaryReloadBaseColor.r, _secondaryReloadBaseColor.g, _secondaryReloadBaseColor.b, secondaryReloadFill.color.a);
+                }
             }
         }
 
@@ -164,8 +184,9 @@ namespace Game.UI.HUD
             bool equipped = _melee.equippedWeaponName.Value.Length > 0;
             if (meleeWeaponName)
             {
-                meleeWeaponName.enabled = equipped;
                 if (equipped) meleeWeaponName.text = _melee.equippedWeaponName.Value.ToString();
+                else meleeWeaponName.text = "";
+                SetAlpha(meleeWeaponName, equipped ? 1f : 0f);
             }
         }
 
@@ -176,32 +197,34 @@ namespace Game.UI.HUD
             bool equipped = _utility.equippedWeaponName.Value.Length > 0;
             if (utilityWeaponName)
             {
-                utilityWeaponName.enabled = equipped;
                 if (equipped) utilityWeaponName.text = _utility.equippedWeaponName.Value.ToString();
+                else utilityWeaponName.text = "";
+                SetAlpha(utilityWeaponName, equipped ? 1f : 0f);
             }
             if (utilityAmmoText)
             {
-                utilityAmmoText.enabled = equipped;
                 if (equipped) utilityAmmoText.text = $"x{_utility.ammoCount.Value}";
+                else utilityAmmoText.text = "";
+                SetAlpha(utilityAmmoText, equipped ? 1f : 0f);
             }
         }
 
         void HideAll()
         {
-            if (primaryReloadFill) primaryReloadFill.enabled = false;
-            if (primaryAmmoText) { primaryAmmoText.enabled = false; primaryAmmoText.text = ""; }
-            if (primaryWeaponName) { primaryWeaponName.enabled = false; primaryWeaponName.text = ""; }
+            // Never disable UI components. Clear content and fade out via alpha.
+            if (primaryReloadFill) { primaryReloadFill.fillAmount = 0f; SetAlpha(primaryReloadFill, 0f); }
+            if (primaryAmmoText)   { primaryAmmoText.text = "";         SetAlpha(primaryAmmoText,   0f); }
+            if (primaryWeaponName) { primaryWeaponName.text = "";       SetAlpha(primaryWeaponName, 0f); }
 
-            if (secondaryReloadFill) secondaryReloadFill.enabled = false;
-            if (secondaryAmmoText) { secondaryAmmoText.enabled = false; secondaryAmmoText.text = ""; }
-            if (secondaryWeaponName) { secondaryWeaponName.enabled = false; secondaryWeaponName.text = ""; }
+            if (secondaryReloadFill) { secondaryReloadFill.fillAmount = 0f; SetAlpha(secondaryReloadFill, 0f); }
+            if (secondaryAmmoText)   { secondaryAmmoText.text = "";         SetAlpha(secondaryAmmoText,   0f); }
+            if (secondaryWeaponName) { secondaryWeaponName.text = "";       SetAlpha(secondaryWeaponName, 0f); }
 
-            if (meleeWeaponName) { meleeWeaponName.enabled = false; meleeWeaponName.text = ""; }
-
-            if (utilityAmmoText) { utilityAmmoText.enabled = false; utilityAmmoText.text = ""; }
-            if (utilityWeaponName) { utilityWeaponName.enabled = false; utilityWeaponName.text = ""; }
+            if (meleeWeaponName)   { meleeWeaponName.text = "";       SetAlpha(meleeWeaponName,   0f); }
+            if (utilityAmmoText)   { utilityAmmoText.text = "";       SetAlpha(utilityAmmoText,   0f); }
+            if (utilityWeaponName) { utilityWeaponName.text = "";     SetAlpha(utilityWeaponName, 0f); }
         }
-// Hides equip texts unless equipped; reload image only when reloading.
+// Components stay enabled; alpha=0 hides them without layout/shader side effects.
 
         // ===== Helpers: defaults, tint logic, pulse animation =====
         void CacheDefaults()
@@ -209,8 +232,16 @@ namespace Game.UI.HUD
             if (primaryAmmoText) _primaryAmmoBaseColor = primaryAmmoText.color;
             if (secondaryAmmoText) _secondaryAmmoBaseColor = secondaryAmmoText.color;
 
-            if (primaryReloadFill) _primaryReloadBaseScale = primaryReloadFill.rectTransform.localScale;
-            if (secondaryReloadFill) _secondaryReloadBaseScale = secondaryReloadFill.rectTransform.localScale;
+            if (primaryReloadFill)
+            {
+                _primaryReloadBaseScale = primaryReloadFill.rectTransform.localScale;
+                _primaryReloadBaseColor = primaryReloadFill.color;
+            }
+            if (secondaryReloadFill)
+            {
+                _secondaryReloadBaseScale = secondaryReloadFill.rectTransform.localScale;
+                _secondaryReloadBaseColor = secondaryReloadFill.color;
+            }
         }
 
         Color ChooseAmmoColor(int magazine, Color normal, Color low, Color critical)
@@ -220,12 +251,12 @@ namespace Game.UI.HUD
             return normal;
         }
 
-        void ApplyReloadPulse(Image img, Vector3 baseScale, bool enabled, bool shouldPulse)
+        void ApplyReloadPulse(Image img, Vector3 baseScale, bool visible, bool shouldPulse)
         {
             if (!img) return;
 
-            // When the image is disabled or no pulse requested, ensure we restore the base scale.
-            if (!enabled || !shouldPulse)
+            // When not visible or no pulse requested, ensure we restore the base scale.
+            if (!visible || !shouldPulse)
             {
                 if (img.rectTransform.localScale != baseScale)
                     img.rectTransform.localScale = baseScale;
@@ -248,5 +279,18 @@ namespace Game.UI.HUD
             _melee = local.GetComponent<WeaponMeleeController>();
             _utility = local.GetComponent<WeaponUtilityController>();
         }
+
+        // ===== Helpers: alpha without disabling components =====
+        static void SetAlpha(TMP_Text t, float a)
+        {
+            if (!t) return;
+            var c = t.color; c.a = a; t.color = c;
+        }
+        static void SetAlpha(Image img, float a)
+        {
+            if (!img) return;
+            var c = img.color; c.a = a; img.color = c;
+        }
+        // Never disables any Image/TMP components; uses alpha-only visibility with state restoration. Keeps HUD always alive and layout stable.
     }
 }

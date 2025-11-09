@@ -110,9 +110,19 @@ public sealed class LosVisibilitySystem : MonoBehaviour
         if (!_lastVisible.ContainsKey(viewerId))
             _lastVisible[viewerId] = new Dictionary<ulong, float>();
 
-        // Enforce initial state for all existing targets for this viewer.
+        // Defer reveal until the scene finished loading and objects are spawned.
+        StartCoroutine(CoDeferredReveal(viewerId));
+    }
+
+    IEnumerator CoDeferredReveal(ulong id)
+    {
+        // Wait for scene load to complete (or a small timeout) and for any tracked objects to spawn.
+        // Use whichever signal you already have; fall back to a small delay.
+        yield return new WaitUntil(() => NetworkManager.Singleton.IsListening && _targets.Count > 0);
+        yield return null; // 1 frame grace
+
         foreach (var t in _targets.Values)
-            ApplyImmediateVisibilityForViewer(viewerId, t);
+            ApplyImmediateVisibilityForViewer(id, t);
     }
 
     IEnumerator CoLoop()
@@ -165,6 +175,10 @@ public sealed class LosVisibilitySystem : MonoBehaviour
             // Iterate opponents
             foreach (var t in _targets.Values)
             {
+                // Guard against destroyed or not-yet-spawned objects.
+                if (t.Transform == null || t.NO == null || !t.NO.IsSpawned)
+                    continue;
+
                 if (t.OwnerId == viewerId) continue;         // skip self
                 var targetId = t.NO.NetworkObjectId;
                 if (t.Team == viewerTeam) {                   // allies always visible
@@ -268,6 +282,10 @@ public sealed class LosVisibilitySystem : MonoBehaviour
     void ApplyImmediateVisibilityForViewer(ulong viewerId, Tracked t)
     {
         if (!_nm || !_nm.IsServer) return;
+
+        var no = t.NO;
+        if (no == null || !no.IsSpawned)
+            return; // defer; we'll pick it up in Tick once spawned
 
         // Self is always visible.
         if (viewerId == t.OwnerId)

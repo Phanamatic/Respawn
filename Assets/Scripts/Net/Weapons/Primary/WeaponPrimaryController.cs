@@ -286,6 +286,13 @@ namespace Game.Net.Weapons
         {
             if (!IsOwner) return;
 
+            // Ensure no stale meshes remain on the hand mount (e.g., scene-placed Pistol_View).
+            if (sockets && sockets.handMount)
+            {
+                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
+                    Destroy(sockets.handMount.GetChild(i).gameObject);
+            }
+
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
@@ -340,6 +347,7 @@ namespace Game.Net.Weapons
             Debug.Log($"[Weapons] Local view spawned prefab={go.name}");
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
+// [Weapons] Prevents leftover scene children from masking the spawned Local view.
 
         // ====== Defaults if no SO assigned ======
         static readonly Dictionary<Game.Net.PrimaryType, GunStats> _defaults = new();
