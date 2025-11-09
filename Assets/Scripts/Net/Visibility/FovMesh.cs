@@ -31,7 +31,7 @@ public sealed class FovMesh : MonoBehaviour
     [Range(0.02f, 1f)] public float visualEdgeSoftness = 0.35f;
     [Range(0f, 0.2f)] public float visualHeightOffset = 0.03f;
     [Tooltip("Additional height above ground to prevent Z-fighting")]
-    public float groundHeightOffset = 0.98f;
+    public float groundHeightOffset = 0.01f; // sits just above ground; tweak in Inspector
 
     const float EyeHeight = 1.2f;
     const float RebuildHz = 12f;
@@ -174,12 +174,20 @@ public sealed class FovMesh : MonoBehaviour
                 _visualMpb.SetFloat(_RadiusId, Mathf.Max(0.1f, radiusMeters));
                 _visualRenderer.SetPropertyBlock(_visualMpb);
                 
-                // Hard-lock visual to Y = VisualFixedY in world space.
+                // Clamp visual to sit on top of the Ground collider (never below it).
                 if (_visualGO)
                 {
                     var vt = _visualGO.transform;
                     var wp = vt.position;
-                    if (!Mathf.Approximately(wp.y, VisualFixedY)) { wp.y = VisualFixedY; vt.position = wp; }
+                    // small skin avoids z-fighting; keep tiny to "sit on" the ground
+                    float skin = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
+                    Ray ray = new Ray(wp + Vector3.up * 2f, Vector3.down);
+                    if (Physics.Raycast(ray, out var gHit, 10f, LayerMask.GetMask("Ground"), QueryTriggerInteraction.Collide)
+                        || (Physics.Raycast(ray, out gHit, 10f) && gHit.collider.CompareTag("Ground")))
+                    {
+                        wp.y = gHit.point.y + skin;
+                        vt.position = wp;
+                    }
                 }
             }
         }
@@ -206,9 +214,10 @@ public sealed class FovMesh : MonoBehaviour
 
         // Raycast down to find the ground height
         float groundY = centerWS.y;
+        float skinMesh = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
         if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out RaycastHit groundHit, 100f, LayerMask.GetMask("Ground")))
         {
-            groundY = groundHit.point.y + groundHeightOffset;
+            groundY = groundHit.point.y + skinMesh;
         }
         else
         {
@@ -217,7 +226,7 @@ public sealed class FovMesh : MonoBehaviour
             {
                 if (groundHit.collider.CompareTag("Ground"))
                 {
-                    groundY = groundHit.point.y + groundHeightOffset;
+                    groundY = groundHit.point.y + skinMesh;
                 }
             }
         }
@@ -317,7 +326,7 @@ public sealed class FovMesh : MonoBehaviour
         _visualRenderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
         _visualRenderer.enabled = (_visualRenderer.sharedMaterial != null);
         if (_visualGO && !_visualGO.activeSelf) _visualGO.SetActive(_visualRenderer.enabled);
-    _visualGO.transform.localPosition = new Vector3(0f, visualHeightOffset, 0f);
+    _visualGO.transform.localPosition = new Vector3(0f, 0f, 0f);
     // Ensure a stable, searchable name for the child visual so tooling can find it.
     if (_visualGO.name != "__FOVVisual") _visualGO.name = "__FOVVisual";
     // Dev: Named child so the constraint helper can auto-bind even in Edit Mode.
@@ -341,10 +350,17 @@ public sealed class FovMesh : MonoBehaviour
         pc.constraintActive = true;
         pc.enabled          = true;
 
-        // Initialize world Y to the fixed plane.
+        // Initialize world Y to the top of the Ground collider under us.
         var vt = _visualGO.transform;
         var wp = vt.position;
-        if (!Mathf.Approximately(wp.y, VisualFixedY)) { wp.y = VisualFixedY; vt.position = wp; }
+        float skinInit = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
+        Ray initRay = new Ray(wp + Vector3.up * 2f, Vector3.down);
+        if (Physics.Raycast(initRay, out var gHitInit, 10f, LayerMask.GetMask("Ground"), QueryTriggerInteraction.Collide)
+            || (Physics.Raycast(initRay, out gHitInit, 10f) && gHitInit.collider.CompareTag("Ground")))
+        {
+            wp.y = gHitInit.point.y + skinInit;
+            vt.position = wp;
+        }
     }
 
     void DisableVisualRenderer()

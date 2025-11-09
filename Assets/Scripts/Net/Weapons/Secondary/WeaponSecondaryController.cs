@@ -41,6 +41,21 @@ namespace Game.Net.Weapons
         const int InfiniteReserve = -1;
     const float ProjectileLifetimeSeconds = 10f;
 
+        Vector3 _srvMuzzlePos;
+        Vector3 _srvAimDir;
+        bool _hasAim;
+
+        [ServerRpc(Delivery = RpcDelivery.Unreliable)]
+        void ReportAimServerRpc(Vector3 muzzleWorld, Vector3 dirWorld)
+        {
+            dirWorld.y = 0f;
+            if (dirWorld.sqrMagnitude > 1e-6f) dirWorld.Normalize();
+
+            _srvMuzzlePos = new Vector3(muzzleWorld.x, transform.position.y, muzzleWorld.z);
+            _srvAimDir = (dirWorld.sqrMagnitude > 1e-6f) ? dirWorld : transform.forward;
+            _hasAim = _srvAimDir.sqrMagnitude > 1e-6f;
+        }
+
         void Awake()
         {
             _player = GetComponent<Game.Net.PlayerNetwork>();
@@ -193,8 +208,16 @@ namespace Game.Net.Weapons
             }
 
             var cam = Camera.main;
-            var aimed = _view.AimAtMouse(cam, sockets.handMount ? sockets.handMount.position.y : transform.position.y);
+            var planeY = sockets.handMount ? sockets.handMount.position.y : transform.position.y;
+            var aimed = _view.AimAtMouse(cam, planeY);
             if (!aimed && sockets.front) _view.SnapAimTo(sockets.front);
+
+            if (_view && _view.muzzle && _view.grip)
+            {
+                var dir = _view.muzzle.position - _view.grip.position; dir.y = 0f;
+                if (dir.sqrMagnitude > 1e-6f)
+                    ReportAimServerRpc(_view.muzzle.position, dir.normalized);
+            }
         }
 
         void TryFireOnce()
@@ -212,11 +235,11 @@ namespace Game.Net.Weapons
             int count = Mathf.Max(1, _stats.pellets);
             for (int i = 0; i < count; i++)
             {
-                var dir = GetAimDir();
+                Vector3 dir = _hasAim ? _srvAimDir : GetAimDir();
                 if (_stats.spreadDegrees > 0f)
                     dir = Quaternion.Euler(0f, Random.Range(-_stats.spreadDegrees, _stats.spreadDegrees), 0f) * dir;
 
-                var pos = GetMuzzleWorld();
+                Vector3 pos = _hasAim ? _srvMuzzlePos : GetMuzzleWorld();
                 var rot = Quaternion.LookRotation(dir, Vector3.up);
 
                 // Nudge forward to avoid self-collision, then ignore shooter colliders.

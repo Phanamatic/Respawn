@@ -5,11 +5,16 @@ using Game.Net;
 namespace Game.Net.Weapons
 {
     /// Server-driven horizontal projectile.
+    [RequireComponent(typeof(Collider))]
     public sealed class BulletProjectile : NetworkBehaviour
     {
         public float speed;
         public float lifetime;
         public float damage;
+
+        // Server-authoritative replication (no prefab NetworkTransform needed)
+        private readonly NetworkVariable<Vector3> _netPos = new(writePerm: NetworkVariableWritePermission.Server);
+        private readonly NetworkVariable<Quaternion> _netRot = new(writePerm: NetworkVariableWritePermission.Server);
 
         float _alive;
         float _spawnY;
@@ -70,28 +75,55 @@ namespace Game.Net.Weapons
                 trail.emitting = true;
             }
 
-            _spawnY = transform.position.y;    // remember the plane we spawned on
-            if (!IsServer)
-                enabled = false; // server moves it
+            _spawnY = transform.position.y; // remember the plane we spawned on
+
+            // Ensure trigger collider & kinematic rigidbody for reliable trigger hits.
+            var col = GetComponent<Collider>();
+            if (col) col.isTrigger = true;
+            var rb = GetComponent<Rigidbody>();
+            if (!rb) rb = gameObject.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
+
+            // Push current transform into NVs for late-joining clients
+            if (IsServer)
+            {
+                _netPos.Value = transform.position;
+                _netRot.Value = transform.rotation;
+            }
 
             Debug.Log($"[Weapons] Projectile spawn netId={(NetworkObject?NetworkObjectId:0)} srv={IsServer} speed={speed} damage={damage} lifetime={lifetime}");
         }
 
         void Update()
         {
-            if (!IsServer) return;
+            if (IsServer)
+            {
+                var fwd = transform.forward; // horizontal only
+                fwd.y = 0f;
+                if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
+                fwd.Normalize();
 
-            var fwd = transform.forward; // horizontal only
-            fwd.y = 0f;
-            if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
-            fwd.Normalize();
+                var p = transform.position + fwd * speed * Time.deltaTime;
+                p.y = _spawnY; // hard-lock to spawn plane
+                transform.position = p;
 
-            var p = transform.position + fwd * speed * Time.deltaTime;
-            p.y = _spawnY;                  // hard-lock to spawn plane
-            transform.position = p;
+                // Replicate to clients
+                _netPos.Value = transform.position;
+                _netRot.Value = transform.rotation;
 
-            _alive += Time.deltaTime;
-            if (_alive >= lifetime) { Debug.Log($"[Weapons] Projectile despawn (lifetime) t={_alive:0.00}"); Despawn(); }
+                _alive += Time.deltaTime;
+                if (_alive >= lifetime)
+                {
+                    Debug.Log($"[Weapons] Projectile despawn (lifetime) t={_alive:0.00}");
+                    Despawn();
+                }
+            }
+            else
+            {
+                // Client: follow server
+                transform.SetPositionAndRotation(_netPos.Value, _netRot.Value);
+            }
         }
 
         void OnTriggerEnter(Collider other)
