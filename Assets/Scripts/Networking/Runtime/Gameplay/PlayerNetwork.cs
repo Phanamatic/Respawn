@@ -162,6 +162,9 @@ namespace Game.Net
         [Header("Visual Root (optional)")]
         [SerializeField] Transform modelRoot;
 
+        [Header("Health Component")]
+        [SerializeField] private Health _healthComponent;
+
         // Expose model renderers for LOS fading
         public System.ReadOnlySpan<Renderer> GetModelRenderersSpan()
         {
@@ -377,6 +380,12 @@ namespace Game.Net
                     _rb.constraints &= ~(RigidbodyConstraints.FreezeRotationY);
                     _rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
                 }
+
+                // Initialize Health component
+                if (!_healthComponent)
+                    _healthComponent = GetComponent<Health>();
+                if (_healthComponent)
+                    _healthComponent.ResetToFullServer();
 
                 // CRITICAL: Force phase based on server type if not already set correctly.
                 // This is a safety net in case SeedPhasePreSpawnServer wasn't called before spawn.
@@ -782,6 +791,86 @@ namespace Game.Net
             if (!IsServer) return;
             var payload = BuildDeathRecapPayload(killer, damageAmount);
             SendDeathRecap(payload);
+        }
+
+        /// <summary>
+        /// Called by Health component when HP reaches 0 (server only).
+        /// Handles death flow: freeze player, show death UI, notify match controller.
+        /// </summary>
+        public void OnServerDied(ulong attackerClientId, Vector3 hitPoint)
+        {
+            if (!IsServer) return;
+
+            Debug.Log($"[PlayerNetwork] OnServerDied victim={OwnerClientId} attacker={attackerClientId} hitPoint={hitPoint}");
+
+            // Find attacker PlayerNetwork for death recap
+            PlayerNetwork attacker = null;
+            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(attackerClientId, out var client))
+            {
+                attacker = client.PlayerObject?.GetComponent<PlayerNetwork>();
+            }
+
+            // Freeze movement and input
+            SetFrozenServer(true);
+            SetAliveStateServer(false);
+
+            // Show death recap to owner
+            if (attacker != null)
+            {
+                var payload = BuildDeathRecapPayload(attacker, _healthComponent ? _healthComponent.Max : 100f);
+                SendDeathRecap(payload);
+            }
+
+            // Notify match controller (it will handle respawn or match end)
+            NotifyOwnerDeathClientRpc();
+            
+            // Match controller should call despawn or respawn logic
+            // For now, despawn to trigger round end (existing match logic treats "player left" as loss)
+            // TODO: Replace with proper respawn flow once match controller supports it
+            StartCoroutine(CoDespawnAfterDelay(2f));
+        }
+
+        private System.Collections.IEnumerator CoDespawnAfterDelay(float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (IsSpawned)
+            {
+                Debug.Log($"[PlayerNetwork] Despawning player after death delay owner={OwnerClientId}");
+                NetworkObject.Despawn();
+            }
+        }
+
+        [ClientRpc]
+        private void NotifyOwnerDeathClientRpc(ClientRpcParams rpcParams = default)
+        {
+            if (!IsOwner) return;
+            Debug.Log("[PlayerNetwork] Owner notified of death");
+            // TODO: Show death UI overlay, respawn button, etc.
+        }
+
+        private void SetAliveStateServer(bool alive)
+        {
+            if (!IsServer) return;
+            // Set alive flags, enable/disable renderers, movement, etc.
+            // For now, frozen state handles most of this
+            Debug.Log($"[PlayerNetwork] SetAliveStateServer alive={alive} owner={OwnerClientId}");
+        }
+
+        /// <summary>
+        /// Server RPC: Reset health to full (for respawn/round start).
+        /// Match controller should call this when respawning players.
+        /// </summary>
+        [ServerRpc(RequireOwnership = false)]
+        public void ResetHealthForRoundServerRpc(ServerRpcParams serverRpcParams = default)
+        {
+            if (!IsServer) return;
+            Debug.Log($"[PlayerNetwork] ResetHealthForRound owner={OwnerClientId}");
+            
+            if (_healthComponent)
+                _healthComponent.ResetToFullServer();
+            
+            SetAliveStateServer(true);
+            SetFrozenServer(false);
         }
 
         internal void ClearDeathRecapForOwner()

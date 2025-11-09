@@ -700,6 +700,62 @@ namespace Game.Net
                 nm.SceneManager.LoadScene("Match_1v1", UnityEngine.SceneManagement.LoadSceneMode.Single);
         }
 
+        /// <summary>
+        /// Server-only: End match immediately, disconnect all clients, wait for cleanup, then reset server for next match.
+        /// Prevents late NetworkTransform packets to already-disconnected clients.
+        /// </summary>
+        [ContextMenu("End Match And Reset (Server)")]
+        void EndMatchAndResetServer_ForDebug()
+        {
+            if (IsServer) StartCoroutine(CoEndMatchAndReset("Debug"));
+        }
+
+        IEnumerator CoEndMatchAndReset(string reason)
+        {
+            if (!IsServer) yield break;
+
+            Debug.Log($"[Match1v1] Ending match -> {reason}. Disconnecting clients...");
+            var nm = NetworkManager;
+
+            // 1) Tell clients the round is over (optional UI)
+            try { ShowMatchOverClientRpc(); } catch { }
+
+            // 2) Give UI a moment to display
+            yield return new WaitForSecondsRealtime(1.5f);
+
+            // 3) Forcibly disconnect all non-server clients
+            var ids = new System.Collections.Generic.List<ulong>(nm.ConnectedClientsIds);
+            foreach (var cid in ids)
+            {
+                if (cid != NetworkManager.ServerClientId)
+                    nm.DisconnectClient(cid);
+            }
+
+            // 4) Wait until only the server remains
+            float t = 5f;
+            while (t > 0f && nm.ConnectedClientsList.Count > 1)
+            {
+                t -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            // 5) Clean up any match-local state and reload the active scene for a fresh round
+            UnityEngine.SceneManagement.SceneManager.LoadScene(
+                UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+
+            Debug.Log("[Match1v1] Reset complete; ready for next players.");
+        }
+
+        /// <summary>
+        /// Optional ClientRpc to show a brief "Match Over" message before disconnect.
+        /// </summary>
+        [ClientRpc]
+        void ShowMatchOverClientRpc()
+        {
+            Debug.Log("[Match1v1] Match over. Returning to lobby...");
+            // TODO: Show optional UI overlay with "Match Over - Returning to Lobby" message
+        }
+
         // Apply or restore transparency on configured objects
         void ApplySelectTransparency(bool on)
         {
@@ -736,8 +792,7 @@ namespace Game.Net
 
         void OnReturnToLobby()
         {
-            NetworkManager.Singleton.Shutdown();
-            UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby");
+            Game.Net.UI.ReturnToLobbyAgent.ReturnToLobbyNow(true);
         }
 
         static bool ContainsXZ(Bounds b, Vector3 p)
