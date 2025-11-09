@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: ShotGun
   m_EditorClassIdentifier: 
   weaponName: Shotgun
-  weaponIcon: {fileID: -160774767, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  weaponIcon: {fileID: -1091070217, guid: f322ad468588940498361de3aa1a8329, type: 3}
   category: 0
   primaryType: 2
   secondaryType: 0

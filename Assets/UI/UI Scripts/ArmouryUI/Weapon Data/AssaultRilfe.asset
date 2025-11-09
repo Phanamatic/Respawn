@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: AssaultRilfe
   m_EditorClassIdentifier: 
   weaponName: Assault Rilfe
-  weaponIcon: {fileID: 1006513506, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  weaponIcon: {fileID: -263091438, guid: 789a1661c6db8b94e92c9d675de5f351, type: 3}
   category: 0
   primaryType: 0
   secondaryType: 0

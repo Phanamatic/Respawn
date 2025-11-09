@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Knife
   m_EditorClassIdentifier: 
   weaponName: Knife
-  weaponIcon: {fileID: -1422437730, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  weaponIcon: {fileID: -1466244313, guid: 9bdf58d85f5c54341814c0aaea8050ed, type: 3}
   category: 2
   primaryType: 0
   secondaryType: 0

@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: f6b9569f402a3ca44aedc125b804ead6
+guid: 789a1661c6db8b94e92c9d675de5f351
 TextureImporter:
   internalIDToNameTable: []
   externalObjects: {}
@@ -97,13 +97,13 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: SMG_0
+      name: AR_0
       rect:
         serializedVersion: 2
-        x: 126
-        y: 19
-        width: 445
-        height: 215
+        x: 71
+        y: 48
+        width: 645
+        height: 290
       alignment: 0
       pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
@@ -112,8 +112,8 @@ TextureImporter:
       physicsShape: []
       tessellationDetail: 0
       bones: []
-      spriteID: 52cc2c87dbd58954280db308a935bb85
-      internalID: -489683636
+      spriteID: 713e5d1d570129f4db5c0c38d23c882d
+      internalID: -263091438
       vertices: []
       indices: 
       edges: []
@@ -122,7 +122,7 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: 5e97eb03825dee720800000000000000
+    spriteID: 236d4826faa546d46b05b92fc9c50e7e
     internalID: 0
     vertices: []
     indices: 
@@ -132,7 +132,7 @@ TextureImporter:
     spriteCustomMetadata:
       entries: []
     nameFileIdTable:
-      SMG_0: -489683636
+      AR_0: -263091438
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 

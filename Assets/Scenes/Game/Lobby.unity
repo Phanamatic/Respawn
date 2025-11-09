@@ -35425,6 +35425,8 @@ MonoBehaviour:
   hoverImage: {fileID: 919630021}
   fillSpeed: 10
   deactivateImageOnExit: 1
+  enableClickFill: 1
+  clickFillDuration: 5
 --- !u!1 &94287762
 GameObject:
   m_ObjectHideFlags: 0
@@ -46735,7 +46737,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &619738985
 RectTransform:
   m_ObjectHideFlags: 0
@@ -46745,14 +46747,14 @@ RectTransform:
   m_GameObject: {fileID: 619738984}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1.7135869, y: 1.4802985, z: 0}
+  m_LocalScale: {x: 2.0624998, y: 1.2, z: 0}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 3378673520856050515}
+  m_Father: {fileID: 1513861098}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 430.61, y: -28.742218}
+  m_AnchoredPosition: {x: -0.000030517578, y: -0.000032424927}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &619738986
@@ -46777,8 +46779,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Initiating Armoury Systems...
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
-  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: d283e497c66745f4e9de68ff45121019, type: 2}
+  m_sharedMaterial: {fileID: 4047754360188193027, guid: d283e497c66745f4e9de68ff45121019, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -46802,8 +46804,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 23.98
-  m_fontSizeBase: 23.98
+  m_fontSize: 20.66
+  m_fontSizeBase: 20.66
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -47198,6 +47200,8 @@ MonoBehaviour:
   hoverImage: {fileID: 849688949}
   fillSpeed: 2
   deactivateImageOnExit: 1
+  enableClickFill: 1
+  clickFillDuration: 5
 --- !u!1 &648763680
 GameObject:
   m_ObjectHideFlags: 0
@@ -98525,7 +98529,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1513861098
 RectTransform:
   m_ObjectHideFlags: 0
@@ -98537,7 +98541,8 @@ RectTransform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 0.8308301, y: 1.233582, z: 0}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 619738985}
   m_Father: {fileID: 3378673520856050515}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -110057,7 +110062,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 649789850, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  m_Sprite: {fileID: 690581462, guid: 3ac979b669de39943a4d5cd9014e9317, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -111292,7 +111297,7 @@ RectTransform:
   m_GameObject: {fileID: 4767558282482406120}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 1, z: 0}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 4906757769700664307}
@@ -111570,6 +111575,7 @@ RectTransform:
   m_LocalScale: {x: 0.94, y: 0.88, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 566648221}
   - {fileID: 8587984683915629553}
   - {fileID: 5949531720905828239}
   - {fileID: 1452695259787457421}
@@ -111583,9 +111589,7 @@ RectTransform:
   - {fileID: 4433525906063651996}
   - {fileID: 6257347937092168051}
   - {fileID: 950627114}
-  - {fileID: 619738985}
   - {fileID: 1513861098}
-  - {fileID: 566648221}
   m_Father: {fileID: 2113872813}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -113092,7 +113096,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: -1052942170, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  m_Sprite: {fileID: -263091438, guid: 789a1661c6db8b94e92c9d675de5f351, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -115075,7 +115079,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: -1422437730, guid: 5a06cfd2402706e4288d6c17d90431c3, type: 3}
+  m_Sprite: {fileID: -1466244313, guid: 9bdf58d85f5c54341814c0aaea8050ed, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -116454,7 +116458,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4031972799295634118}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: efcb6be038773714aa0acd50c9510b4c, type: 3}
   m_Name: 
@@ -116463,13 +116467,23 @@ MonoBehaviour:
   bootPanelCanvasGroup: {fileID: 1513861101}
   bootText: {fileID: 619738986}
   finalStatusText: {fileID: 359386391}
+  armouryParentPanel: {fileID: 3378673520856050515}
+  childScaleDelay: 0.05
+  bootTextDestinationPanel: {fileID: 566648220}
+  bootCompleteSound: {fileID: 8300000, guid: 6d30fa3e331d9c74cb511bd5fd739715, type: 3}
+  bootSoundVolume: 1
+  blinkCount: 2
+  blinkDuration: 0.3
+  pauseAfterDestination: 0.3
+  muteAllOtherAudio: 1
+  muteDuration: 2
   initMessage: Initiating Armoury Systems...
   onlineMessage: '[ARMOURY ONLINE]'
   typingSpeed: 20
   messageDelay: 1.5
-  minAlpha: 0.39
-  maxAlpha: 0.61
-  pulseSpeed: 2
+  minAlpha: 0.668
+  maxAlpha: 1
+  pulseSpeed: 4
   scaleDownDuration: 0.15
 --- !u!1 &9143742397326933997
 GameObject:
