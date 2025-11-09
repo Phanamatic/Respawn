@@ -896,6 +896,15 @@ namespace Game.Net
         // ================================================
         // ===== Weapons: equip, switch, throw (server authoritative) =====
 
+// Server-only helper used by match controller to force an equipped slot.
+public void ForceActiveSlotServer(byte slot)
+{
+    if (!IsServer) return;
+    if (slot > 3) return;
+    _activeSlot.Value = slot;
+    Debug.Log($"[Weapons] ForceActiveSlotServer -> {slot} cid={OwnerClientId}");
+}
+
         void RequestSwitchSlot(byte slot)
         {
             if (_inputPaused) return;
@@ -1146,31 +1155,31 @@ namespace Game.Net
             _dashQueuedUntil = Time.time + dashInputBuffer;
         }
 
+// Owner-side input gate: allowed only when we're in Match phase.
 void OnFireInput(bool firing)
 {
     if (!IsOwner) return;
     if (_inputPaused) return;
-    // Block only on Lobby servers; avoid client-side phase desyncs killing fire in Match.
-    if (SessionContext.Type == ServerType.Lobby) return;
+    if (_phase != PlayerPhase.Match) return;
 
     var slot = _activeSlot.Value;
-    if (slot == 0) GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
+    if (slot == 0)      GetComponent<WeaponPrimaryController>()?.FireHeld(firing);
     else if (slot == 1) GetComponent<WeaponSecondaryController>()?.FireHeld(firing);
-    else if (slot == 2 && !firing) GetComponent<WeaponMeleeController>()?.RequestSwing();
+    else if (slot == 2) { if (firing) GetComponent<WeaponMeleeController>()?.RequestSwing(); }
 }
-// [DirectNet] Use server type for gating; keeps lobby safe and restores firing in matches.
+// [DirectNet] Phase-driven gate fixes the “lobby lockout” that was blocking fire in Match.
 
-        void OnReloadInput()
-        {
-            if (!IsOwner) return;
-            if (_inputPaused) return;
-            if (SessionContext.Type == ServerType.Lobby) return;
+// Same phase-driven gate for reload as fire.
+void OnReloadInput()
+{
+    if (!IsOwner) return;
+    if (_inputPaused) return;
+    if (_phase != PlayerPhase.Match) return;
 
-            var slot = _activeSlot.Value;
-            if (slot == 0) GetComponent<WeaponPrimaryController>()?.RequestReload();
-            else if (slot == 1) GetComponent<WeaponSecondaryController>()?.RequestReload();
-        }
-// [DirectNet] Same server-type gate as fire; avoids match-time reload lockout.
+    var slot = _activeSlot.Value;
+    if (slot == 0)      GetComponent<WeaponPrimaryController>()?.RequestReload();
+    else if (slot == 1) GetComponent<WeaponSecondaryController>()?.RequestReload();
+}
 
         public void SetInputPaused(bool paused)
         {

@@ -1036,10 +1036,21 @@ void ReequipAllPlayersServer()
         pn.ServerEnsureLoadoutValidAndEquip();
         count++;
     }
-    Debug.Log($"[Match1v1] ReequipAllPlayersServer applied to {count} players");
+    // Force everyone to primary after (re)equip so owner OnActiveSlotChanged runs and HUD updates.
+#if UNITY_6000_0_OR_NEWER
+    var players = UnityEngine.Object.FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#elif UNITY_2022_3_OR_NEWER
+    var players = UnityEngine.Object.FindObjectsOfType<PlayerNetwork>(false);
+#else
+    var players = UnityEngine.Object.FindObjectsOfType<PlayerNetwork>();
+#endif
+
+foreach (var pn in players)
+    if (pn && pn.IsSpawned) pn.ForceActiveSlotServer(0);
+// Use the right API per version: Unity 6 => FindObjectsByType, 2022.3 => FindObjectsOfType(false).    Debug.Log($"[Match1v1] ReequipAllPlayersServer applied to {players.Length} players");
 }
 
-// Now guarantees both players start healthy and equipped each round.
+// Brief dev comment: server sets the NV so the client equips Primary, fixes "pistol stuck" and restores weapon name/ammo HUD.
 void TopUpAndSanitizeAllPlayersServer()
 {
     if (!IsServer) return;
@@ -1143,3 +1154,5 @@ void TopUpAndSanitizeAllPlayersServer()
         // Server waits on per-player readiness; clients render animated “Loading…”.
 }
 }
+
+
