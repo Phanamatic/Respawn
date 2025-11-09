@@ -472,7 +472,7 @@ namespace Game.Net
             if (_savingRoutine != null) { StopCoroutine(_savingRoutine); _savingRoutine = null; }
             if (!notificationPanel || !notificationText) return;
 
-            notificationText.text = success ? "Loadout saved!" : "Loadout save failed!";
+            notificationText.text = success ? "Loadout Saved!" : "Loadout Save Failed!";
             if (_notifRoutine != null) StopCoroutine(_notifRoutine);
             _notifRoutine = StartCoroutine(ShowThenHide(notificationDuration));
         }
