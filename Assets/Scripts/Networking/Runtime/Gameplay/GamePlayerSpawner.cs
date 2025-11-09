@@ -80,7 +80,11 @@ namespace Game.Net
             pos.y += yLift;
 
             var inst = Instantiate(playerPrefab, pos, rot);
-            
+
+            // Guard against prefabs saved inactive; NGO requires active objects before spawn.
+            if (!inst.gameObject.activeSelf)
+                inst.gameObject.SetActive(true);
+
             // CRITICAL: Set phase based on server type BEFORE spawn.
             // This fallback spawner is used when there's no Match controller, so detect server type.
             var pn = inst.GetComponent<PlayerNetwork>();

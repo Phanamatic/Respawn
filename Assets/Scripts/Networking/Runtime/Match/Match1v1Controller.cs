@@ -388,6 +388,10 @@ namespace Game.Net
         {
             // Create at point, then clamp to Ground, then SpawnAsPlayerObject.
             var inst = Instantiate(playerPrefab);
+
+            // Ensure match instances are active prior to NGO spawn; prefab assets may be authored inactive for editor previews.
+            if (!inst.gameObject.activeSelf)
+                inst.gameObject.SetActive(true);
             var t = inst.transform;
 
             // Face neutral center.

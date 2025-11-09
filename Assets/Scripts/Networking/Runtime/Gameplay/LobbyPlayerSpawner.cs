@@ -99,6 +99,10 @@ namespace Game.Net
 
             var inst = Instantiate(prefab, pose.pos, pose.rot);
 
+            // Ensure prefab instances are active before NGO spawn; prefab asset may be saved inactive for editor previews.
+            if (!inst.gameObject.activeSelf)
+                inst.gameObject.SetActive(true);
+
             // Ground and depenetrate before Spawn()
             var capsule = inst.GetComponent<CapsuleCollider>();
             AdjustToGroundAndResolve(inst.transform, capsule);
