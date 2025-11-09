@@ -15,8 +15,44 @@ using UnityEditor;
 [AddComponentMenu("LOS/FOV Visual Constraint (Edit & Play)")]
 public sealed class FovVisualConstraintBinder : MonoBehaviour
 {
-    // Always keep the FOV visual on this world height.
-    private const float FixedY = 0.97f;
+    [SerializeField, Tooltip("Extra height above the player's lowest Y (collider bottom).")]
+    private float visualHeightOffset = 0.03f;
+
+    [SerializeField, Tooltip("Optional override collider; if unset, we'll auto-detect from the Source hierarchy.")]
+    private Collider sourceColliderOverride;
+
+    private Collider _sourceCollider;
+
+    private void RefreshSourceCollider()
+    {
+        _sourceCollider = null;
+        var tr = Source ? Source : transform;
+        if (!tr) return;
+
+        // Prefer common player colliders
+        _sourceCollider = tr.GetComponent<CharacterController>();
+        if (!_sourceCollider) _sourceCollider = tr.GetComponent<CapsuleCollider>();
+        if (!_sourceCollider) _sourceCollider = tr.GetComponent<Collider>();
+
+        // Fallback to children if not on the root
+        if (!_sourceCollider)
+        {
+            _sourceCollider = tr.GetComponentInChildren<CharacterController>(true);
+            if (!_sourceCollider) _sourceCollider = tr.GetComponentInChildren<CapsuleCollider>(true);
+            if (!_sourceCollider) _sourceCollider = tr.GetComponentInChildren<Collider>(true);
+        }
+    }
+
+    private float GetDesiredY()
+    {
+        var src = Source ? Source : transform;
+        float baseY = src.position.y;
+
+        var col = sourceColliderOverride ? sourceColliderOverride : _sourceCollider;
+        if (col) baseY = col.bounds.min.y;
+
+        return baseY + Mathf.Max(0f, visualHeightOffset);
+    }
 
     [Tooltip("The child visual to constrain. If left empty, this will try to find a child named \"__FOVVisual\" or the first Renderer under this object.")]
     public Transform Visual;
@@ -27,12 +63,14 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
     private void Reset()
     {
         Source = transform;
+        RefreshSourceCollider();
         TryBind();
     }
 
     private void OnEnable()
     {
         if (Source == null) Source = transform;
+        RefreshSourceCollider();
         TryBind();
     }
 
@@ -54,16 +92,19 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
             TryBind();
         }
 #endif
-        // Keep Y locked every frame (edit & play).
+        // Keep the visual riding just above the player's lowest Y.
         if (Visual)
         {
             var p = Visual.position;
-            if (!Mathf.Approximately(p.y, FixedY)) { p.y = FixedY; Visual.position = p; }
+            float targetY = GetDesiredY();
+            if (!Mathf.Approximately(p.y, targetY)) { p.y = targetY; Visual.position = p; }
         }
     }
 
     private void TryBind()
     {
+        RefreshSourceCollider();
+
         if (Visual == null) Visual = FindVisualChild();
         if (Visual == null || Source == null) return;
 
@@ -77,8 +118,7 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
         var src = new ConstraintSource { sourceTransform = Source, weight = 1f };
         int idx = pc.AddSource(src);
 
-        // Follow position on all axes; DO NOT inherit rotation.
-        // Follow X/Z only; Y is fixed by us.
+        // Follow X/Z only; DO NOT inherit rotation. Y is fixed by us each frame.
         pc.translationAxis = Axis.X | Axis.Z;
         pc.rotationAxis     = 0; // Axis.None
 
@@ -93,7 +133,8 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
 
         // Snap Y now so the initial pose is correct.
         var p = Visual.position;
-        if (!Mathf.Approximately(p.y, FixedY)) { p.y = FixedY; Visual.position = p; }
+        float targetY = GetDesiredY();
+        if (!Mathf.Approximately(p.y, targetY)) { p.y = targetY; Visual.position = p; }
 
         // Make sure it's visible in the Inspector.
         pc.hideFlags = HideFlags.None;
@@ -111,14 +152,7 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
         var named = transform.Find("__FOVVisual");
         if (named) return named;
 
-        // 2) Optional tag to disambiguate (add tag "FovVisual" to your visual child)
-        foreach (Transform t in GetComponentsInChildren<Transform>(true))
-        {
-            if (t == transform) continue;
-            if (t.CompareTag("FovVisual")) return t;
-        }
-
-        // 3) Name heuristic: must contain BOTH "fov" and "visual"
+        // 2) Name heuristic: must contain BOTH "fov" and "visual"
         foreach (Transform t in GetComponentsInChildren<Transform>(true))
         {
             if (t == transform) continue;
@@ -126,7 +160,7 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
             if (n.Contains("fov") && n.Contains("visual")) return t;
         }
 
-        // No fallback to "first Renderer" (avoids picking Eye meshes).
+        // No tag-based lookup here — avoids spam when the tag isn't defined.
         return null;
     }
 }

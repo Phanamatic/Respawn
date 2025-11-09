@@ -13,7 +13,7 @@ using Game.Net;
 public sealed class FovMesh : MonoBehaviour
 {
     // Visual disc should always sit on this world height.
-    const float VisualFixedY = 0.97f;
+    const float VisualFixedY = -0.89f;
 
     [Range(0.5f, 50f)] public float radiusMeters = 12f;
     [Range(16, 512)] public int rayCount = 220;

@@ -1078,17 +1078,24 @@ public void ForceActiveSlotServer(byte slot)
             byte slot = _activeSlot.Value;
             Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
 
-            // Hide all weapon views first
-            var primary = GetComponent<WeaponPrimaryController>();
+            // Snapshot env for debugging slot 2/3/4 issues
+            var primary   = GetComponent<WeaponPrimaryController>();
             var secondary = GetComponent<WeaponSecondaryController>();
-            var melee = GetComponent<WeaponMeleeController>();
-            
+            var melee     = GetComponent<WeaponMeleeController>();
+            var utility   = GetComponent<WeaponUtilityController>();
+            var sockets   = GetComponent<PlayerWeaponSockets>();
+
+            int handChildren = (sockets && sockets.handMount) ? sockets.handMount.childCount : -1;
+            string mountName = (sockets && sockets.handMount) ? sockets.handMount.name : "null";
+
+            Debug.Log($"[Weapons] Env owner={OwnerClientId} hasPrimary={(bool)primary} hasSecondary={(bool)secondary} hasMelee={(bool)melee} hasUtility={(bool)utility} sockets={(bool)sockets} handMount={mountName} children={handChildren} loadout={{P={(PrimaryType)_netLoadout.Value.primary},S={(SecondaryType)_netLoadout.Value.secondary},U={(UtilityType)_netLoadout.Value.util}}}");
+
+            // Hide all weapon views first
             if (primary) primary.SetVisible(false);
             if (secondary) secondary.SetVisible(false);
             if (melee) melee.SetVisible(false);
 
             // Hard guarantee: only ONE child under Hand Mount before equipping
-            var sockets = GetComponent<PlayerWeaponSockets>();
             if (sockets && sockets.handMount)
             {
                 for (int i = sockets.handMount.childCount - 1; i >= 0; i--)

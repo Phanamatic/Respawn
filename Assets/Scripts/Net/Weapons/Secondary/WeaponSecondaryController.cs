@@ -245,7 +245,14 @@ namespace Game.Net.Weapons
 
         Vector3 GetAimDir()
         {
-            // Horizontal forward of the player
+            // Prefer true barrel direction: Grip→Muzzle on XZ.
+            if (_view && _view.muzzle && _view.grip)
+            {
+                var d = _view.muzzle.position - _view.grip.position; d.y = 0f;
+                if (d.sqrMagnitude >= 1e-6f) return d.normalized;
+            }
+
+            // Fallback: root forward flattened.
             var fwd = transform.forward; fwd.y = 0f;
             if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
             return fwd.normalized;
@@ -320,6 +327,8 @@ namespace Game.Net.Weapons
             var go = Instantiate(localStats.weaponViewPrefab);
             go.name = $"{secondaryType}_View(Local)";
             _view = go.GetComponent<WeaponView>();
+
+            if (_view) _view.SetHandMount(sockets.handMount);
 
             var t = go.transform;
 

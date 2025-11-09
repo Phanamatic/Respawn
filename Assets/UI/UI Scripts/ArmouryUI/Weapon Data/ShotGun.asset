@@ -15,7 +15,7 @@ MonoBehaviour:
   weaponName: Shotgun
   weaponIcon: {fileID: -1091070217, guid: f322ad468588940498361de3aa1a8329, type: 3}
   category: 0
-  primaryType: 2
+  primaryType: 3
   secondaryType: 0
   utilityType: 0
   damage: 45

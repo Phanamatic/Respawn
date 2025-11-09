@@ -15,7 +15,7 @@ MonoBehaviour:
   weaponName: Sniper
   weaponIcon: {fileID: -1111895059, guid: 95edb182c2b2efc42b93b965700a30be, type: 3}
   category: 0
-  primaryType: 4
+  primaryType: 5
   secondaryType: 0
   utilityType: 0
   damage: 100

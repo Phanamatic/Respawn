@@ -167,5 +167,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   grip: {fileID: 1176722113595710873}
-  muzzle: {fileID: 0}
+  muzzle: {fileID: 8352962350349768640}
   tip: {fileID: 8352962350349768640}
+  _handMount: {fileID: 1176722113595710873}

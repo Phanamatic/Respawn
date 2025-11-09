@@ -16,7 +16,7 @@ MonoBehaviour:
   weaponIcon: {fileID: 690581462, guid: 3ac979b669de39943a4d5cd9014e9317, type: 3}
   category: 1
   primaryType: 0
-  secondaryType: 0
+  secondaryType: 1
   utilityType: 0
   damage: 8
   ammo: 8

@@ -61,10 +61,13 @@ namespace Game.Net.Weapons
 
         void ServerEquip(Game.Net.UtilityType t)
         {
+            Debug.Log($"[Utility][ServerEquip] owner={OwnerClientId} type={t}");
+
             _netUtilityType.Value = (byte)t;
 
             if (t == Game.Net.UtilityType.None)
             {
+                Debug.LogWarning($"[Utility][ServerEquip] None -> disabling utility for owner={OwnerClientId}");
                 ammoCount.Value = 0;
                 equippedWeaponName.Value = "";
                 _hasEquippedUtility = false;
@@ -75,6 +78,7 @@ namespace Game.Net.Weapons
             equippedWeaponName.Value = t.ToString();
             _hasEquippedUtility = true;
 
+            Debug.Log($"[Utility][ServerEquip] set ammo={ammoCount.Value} name={equippedWeaponName.Value} -> rebuild local views");
             RebuildLocalViewClientRpc();
         }
 
@@ -91,41 +95,50 @@ namespace Game.Net.Weapons
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
-            if (!_hasEquippedUtility) return;
+            Debug.Log($"[Utility][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedUtility} netType={(Game.Net.UtilityType)_netUtilityType.Value}");
+
+            if (!_hasEquippedUtility)
+            {
+                Debug.LogWarning("[Utility] Abort: _hasEquippedUtility=false");
+                return;
+            }
+
             var utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
-            if (utilityType == Game.Net.UtilityType.None) return;
+            if (utilityType == Game.Net.UtilityType.None)
+            {
+                Debug.LogWarning("[Utility] Abort: utilityType=None");
+                return;
+            }
 
             if (!sockets)
             {
-                Debug.LogWarning("[Weapons] PlayerWeaponSockets missing on player. Cannot attach Utility WeaponView.");
+                Debug.LogWarning("[Utility] Abort: PlayerWeaponSockets missing on player. Cannot attach Utility WeaponView.");
                 return;
             }
             if (!sockets.handMount)
             {
-                Debug.LogWarning("[Weapons] sockets.handMount not assigned. Cannot attach Utility WeaponView.");
+                Debug.LogWarning("[Utility] Abort: sockets.handMount not assigned. Cannot attach Utility WeaponView.");
                 return;
             }
 
             GameObject viewPrefab = utilityType switch
             {
                 Game.Net.UtilityType.Grenade => grenadeViewPrefab,
-                Game.Net.UtilityType.Smoke => smokeViewPrefab,
-                Game.Net.UtilityType.Stun => stunViewPrefab,
+                Game.Net.UtilityType.Smoke   => smokeViewPrefab,
+                Game.Net.UtilityType.Stun    => stunViewPrefab,
                 _ => null
             };
 
             if (!viewPrefab)
             {
-                Debug.LogWarning($"[Weapons] No view prefab for {utilityType}. Assign in inspector.");
+                Debug.LogWarning($"[Utility] Abort: No view prefab for {utilityType}. Assign in inspector.");
                 return;
             }
 
             // Ensure only one weapon view exists under the Hand Mount
-            if (sockets.handMount)
-            {
-                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
-                    Destroy(sockets.handMount.GetChild(i).gameObject);
-            }
+            int preChildren = sockets.handMount.childCount;
+            for (int i = preChildren - 1; i >= 0; i--) Destroy(sockets.handMount.GetChild(i).gameObject);
+            Debug.Log($"[Utility] Cleared handMount children: {preChildren} -> 0 (mount={sockets.handMount.name})");
 
             var go = Instantiate(viewPrefab);
             go.name = $"{utilityType}_View(Local)";
@@ -135,18 +148,29 @@ namespace Game.Net.Weapons
 
             // Bind Grip → Hand Mount
             t.SetParent(sockets.handMount, false);
-            if (_view) _view.SnapGripTo(sockets.handMount);
-            else { t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation; }
+            if (_view)
+            {
+                Debug.Log($"[Utility] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
+                _view.SnapGripTo(sockets.handMount);
+            }
+            else
+            {
+                Debug.LogWarning("[Utility] View prefab missing WeaponView component; falling back to raw align.");
+                t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation;
+            }
 
             // Default facing toward Front point (uses tip if present)
-            if (_view && sockets.front) _view.SnapAimTo(sockets.front);
+            if (_view && sockets.front)
+            {
+                Debug.Log($"[Utility] SnapAimTo front='{sockets.front.name}' using tip={(bool)_view.tip}");
+                _view.SnapAimTo(sockets.front);
+            }
 
             if (_view && sockets.equipStart && sockets.front)
             {
-                // Uses 'tip' if present on utility view for direction
+                Debug.Log($"[Utility] PlayEquipAnimation from='{sockets.equipStart.name}' to='{sockets.front.name}'");
                 StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
             }
-// Brief dev comment: same snap/aim behavior for all utilities.
         }
 
         [ServerRpc] void RequestThrowServerRpc(ServerRpcParams p = default)

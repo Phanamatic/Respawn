@@ -135,6 +135,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   grip: {fileID: 6020303110075802205}
   muzzle: {fileID: 1407031627423183464}
+  tip: {fileID: 0}
+  _handMount: {fileID: 6020303110075802205}
 --- !u!1 &5979640189502629968
 GameObject:
   m_ObjectHideFlags: 0

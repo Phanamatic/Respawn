@@ -215,6 +215,7 @@ MonoBehaviour:
   grip: {fileID: 762253192092414092}
   muzzle: {fileID: 0}
   tip: {fileID: 4604787976676102185}
+  _handMount: {fileID: 762253192092414092}
 --- !u!114 &2658211229675519225
 MonoBehaviour:
   m_ObjectHideFlags: 0

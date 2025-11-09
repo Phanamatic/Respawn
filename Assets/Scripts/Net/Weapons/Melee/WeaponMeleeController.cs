@@ -61,11 +61,12 @@ namespace Game.Net.Weapons
 
         void ServerEquip()
         {
+            Debug.Log($"[Melee][ServerEquip] owner={OwnerClientId} enabling Knife");
             equippedWeaponName.Value = "Knife";
             _swingCooldownRemain = 0f;
             _hasEquippedMelee = true;
 
-            // Rebuild local visuals on all clients
+            Debug.Log("[Melee][ServerEquip] -> rebuild local views");
             RebuildLocalViewClientRpc();
         }
 
@@ -133,30 +134,33 @@ namespace Game.Net.Weapons
             if (_view) Destroy(_view.gameObject);
             _view = null;
 
-            if (!_hasEquippedMelee) return;
+            Debug.Log($"[Melee][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedMelee}");
+
+            if (!_hasEquippedMelee)
+            {
+                Debug.LogWarning("[Melee] Abort: _hasEquippedMelee=false");
+                return;
+            }
 
             if (!sockets)
             {
-                Debug.LogWarning("[Weapons] PlayerWeaponSockets missing on player. Cannot attach Melee WeaponView.");
+                Debug.LogWarning("[Melee] Abort: PlayerWeaponSockets missing on player. Cannot attach Melee WeaponView.");
                 return;
             }
             if (!sockets.handMount)
             {
-                Debug.LogWarning("[Weapons] sockets.handMount not assigned. Cannot attach Melee WeaponView.");
+                Debug.LogWarning("[Melee] Abort: sockets.handMount not assigned. Cannot attach Melee WeaponView.");
                 return;
             }
             if (!knifeViewPrefab)
             {
-                Debug.LogWarning("[Weapons] No Knife WeaponView prefab set. Assign knifeViewPrefab.");
+                Debug.LogWarning("[Melee] Abort: No Knife WeaponView prefab set. Assign knifeViewPrefab.");
                 return;
             }
 
-            // Ensure only one weapon view exists under the Hand Mount
-            if (sockets.handMount)
-            {
-                for (int i = sockets.handMount.childCount - 1; i >= 0; i--)
-                    Destroy(sockets.handMount.GetChild(i).gameObject);
-            }
+            int preChildren = sockets.handMount.childCount;
+            for (int i = preChildren - 1; i >= 0; i--) Destroy(sockets.handMount.GetChild(i).gameObject);
+            Debug.Log($"[Melee] Cleared handMount children: {preChildren} -> 0 (mount={sockets.handMount.name})");
 
             var go = Instantiate(knifeViewPrefab);
             go.name = "Knife_View(Local)";
@@ -166,18 +170,29 @@ namespace Game.Net.Weapons
 
             // Bind Grip → Hand Mount
             t.SetParent(sockets.handMount, false);
-            if (_view) _view.SnapGripTo(sockets.handMount);
-            else { t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation; }
+            if (_view)
+            {
+                Debug.Log($"[Melee] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
+                _view.SnapGripTo(sockets.handMount);
+            }
+            else
+            {
+                Debug.LogWarning("[Melee] View prefab missing WeaponView component; falling back to raw align.");
+                t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation;
+            }
 
             // Default facing toward Front point (uses tip if present)
-            if (_view && sockets.front) _view.SnapAimTo(sockets.front);
+            if (_view && sockets.front)
+            {
+                Debug.Log($"[Melee] SnapAimTo front='{sockets.front.name}' using tip={(bool)_view.tip}");
+                _view.SnapAimTo(sockets.front);
+            }
 
             if (_view && sockets.equipStart && sockets.front)
             {
-                // Uses WeaponView.tip if assigned (falls back to muzzle/transform)
+                Debug.Log($"[Melee] PlayEquipAnimation from='{sockets.equipStart.name}' to='{sockets.front.name}'");
                 StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
             }
-// Brief dev comment: uses new SnapGripTo() for perfect alignment and 'tip' for equip facing.
         }
 
         [ClientRpc] void PlaySwingClientRpc()
