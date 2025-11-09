@@ -931,12 +931,14 @@ namespace Game.Net
         void RequestThrowUtility()
         {
             if (_inputPaused) return;
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (client gate)
             RequestThrowUtilityServerRpc();
         }
 
         [ServerRpc]
         void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
         {
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (server gate)
             if (_netLoadout.Value.util == (byte)UtilityType.None) return;
 
             if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
@@ -1138,6 +1140,7 @@ namespace Game.Net
         void OnFireInput(bool firing)
         {
             if (_inputPaused) return;
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block fire
             
             byte slot = _activeSlot.Value;
             if (slot == 0) // Primary
@@ -1158,6 +1161,7 @@ namespace Game.Net
         void OnReloadInput()
         {
             if (_inputPaused) return;
+            if (_phase != PlayerPhase.Match) return;    // Lobby: block reload
             
             byte slot = _activeSlot.Value;
             if (slot == 0) // Primary
