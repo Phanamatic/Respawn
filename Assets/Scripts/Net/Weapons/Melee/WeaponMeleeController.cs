@@ -27,8 +27,6 @@ namespace Game.Net.Weapons
         // Local-only visuals
         WeaponView _view;
         [SerializeField] GameObject knifeViewPrefab;
-        [SerializeField] private Transform _viewLocal;        // Hand Mount
-        private int _lastRebuildFrame = -1;
 
         void Awake()
         {
@@ -56,26 +54,6 @@ namespace Game.Net.Weapons
         {
             if (!IsOwner) return;
             RequestSwingServerRpc();
-        }
-
-        public void SetEquipped(bool v) { _hasEquippedMelee = v; }
-
-        // Helper: find Hand Mount if not wired in inspector
-        private Transform ResolveHandMount()
-        {
-            if (_viewLocal) return _viewLocal;
-
-            // Try sockets if available
-            if (sockets && sockets.handMount) { _viewLocal = sockets.handMount; return _viewLocal; }
-
-            // Fallback by name (safe, no throws)
-            var root = transform.root;
-            if (root)
-            {
-                var t = root.Find("Hand Mount");
-                if (t) { _viewLocal = t; return _viewLocal; }
-            }
-            return null;
         }
 
         // ====== Server logic ======
@@ -146,45 +124,83 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
-            // Only the owner actually needs to rebuild the local first-person/hand view
-            if (!IsOwner) return;
             RebuildLocalViewImmediate();
         }
 
         public void RebuildLocalViewImmediate()
         {
-            if (_lastRebuildFrame == Time.frameCount) return; // de-dupe same-frame calls
-            _lastRebuildFrame = Time.frameCount;
+            if (!IsOwner) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Melee)
+            {
+                Debug.Log("[Melee] Skip rebuild: slot not active.");
+                return;
+            }
 
-            Debug.Log($"[Melee][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedMelee} goActive={gameObject.activeSelf} frame={Time.frameCount}");
+            if (_view) Destroy(_view.gameObject);
+            _view = null;
 
-            // 1) If not equipped, ensure we're hidden and bail
+            Debug.Log($"[Melee][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedMelee} goActive={gameObject.activeInHierarchy} frame={Time.frameCount}");
+
             if (!_hasEquippedMelee)
             {
-                if (gameObject.activeSelf) gameObject.SetActive(false);  // stop goActive=True while not equipped
-                Debug.LogWarning($"[Melee] Abort: _hasEquippedMelee=false (viewLocal={(_viewLocal ? _viewLocal.name : "null")}, parent={(transform.parent ? transform.parent.name : "<null>")}, frame={Time.frameCount})");
+                Debug.LogWarning("[Melee] Abort: _hasEquippedMelee=false (viewLocal="
+                    + (transform.childCount > 0 ? transform.GetChild(0).name : "<none>")
+                    + ", parent=" + (transform.parent ? transform.parent.name : "<null>")
+                    + ", frame=" + Time.frameCount + ")");
                 return;
             }
 
-            // 2) We are equipped: ensure we have a mount and snap to it
-            var mount = ResolveHandMount();
-            if (!mount)
+            if (!sockets)
             {
-                Debug.LogWarning("[Melee] No Hand Mount found; keeping view inactive.");
-                gameObject.SetActive(false);
+                Debug.LogWarning("[Melee] Abort: PlayerWeaponSockets missing on player. Cannot attach Melee WeaponView.");
+                return;
+            }
+            if (!sockets.handMount)
+            {
+                Debug.LogWarning("[Melee] Abort: sockets.handMount not assigned. Cannot attach Melee WeaponView.");
+                return;
+            }
+            if (!knifeViewPrefab)
+            {
+                Debug.LogWarning("[Melee] Abort: No Knife WeaponView prefab set. Assign knifeViewPrefab.");
                 return;
             }
 
-            if (transform.parent != mount)
+            int preChildren = sockets.handMount.childCount;
+            for (int i = preChildren - 1; i >= 0; i--) Destroy(sockets.handMount.GetChild(i).gameObject);
+            Debug.Log($"[Melee] Cleared handMount children: {preChildren} -> 0 (mount={sockets.handMount.name})");
+
+            var go = Instantiate(knifeViewPrefab);
+            go.name = "Knife_View(Local)";
+            _view = go.GetComponent<WeaponView>();
+
+            var t = go.transform;
+
+            // Bind Grip → Hand Mount
+            t.SetParent(sockets.handMount, false);
+            if (_view)
             {
-                transform.SetParent(mount, worldPositionStays: false);
-                transform.localPosition = Vector3.zero;
-                transform.localRotation = Quaternion.identity;
-                transform.localScale = Vector3.one;
+                Debug.Log($"[Melee] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
+                _view.SnapGripTo(sockets.handMount);
+            }
+            else
+            {
+                Debug.LogWarning("[Melee] View prefab missing WeaponView component; falling back to raw align.");
+                t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation;
             }
 
-            // 3) Now safe to show locally
-            if (!gameObject.activeSelf) gameObject.SetActive(true);
+            // Default facing toward Front point (uses tip if present)
+            if (_view && sockets.front)
+            {
+                Debug.Log($"[Melee] SnapAimTo front='{sockets.front.name}' using tip={(bool)_view.tip}");
+                _view.SnapAimTo(sockets.front);
+            }
+
+            if (_view && sockets.equipStart && sockets.front)
+            {
+                Debug.Log($"[Melee] PlayEquipAnimation from='{sockets.equipStart.name}' to='{sockets.front.name}'");
+                StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
+            }
         }
 
         [ClientRpc] void PlaySwingClientRpc()

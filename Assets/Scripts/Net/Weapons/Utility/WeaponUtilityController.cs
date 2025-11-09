@@ -36,8 +36,6 @@ namespace Game.Net.Weapons
         Game.Net.PlayerNetwork _player;
         bool _hasEquippedUtility;
         WeaponView _view;
-        [SerializeField] private Transform _viewLocal;        // Hand Mount
-        private int _lastRebuildFrame = -1;
 
         void Awake()
         {
@@ -56,26 +54,6 @@ namespace Game.Net.Weapons
         {
             if (!IsOwner) return;
             RequestThrowServerRpc();
-        }
-
-        public void SetEquipped(bool v) { _hasEquippedUtility = v; }
-
-        // Helper: find Hand Mount if not wired in inspector
-        private Transform ResolveHandMount()
-        {
-            if (_viewLocal) return _viewLocal;
-
-            // Try sockets if available
-            if (sockets && sockets.handMount) { _viewLocal = sockets.handMount; return _viewLocal; }
-
-            // Fallback by name (safe, no throws)
-            var root = transform.root;
-            if (root)
-            {
-                var t = root.Find("Hand Mount");
-                if (t) { _viewLocal = t; return _viewLocal; }
-            }
-            return null;
         }
 
         // ====== Server logic ======
@@ -107,45 +85,100 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
-            // Only the owner actually needs to rebuild the local first-person/hand view
-            if (!IsOwner) return;
             RebuildLocalViewImmediate();
         }
 
         public void RebuildLocalViewImmediate()
         {
-            if (_lastRebuildFrame == Time.frameCount) return; // de-dupe same-frame calls
-            _lastRebuildFrame = Time.frameCount;
+            if (!IsOwner) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Utility)
+            {
+                Debug.Log("[Utility] Skip rebuild: slot not active.");
+                return;
+            }
 
-            Debug.Log($"[Utility][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedUtility} netType={(Game.Net.UtilityType)_netUtilityType.Value} goActive={gameObject.activeSelf} frame={Time.frameCount}");
+            if (_view) Destroy(_view.gameObject);
+            _view = null;
 
-            // 1) If not equipped, ensure we're hidden and bail
+            Debug.Log($"[Utility][RebuildLocalViewImmediate] owner={OwnerClientId} hasEquipped={_hasEquippedUtility} netType={(Game.Net.UtilityType)_netUtilityType.Value} goActive={gameObject.activeInHierarchy} frame={Time.frameCount}");
+
             if (!_hasEquippedUtility)
             {
-                if (gameObject.activeSelf) gameObject.SetActive(false);  // stop goActive=True while not equipped
-                Debug.LogWarning($"[Utility] Abort: _hasEquippedUtility=false (parent={(transform.parent ? transform.parent.name : "<null>")}, children={transform.childCount}, frame={Time.frameCount})");
+                Debug.LogWarning("[Utility] Abort: _hasEquippedUtility=false (parent="
+                    + (transform.parent ? transform.parent.name : "<null>")
+                    + ", children=" + transform.childCount
+                    + ", frame=" + Time.frameCount + ")");
                 return;
             }
 
-            // 2) We are equipped: ensure we have a mount and snap to it
-            var mount = ResolveHandMount();
-            if (!mount)
+            var utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
+            if (utilityType == Game.Net.UtilityType.None)
             {
-                Debug.LogWarning("[Utility] No Hand Mount found; keeping view inactive.");
-                gameObject.SetActive(false);
+                Debug.LogWarning("[Utility] Abort: utilityType=None");
                 return;
             }
 
-            if (transform.parent != mount)
+            if (!sockets)
             {
-                transform.SetParent(mount, worldPositionStays: false);
-                transform.localPosition = Vector3.zero;
-                transform.localRotation = Quaternion.identity;
-                transform.localScale = Vector3.one;
+                Debug.LogWarning("[Utility] Abort: PlayerWeaponSockets missing on player. Cannot attach Utility WeaponView.");
+                return;
+            }
+            if (!sockets.handMount)
+            {
+                Debug.LogWarning("[Utility] Abort: sockets.handMount not assigned. Cannot attach Utility WeaponView.");
+                return;
             }
 
-            // 3) Now safe to show locally
-            if (!gameObject.activeSelf) gameObject.SetActive(true);
+            GameObject viewPrefab = utilityType switch
+            {
+                Game.Net.UtilityType.Grenade => grenadeViewPrefab,
+                Game.Net.UtilityType.Smoke   => smokeViewPrefab,
+                Game.Net.UtilityType.Stun    => stunViewPrefab,
+                _ => null
+            };
+
+            if (!viewPrefab)
+            {
+                Debug.LogWarning($"[Utility] Abort: No view prefab for {utilityType}. Assign in inspector.");
+                return;
+            }
+
+            // Ensure only one weapon view exists under the Hand Mount
+            int preChildren = sockets.handMount.childCount;
+            for (int i = preChildren - 1; i >= 0; i--) Destroy(sockets.handMount.GetChild(i).gameObject);
+            Debug.Log($"[Utility] Cleared handMount children: {preChildren} -> 0 (mount={sockets.handMount.name})");
+
+            var go = Instantiate(viewPrefab);
+            go.name = $"{utilityType}_View(Local)";
+            _view = go.GetComponent<WeaponView>();
+
+            var t = go.transform;
+
+            // Bind Grip → Hand Mount
+            t.SetParent(sockets.handMount, false);
+            if (_view)
+            {
+                Debug.Log($"[Utility] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
+                _view.SnapGripTo(sockets.handMount);
+            }
+            else
+            {
+                Debug.LogWarning("[Utility] View prefab missing WeaponView component; falling back to raw align.");
+                t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation;
+            }
+
+            // Default facing toward Front point (uses tip if present)
+            if (_view && sockets.front)
+            {
+                Debug.Log($"[Utility] SnapAimTo front='{sockets.front.name}' using tip={(bool)_view.tip}");
+                _view.SnapAimTo(sockets.front);
+            }
+
+            if (_view && sockets.equipStart && sockets.front)
+            {
+                Debug.Log($"[Utility] PlayEquipAnimation from='{sockets.equipStart.name}' to='{sockets.front.name}'");
+                StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
+            }
         }
 
         [ServerRpc] void RequestThrowServerRpc(ServerRpcParams p = default)
