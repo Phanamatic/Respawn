@@ -463,7 +463,12 @@ namespace Game.Net
 
             // Always subscribe to yaw changes for new sync system
             _netYaw.OnValueChanged += OnYawChanged;
+
+            // Phase resync safety net for owner: flip quickly once we're in a Match_* scene.
+            if (IsOwner)
+                StartCoroutine(CoPhaseReconcileKickoff());
         }
+        // Ensures local phase doesn't linger as Lobby after entering Match_*.
 
         void Awake()
         {
@@ -925,6 +930,22 @@ public void ForceActiveSlotServer(byte slot)
         }
         // Server accepts slot switches whenever running a Match_* scene (phase relax).
 
+        // Client coroutine: for a few seconds after spawn, ask server to reconcile phase.
+        System.Collections.IEnumerator CoPhaseReconcileKickoff()
+        {
+            // Apply current networked phase immediately once (helps late-joiners).
+            SetPhase(_netPhase.Value);
+
+            float start = Time.unscaledTime;
+            while (Time.unscaledTime - start < 5f)
+            {
+                if (IsInMatchScene() && _phase != PlayerPhase.Match)
+                    RequestPhaseReconcileServerRpc();
+
+                yield return new WaitForSecondsRealtime(0.5f);
+            }
+        }
+
         void RequestSwitchSlot(byte slot)
         {
             // Still respect pause hard-stop
@@ -995,6 +1016,21 @@ public void ForceActiveSlotServer(byte slot)
             Debug.Log($"[Weapons] Active slot -> {slot} from cid={from} (phase={_phase}, scene='{SceneManager.GetActiveScene().name}')");
         }
 
+        // Ask the server to write the authoritative phase for this player (scene-driven fallback).
+        [ServerRpc(RequireOwnership = false)]
+        void RequestPhaseReconcileServerRpc(ServerRpcParams p = default)
+        {
+            if (!IsServer) return;
+
+            var desired = IsInMatchSceneServer() ? PlayerPhase.Match : PlayerPhase.Lobby;
+            if (_netPhase.Value != desired)
+            {
+                _netPhase.Value = desired;
+                Debug.Log($"[Phase] Reconciled phase -> {desired} for cid={OwnerClientId}");
+            }
+        }
+        // Server computes desired phase from its active scene and writes `_netPhase`.
+
         void RequestThrowUtility()
         {
             if (_inputPaused) return;
@@ -1063,6 +1099,8 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log($"[Weapons] Equip primary request -> {type}"); 
                     primary.Equip(type, null);
                     primary.SetVisible(true);
+                    // Owner gets instant local view; server RPC still follows for authority.
+                    primary.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
@@ -1075,9 +1113,12 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log($"[Weapons] Equip secondary request -> {type}"); 
                     secondary.Equip(type, null);
                     secondary.SetVisible(true);
+                    // Show it now for the owner; server will still validate/state-sync.
+                    secondary.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
+            // Rebuild immediately on the owner so the hand mount never looks empty.
             else if (slot == 2) // Melee
             {
                 if (melee) 
@@ -1085,6 +1126,8 @@ public void ForceActiveSlotServer(byte slot)
                     Debug.Log("[Weapons] Equip melee (Knife)"); 
                     melee.Equip();
                     melee.SetVisible(true);
+                    // Prevents a visible gap when swapping quickly to melee.
+                    melee.RebuildLocalViewImmediate();
                 } 
                 else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
@@ -1092,7 +1135,14 @@ public void ForceActiveSlotServer(byte slot)
             {
                 if (_netLoadout.Value.util == (byte)UtilityType.None) { Debug.LogWarning("[Weapons] Equip utility skipped: None"); return; }
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu) { Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); wu.Equip((UtilityType)_netLoadout.Value.util); } else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
+                if (wu) 
+                { 
+                    Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); 
+                    wu.Equip((UtilityType)_netLoadout.Value.util);
+                    // Utility shows up on the owner immediately as well.
+                    wu.RebuildLocalViewImmediate();
+                } 
+                else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
 
             // Publish an atomic snapshot for clients (server only).

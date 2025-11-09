@@ -284,11 +284,16 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
-            // If using deterministic snapshot-driven driver, skip legacy RPC path.
-            if (GetComponent<Game.Net.Weapons.DeterministicLoadoutViewDriver>())
-                return;
+            // Server fan-out lands here; run the same local path as the owner does.
+            RebuildLocalViewImmediate();
+        }
 
+        /// <summary>Rebuild the local hand-mount view immediately (owner-only safe).</summary>
+        public void RebuildLocalViewImmediate()
+        {
             if (!IsOwner) return;
+
+            // Always allow immediate rebuilds; snapshot drivers can replace later if needed.
 
             // Ensure no stale meshes remain on the hand mount (e.g., scene-placed Pistol_View).
             if (sockets && sockets.handMount)
@@ -351,6 +356,7 @@ namespace Game.Net.Weapons
             Debug.Log($"[Weapons] Local view spawned prefab={go.name}");
             if (_view) StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
         }
+        // ClientRpc calls the same local path; owner can also call it immediately after a slot change.
 // [Weapons] Prevents leftover scene children from masking the spawned Local view.
 
         // ====== Defaults if no SO assigned ======

@@ -122,6 +122,11 @@ namespace Game.Net.Weapons
         // ====== Client visuals ======
         [ClientRpc] void RebuildLocalViewClientRpc()
         {
+            RebuildLocalViewImmediate();
+        }
+
+        public void RebuildLocalViewImmediate()
+        {
             if (!IsOwner) return;
 
             if (_view) Destroy(_view.gameObject);
