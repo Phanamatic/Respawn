@@ -37,9 +37,19 @@ namespace Game.Net.Weapons
         // ====== API ======
         public void Equip()
         {
-            if (!IsServer) { RequestEquipServerRpc(); }
-            else ServerEquip();
+            // Owner path: mark equipped immediately so local rebuild isn't gated on server RTT.
+            if (!IsServer)
+            {
+                _hasEquippedMelee = true;
+                RequestEquipServerRpc();
+            }
+            else
+            {
+                ServerEquip();
+            }
         }
+
+// Brief dev comment: client pre-sets _hasEquippedMelee so PlayerNetwork.OnActiveSlotChanged → RebuildLocalViewImmediate() doesn't bail out with hasEquipped=false.
 
         /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
         public void SetVisible(bool visible)
@@ -67,7 +77,8 @@ namespace Game.Net.Weapons
             _hasEquippedMelee = true;
 
             Debug.Log("[Melee][ServerEquip] -> rebuild local views");
-            RebuildLocalViewClientRpc();
+            // Fan-out the authoritative equip flag before clients rebuild their local view.
+            RebuildLocalViewClientRpc(_hasEquippedMelee);
         }
 
         [ServerRpc] void RequestSwingServerRpc(ServerRpcParams p = default)
@@ -122,10 +133,14 @@ namespace Game.Net.Weapons
         }
 
         // ====== Client visuals ======
-        [ClientRpc] void RebuildLocalViewClientRpc()
+        [ClientRpc] void RebuildLocalViewClientRpc(bool hasEquipped)
         {
+            // Mirror server equip state locally, then rebuild against it.
+            _hasEquippedMelee = hasEquipped;
             RebuildLocalViewImmediate();
         }
+
+// Brief dev comment: RPC now carries the equip flag so non-host clients never hit the _hasEquippedMelee=false early-out during a rebuild.
 
         public void RebuildLocalViewImmediate()
         {
