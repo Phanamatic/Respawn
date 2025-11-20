@@ -12,139 +12,177 @@ namespace UI.Scripts
     public class SplashScreen : MonoBehaviour
     {
         [Header("Scene Settings")]
-        [SerializeField] private string nextSceneName = "MainMenu";
-        [SerializeField] private float displayDuration = 3f;
+        [SerializeField] private string nextSceneName = "Account";
 
-        [Header("Visual Elements (Assign One or Both)")]
+        [Header("Logo")]
         [SerializeField] private Image logoImage;
-        [SerializeField] private TextMeshProUGUI logoText;
+        [SerializeField] private float logoSpinDuration = 1.2f;
+        [SerializeField] private float logoStartScale = 0.1f; // 10% of original
 
-        [Header("Scale Animation")]
-        [SerializeField] private float startScale = 0.5f;
-        [SerializeField] private float endScale = 1.2f;
-        [SerializeField] private AnimationCurve scaleCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+        [Header("Text")]
+        [SerializeField] private TextMeshProUGUI topLineText;
+        [SerializeField] private TextMeshProUGUI bottomLineText;
+        [SerializeField] private string topLine = "A game by";
+        [SerializeField] private string bottomLine = "Just Two Guys";
+        [SerializeField] private float characterInterval = 0.08f; // seconds per character
 
-        [Header("Typewriter Effect")]
-        [SerializeField] private bool enableTypewriter = true;
-        [SerializeField] private string textToType = "Just Two Guys";
-        [SerializeField] private float typeSpeed = 0.08f; // Time between each character
-        [SerializeField] private AudioClip typeSound;
-        [SerializeField, Range(0f, 1f)] private float typeSoundVolume = 0.5f;
+        [Header("Typing Sound")]
+        [SerializeField] private AudioClip typingLoopClip;
+        [SerializeField, Range(0f, 1f)] private float typingVolume = 0.5f;
+
+        private AudioSource _typingSource;
+        private Vector3 _logoOriginalScale = Vector3.one;
+        private Quaternion _logoOriginalRotation = Quaternion.identity;
+
+        private void Awake()
+        {
+            // Cache original logo transform and set starting state.
+            if (logoImage != null)
+            {
+                var rt = logoImage.rectTransform;
+                _logoOriginalScale = rt.localScale;
+                _logoOriginalRotation = rt.localRotation;
+
+                rt.localScale = _logoOriginalScale * logoStartScale;
+                rt.localRotation = Quaternion.Euler(0f, 0f, 360f);
+            }
+
+            // Clear texts before we type.
+            if (topLineText != null) topLineText.text = string.Empty;
+            if (bottomLineText != null) bottomLineText.text = string.Empty;
+
+            // Prepare looping typing audio.
+            if (typingLoopClip != null)
+            {
+                _typingSource = gameObject.AddComponent<AudioSource>();
+                _typingSource.clip = typingLoopClip;
+                _typingSource.loop = true;
+                _typingSource.playOnAwake = false;
+                _typingSource.volume = typingVolume;
+                _typingSource.spatialBlend = 0f; // 2D sound
+            }
+        }
 
         private void Start()
         {
-            StartCoroutine(SplashSequence());
+            StartCoroutine(RunSplash());
         }
 
-        private IEnumerator SplashSequence()
+        private IEnumerator RunSplash()
         {
-            // Set initial scale
+            // 1) Spin + scale logo.
             if (logoImage != null)
             {
-                logoImage.transform.localScale = Vector3.one * startScale;
-            }
-            if (logoText != null)
-            {
-                logoText.transform.localScale = Vector3.one * startScale;
-
-                // Clear text for typewriter effect
-                if (enableTypewriter)
-                {
-                    logoText.text = "";
-                }
+                yield return StartCoroutine(AnimateLogo());
             }
 
-            // Start typewriter effect if enabled
-            Coroutine typewriterCoroutine = null;
-            if (enableTypewriter && logoText != null)
-            {
-                typewriterCoroutine = StartCoroutine(TypewriterEffect());
-            }
+            // 2) Type text with looping sound.
+            yield return StartCoroutine(TypeTextSequence());
 
+            // 3) As soon as the last letter is typed the sound stops (inside TypeTextSequence),
+            //    then we wait 2 seconds before loading the next scene.
+            yield return new WaitForSeconds(2f);
+
+            LoadNextScene();
+        }
+
+
+// Flow is now: logo spin → type text → sound stops → 2s pause → next scene.
+
+        private IEnumerator AnimateLogo()
+        {
+            RectTransform rt = logoImage.rectTransform;
+            float duration = Mathf.Max(0.01f, logoSpinDuration);
             float elapsed = 0f;
 
-            // Animate scale over the display duration
-            while (elapsed < displayDuration)
+            while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
-                float t = elapsed / displayDuration;
-                float curveValue = scaleCurve.Evaluate(t);
-                float currentScale = Mathf.Lerp(startScale, endScale, curveValue);
+                float t = Mathf.Clamp01(elapsed / duration);
 
-                if (logoImage != null)
-                {
-                    logoImage.transform.localScale = Vector3.one * currentScale;
-                }
-                if (logoText != null)
-                {
-                    logoText.transform.localScale = Vector3.one * currentScale;
-                }
+                // Spin from 360° → 0° and scale from 0.1 → 1.0.
+                float angle = Mathf.Lerp(360f, 0f, t);
+                float scaleFactor = Mathf.Lerp(logoStartScale, 1f, t);
+
+                rt.localRotation = Quaternion.Euler(0f, 0f, angle);
+                rt.localScale = _logoOriginalScale * scaleFactor;
 
                 yield return null;
             }
 
-            // Ensure final scale is set
-            if (logoImage != null)
-            {
-                logoImage.transform.localScale = Vector3.one * endScale;
-            }
-            if (logoText != null)
-            {
-                logoText.transform.localScale = Vector3.one * endScale;
-            }
-
-            // Wait for typewriter to finish if it's still running
-            if (typewriterCoroutine != null)
-            {
-                yield return typewriterCoroutine;
-            }
-
-            // Load next scene
-            LoadNextScene();
+            // Snap to original transform.
+            rt.localRotation = _logoOriginalRotation;
+            rt.localScale = _logoOriginalScale;
         }
 
-        private IEnumerator TypewriterEffect()
+        private IEnumerator TypeTextSequence()
         {
-            if (logoText == null || string.IsNullOrEmpty(textToType))
+            float wait = Mathf.Max(0.01f, characterInterval);
+            bool startedAudio = false;
+
+            // Top line: "A game by"
+            if (topLineText != null && !string.IsNullOrEmpty(topLine))
             {
-                yield break;
-            }
-
-            logoText.text = "";
-
-            for (int i = 0; i < textToType.Length; i++)
-            {
-                logoText.text += textToType[i];
-
-                // Play type sound for each character (skip spaces)
-                if (typeSound != null && textToType[i] != ' ')
+                topLineText.text = string.Empty;
+                for (int i = 0; i < topLine.Length; i++)
                 {
-                    PlayTypeSound();
-                }
+                    char c = topLine[i];
+                    topLineText.text += c;
 
-                yield return new WaitForSeconds(typeSpeed);
+                    if (!startedAudio && !char.IsWhiteSpace(c))
+                    {
+                        StartTypingAudio();
+                        startedAudio = true;
+                    }
+
+                    // Top line can still use the per-character delay, including the last char.
+                    yield return new WaitForSeconds(wait);
+                }
             }
+
+            // Bottom line: "Just Two Guys"
+            if (bottomLineText != null && !string.IsNullOrEmpty(bottomLine))
+            {
+                bottomLineText.text = string.Empty;
+                for (int i = 0; i < bottomLine.Length; i++)
+                {
+                    char c = bottomLine[i];
+                    bottomLineText.text += c;
+
+                    if (!startedAudio && !char.IsWhiteSpace(c))
+                    {
+                        StartTypingAudio();
+                        startedAudio = true;
+                    }
+
+                    bool isLastChar = i == bottomLine.Length - 1;
+
+                    // On the *last* character, stop the typing sound immediately.
+                    if (isLastChar)
+                    {
+                        if (_typingSource != null && _typingSource.isPlaying)
+                        {
+                            _typingSource.Stop();
+                        }
+
+                        // No extra per-character wait here; RunSplash will handle the 2s hold.
+                    }
+                    else
+                    {
+                        // For all earlier characters, keep the normal typing rhythm.
+                        yield return new WaitForSeconds(wait);
+                    }
+                }
+            }
+
+            // No additional waits or audio stops here; at this point the last letter has just appeared,
+            // and RunSplash() will now wait 2 seconds before changing scene.
         }
 
-        private void PlayTypeSound()
+        private void StartTypingAudio()
         {
-            if (typeSound == null) return;
-
-            // Create a temporary GameObject with an AudioSource
-            GameObject soundObject = new GameObject("TypeSound");
-            AudioSource audioSource = soundObject.AddComponent<AudioSource>();
-
-            // Configure the audio source
-            audioSource.clip = typeSound;
-            audioSource.volume = typeSoundVolume;
-            audioSource.playOnAwake = false;
-            audioSource.spatialBlend = 0f; // 2D sound
-
-            // Play the sound
-            audioSource.Play();
-
-            // Destroy the GameObject after the sound finishes playing
-            Destroy(soundObject, typeSound.length + 0.1f);
+            if (_typingSource == null || _typingSource.isPlaying) return;
+            _typingSource.Play();
         }
 
         private void LoadNextScene()

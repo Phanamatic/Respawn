@@ -203,8 +203,15 @@ namespace Game.Net
             foreach (var id in NetworkManager.ConnectedClientsIds)
                 if (id != NetworkManager.ServerClientId) active++;
 
-            // If only one (or zero) client remains while match is live, end as forfeit
-            if ((_state.Value == MatchState.Playing || _state.Value == MatchState.Countdown) && active <= 1)
+            // If only one (or zero) client remains while match is live, end as forfeit.
+            // Treat Loading/Countdown/Playing/RoundEnd as "live" match states.
+            bool liveState =
+                _state.Value == MatchState.Playing ||
+                _state.Value == MatchState.Countdown ||
+                _state.Value == MatchState.Loading ||
+                _state.Value == MatchState.RoundEnd;
+
+            if (liveState && active <= 1)
             {
                 var winner = DetermineRemainingTeam(clientId);
                 EndMatchServer(winner, "forfeit");
@@ -218,6 +225,9 @@ namespace Game.Net
                 // removed _chosenSpawns.Clear();
             }
         }
+
+
+// Now any mid-match disconnect (loading → round end) immediately triggers the server end-of-match path with a forfeit.
 
         void RecountPlayers()
         {
@@ -603,7 +613,7 @@ namespace Game.Net
 
             _state.Value = MatchState.MatchEnd;
             ClearDeathRecapsClientRpc();
-            ShowMatchEndClientRpc(winner);
+            ShowMatchEndClientRpc(winner, "win");
         }
 
         [ClientRpc]
@@ -626,14 +636,25 @@ namespace Game.Net
         }
 
         [ClientRpc]
-        void ShowMatchEndClientRpc(TeamId winner)
+        void ShowMatchEndClientRpc(TeamId winner, string reason)
         {
-            if (winPanel)
+            if (!winPanel) return;
+
+            ShowCanvas(winPanel, true);
+            if (!winnerText) return;
+
+            string line1;
+            if (reason == "forfeit")
             {
-                ShowCanvas(winPanel, true);
-                if (winnerText)
-                    winnerText.text = $"Team {winner} Wins the Match!\n{_winsTeamA.Value} - {_winsTeamB.Value}";
+                // Drop-out case: make it obvious why we bounced out.
+                line1 = "Match ended: another player disconnected";
             }
+            else
+            {
+                line1 = $"Team {winner} Wins the Match!";
+            }
+
+            winnerText.text = $"{line1}\n{_winsTeamA.Value} - {_winsTeamB.Value}";
         }
 
         // Authoritative end-of-match: set state, show winner UI, kick players, then reset server.
@@ -641,11 +662,15 @@ namespace Game.Net
         {
             if (!IsServer) return;
 
+            // Avoid double-firing from multiple paths (round win + disconnect).
+            if (_state.Value == MatchState.MatchEnd)
+                return;
+
             _state.Value = MatchState.MatchEnd;
 
             // 1) Let clients see the result panel first.
             ClearDeathRecapsClientRpc();
-            ShowMatchEndClientRpc(winner);
+            ShowMatchEndClientRpc(winner, reason);
 
             // 2) Push all clients back to Lobby, with a short grace so the panel is visible.
             KickAllClientsToLobbyClientRpc(true);
@@ -653,6 +678,9 @@ namespace Game.Net
             // 3) Reset this box for the next match.
             StartCoroutine(CoResetServerAfterClientsLeft());
         }
+
+
+// Reason string is now threaded through so forfeits show a different message, and EndMatchServer is idempotent in practice.
 
         [ClientRpc]
         void KickAllClientsToLobbyClientRpc(bool showWinAndDelay = true)
@@ -736,9 +764,12 @@ namespace Game.Net
 
         void OnReturnToLobby()
         {
-            NetworkManager.Singleton.Shutdown();
-            UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby");
+            // Use the shared agent so we always bounce via MainMenu and reuse the quick-join flow.
+            Game.Net.UI.ReturnToLobbyAgent.ReturnToLobbyNow(true);
         }
+
+
+// Now both the button and server-driven kicks follow the same “MainMenu → auto-join Lobby” path.
 
         static bool ContainsXZ(Bounds b, Vector3 p)
         {

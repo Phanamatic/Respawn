@@ -191,10 +191,11 @@ namespace Game.Net.Weapons
 
             var t = go.transform;
 
-            // Bind Grip → Hand Mount
+            // Bind Grip → Hand Mount and install live anchor so it stays glued while we animate.
             t.SetParent(sockets.handMount, false);
             if (_view)
             {
+                _view.SetHandMount(sockets.handMount);
                 Debug.Log($"[Melee] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
                 _view.SnapGripTo(sockets.handMount);
             }
@@ -220,15 +221,16 @@ namespace Game.Net.Weapons
 
         [ClientRpc] void PlaySwingClientRpc()
         {
-            // Play swing animation or sound
-            if (_view)
+            if (!_view) return;
+
+            // Procedural swing on all clients; damage stays server-authoritative via RequestSwingServerRpc.
+            _view.PlaySwingAnimation();
+
+            // Optional Animator trigger for any extra VFX/sound you may wire up.
+            var animator = _view.GetComponent<Animator>();
+            if (animator)
             {
-                // Trigger animation if available
-                var animator = _view.GetComponent<Animator>();
-                if (animator)
-                {
-                    animator.SetTrigger("Swing");
-                }
+                animator.SetTrigger("Swing");
             }
         }
     }

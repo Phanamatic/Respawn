@@ -41,10 +41,17 @@ namespace Game.Net.UI
         {
 #if !UNITY_SERVER
             s_AutoJoinLobbyOnce = autoJoinLobby;
+
+            // Ensure any cached session/lobby/endpoints are cleared before the next quick-join.
+            try { Game.Net.SessionContext.Clear(); } catch { }
+
             var nm = NetworkManager.Singleton;
             if (nm && nm.IsClient) nm.Shutdown();
             SceneManager.LoadScene("MainMenu");
 #endif
         }
+
+
+// Client-only: dedicated server SessionContext is untouched; heartbeat + lobby session remain intact.
     }
 }
