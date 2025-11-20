@@ -2595,6 +2595,11 @@ void SetFovAndLosEnabled(bool enabled)
         fov.follow = modelRoot ? modelRoot : transform;
         fov.enabled = true; // Explicitly enable
 
+        // Ensure the FOV visual rides at the player's feet and does not inherit yaw.
+        var fovConstraint = GetComponent<FovVisualConstraintBinder>();
+        if (!fovConstraint) fovConstraint = gameObject.AddComponent<FovVisualConstraintBinder>();
+        fovConstraint.Source = modelRoot ? modelRoot : transform;
+
         if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
         losLight.fovSource = fov;
         losLight.intensity = 1.3f;

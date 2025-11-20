@@ -12,8 +12,8 @@ using Game.Net;
 [RequireComponent(typeof(Transform))]
 public sealed class FovMesh : MonoBehaviour
 {
-    // Visual disc should always sit on this world height.
-    const float VisualFixedY = -0.89f;
+    // Legacy fixed-height visual. FOV is now anchored via ground/collider instead.
+    // const float VisualFixedY = -0.89f;
 
     [Range(0.5f, 50f)] public float radiusMeters = 12f;
     [Range(16, 512)] public int rayCount = 220;
@@ -49,6 +49,7 @@ public sealed class FovMesh : MonoBehaviour
     MeshRenderer _mr;
     GameObject _visualGO;
     MeshRenderer _visualRenderer;
+    Collider _sourceCollider;   // cached player collider for ground fallback
     float _accum;
     static Material _stencilMat;
     static Material _visualMat;
@@ -136,13 +137,10 @@ public sealed class FovMesh : MonoBehaviour
         }
 
         // Do not modify the player's rotation here; mouse-aim logic owns yaw.
-        // Keep child visuals neutral locally; the ParentConstraint on the visual prevents inheriting rotation in world space.
+        // Keep the mesh child neutral; the visual's world rotation/Y height are driven by FovVisualConstraintBinder.
         if (_meshGO && _meshGO.transform.localRotation != Quaternion.identity)
             _meshGO.transform.localRotation = Quaternion.identity;
-        if (_visualGO && _visualGO.transform.localRotation != Quaternion.identity)
-            _visualGO.transform.localRotation = Quaternion.identity;
-        // [LOS] Player yaw is untouched; visual stays world-aligned via ParentConstraint.
-        // Keeps FOV world-aligned every frame even if the parent rotates mid-frame.
+        // [LOS] Player yaw is untouched; the ParentConstraint keeps the visual world-aligned without inheriting yaw.
 
         // update fill properties on material
         if (_mr != null)
@@ -173,14 +171,7 @@ public sealed class FovMesh : MonoBehaviour
                 _visualMpb.SetFloat(_VisualEdgeId, Mathf.Max(0.02f, visualEdgeSoftness));
                 _visualMpb.SetFloat(_RadiusId, Mathf.Max(0.1f, radiusMeters));
                 _visualRenderer.SetPropertyBlock(_visualMpb);
-                
-                // Ensure exact transform match with the mesh (already achieved via parenting).
-                if (_visualGO)
-                {
-                    _visualGO.transform.localPosition = Vector3.zero;
-                    _visualGO.transform.localRotation = Quaternion.identity;
-                    _visualGO.transform.localScale    = Vector3.one;
-                }
+                // Do not touch the visual transform here; FovVisualConstraintBinder drives its world pose.
             }
         }
         else if (_visualGO && _visualGO.activeSelf)
@@ -204,22 +195,47 @@ public sealed class FovMesh : MonoBehaviour
         var centerWS = follow ? follow.position : transform.position;
         var eyeWS = centerWS + Vector3.up * EyeHeight;
 
-        // Raycast down to find the ground height
+        // Find a ground height for the disc: prefer a "Ground" hit, then tagged Ground,
+        // finally fall back to the player's collider bottom so we never hover at mid-body.
         float groundY = centerWS.y;
         float skinMesh = Mathf.Clamp(groundHeightOffset, 0.001f, 0.05f);
+        bool foundGround = false;
+
         if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out RaycastHit groundHit, 100f, LayerMask.GetMask("Ground")))
         {
             groundY = groundHit.point.y + skinMesh;
+            foundGround = true;
         }
-        else
+        else if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out groundHit, 100f))
         {
             // Fallback: try with default layer if "Ground" layer doesn't exist
-            if (Physics.Raycast(centerWS + Vector3.up * 0.5f, Vector3.down, out groundHit, 100f))
+            if (groundHit.collider.CompareTag("Ground"))
             {
-                if (groundHit.collider.CompareTag("Ground"))
+                groundY = groundHit.point.y + skinMesh;
+                foundGround = true;
+            }
+        }
+
+        if (!foundGround)
+        {
+            // Last resort: use the player's collider bottom so the FOV always rides at the feet.
+            if (!_sourceCollider || !_sourceCollider.enabled)
+            {
+                var root = transform;
+                _sourceCollider = root.GetComponent<CharacterController>();
+                if (!_sourceCollider) _sourceCollider = root.GetComponent<CapsuleCollider>();
+                if (!_sourceCollider) _sourceCollider = root.GetComponent<Collider>();
+                if (!_sourceCollider)
                 {
-                    groundY = groundHit.point.y + skinMesh;
+                    _sourceCollider = root.GetComponentInChildren<CharacterController>(true);
+                    if (!_sourceCollider) _sourceCollider = root.GetComponentInChildren<CapsuleCollider>(true);
+                    if (!_sourceCollider) _sourceCollider = root.GetComponentInChildren<Collider>(true);
                 }
+            }
+
+            if (_sourceCollider)
+            {
+                groundY = _sourceCollider.bounds.min.y + skinMesh;
             }
         }
 
@@ -320,12 +336,11 @@ public sealed class FovMesh : MonoBehaviour
         _visualRenderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
         _visualRenderer.enabled = (_visualRenderer.sharedMaterial != null);
         if (_visualGO && !_visualGO.activeSelf) _visualGO.SetActive(_visualRenderer.enabled);
-    _visualGO.transform.localPosition = new Vector3(0f, 0f, 0f);
-    // Ensure a stable, searchable name for the child visual so tooling can find it.
-    if (_visualGO.name != "__FOVVisual") _visualGO.name = "__FOVVisual";
-    // Dev: Named child so the constraint helper can auto-bind even in Edit Mode.
-        // Direct parenting to __FOVMesh replaces the constraint+ground-offset approach.
-        // The visual now inherits exactly the mesh transform.
+        // Keep the child at the mesh origin; FovVisualConstraintBinder will reposition it in world space.
+        if (_visualGO) _visualGO.transform.localPosition = Vector3.zero;
+        // Ensure a stable, searchable name for the child visual so tooling can find it.
+        if (_visualGO.name != "__FOVVisual") _visualGO.name = "__FOVVisual";
+        // Dev: Named child so the constraint helper can auto-bind even in Edit Mode.
     }
 
     void DisableVisualRenderer()
