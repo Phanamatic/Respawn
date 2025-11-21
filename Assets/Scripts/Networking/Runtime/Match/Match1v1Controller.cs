@@ -9,6 +9,8 @@ using TMPro;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
 using Game.Services;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
 
 namespace Game.Net
 {
@@ -93,7 +95,7 @@ namespace Game.Net
 // Removed legacy spawn-select framing settings.
 
         private readonly NetworkVariable<MatchState> _state = new();
-        private readonly NetworkVariable<int> _playerCount = new();
+    private readonly NetworkVariable<int> _playerCount = new();
         private readonly NetworkVariable<int> _roundNumber = new();
         private readonly NetworkVariable<float> _roundEndTime = new();
         private readonly NetworkVariable<int> _winsTeamA = new();
@@ -114,6 +116,9 @@ namespace Game.Net
         // Client state
         // removed _selecting, _myAreaBounds, _myAreaBlocked, _myTeam, _spawnDeadlineLocal, _selectCo, _spawnCursor
     private Coroutine _uiCo, _iconWarmupCo, _loadingDotsCo;
+    private Coroutine _lobbySyncCo;
+    private bool _lobbyDirty;
+    private float _nextLobbyPushAt;
 
     // Cinematic fields removed.
 
@@ -136,13 +141,18 @@ namespace Game.Net
                     fadeSeconds: 1f,
                     occluderMask: LayerMask.GetMask("Occluder", "OccluderExtra")
                 );
+
+                _lobbyDirty = true;
+                _nextLobbyPushAt = 0f;
+                StopCoroutineSafe(ref _lobbySyncCo);
+                _lobbySyncCo = StartCoroutine(CoSyncLobbyData());
             }
 
-            _state.OnValueChanged += (_, __) => RefreshUI();
-            _playerCount.OnValueChanged += (_, __) => RefreshUI();
-            _roundNumber.OnValueChanged += (_, __) => RefreshUI();
-            _winsTeamA.OnValueChanged += (_, __) => RefreshUI();
-            _winsTeamB.OnValueChanged += (_, __) => RefreshUI();
+            _state.OnValueChanged += (_, __) => { RefreshUI(); if (IsServer) MarkLobbyDirty(); };
+            _playerCount.OnValueChanged += (_, __) => { RefreshUI(); if (IsServer) MarkLobbyDirty(); };
+            _roundNumber.OnValueChanged += (_, __) => { RefreshUI(); if (IsServer) MarkLobbyDirty(); };
+            _winsTeamA.OnValueChanged += (_, __) => { RefreshUI(); if (IsServer) MarkLobbyDirty(); };
+            _winsTeamB.OnValueChanged += (_, __) => { RefreshUI(); if (IsServer) MarkLobbyDirty(); };
 
             if (IsClient)
             {
@@ -163,6 +173,8 @@ namespace Game.Net
 
         public override void OnNetworkDespawn()
         {
+            StopCoroutineSafe(ref _lobbySyncCo);
+
             if (IsServer)
             {
                 NetworkManager.OnClientConnectedCallback -= OnClientConnected;
@@ -224,9 +236,10 @@ namespace Game.Net
             int count = 0;
             var ids = NetworkManager.ConnectedClientsIds;
             for (int i = 0; i < ids.Count; i++)
-                if (ids[i] != NetworkManager.ServerClientId) count++;
+                if (ids[i] != NetworkManager.ServerClientId && !ConnectionMetadata.IsSpectator(ids[i])) count++;
             _playerCount.Value = count;
             RefreshUIClientRpc();
+            MarkLobbyDirty();
         }
 
         void AssignTeamsIfNeeded()
@@ -236,7 +249,7 @@ namespace Game.Net
             for (int i = 0; i < all.Count; i++)
             {
                 var cid = all[i];
-                if (cid != NetworkManager.ServerClientId) nonServer.Add(cid);
+                if (cid != NetworkManager.ServerClientId && !ConnectionMetadata.IsSpectator(cid)) nonServer.Add(cid);
             }
 
             // Stable order
@@ -252,6 +265,7 @@ namespace Game.Net
                 var player = NetworkManager.ConnectedClients[cid]?.PlayerObject?.GetComponent<PlayerNetwork>();
                 if (player) player.SetTeam(want);
             }
+            MarkLobbyDirty();
         }
 
         void TryStartFlow()
@@ -325,6 +339,7 @@ namespace Game.Net
             foreach (var cid in ids)
             {
                 if (cid == NetworkManager.ServerClientId) continue;
+                if (ConnectionMetadata.IsSpectator(cid)) continue;
                 if (!_teams.TryGetValue(cid, out var team)) continue;
 
                 Vector3 point = transform.position;
@@ -1038,6 +1053,103 @@ namespace Game.Net
             cg.blocksRaycasts = show;
             if (cg.gameObject.activeSelf != show)
                 cg.gameObject.SetActive(show);
+        }
+
+        void MarkLobbyDirty(float minDelaySeconds = 0.15f)
+        {
+            _lobbyDirty = true;
+            float now = Time.realtimeSinceStartup;
+            if (_nextLobbyPushAt <= 0f || _nextLobbyPushAt > now + minDelaySeconds)
+                _nextLobbyPushAt = now + minDelaySeconds;
+        }
+
+        IEnumerator CoSyncLobbyData()
+        {
+            const float minInterval = 5f;
+            while (true)
+            {
+                var lobby = SessionContext.CurrentLobby;
+                if (lobby == null || string.IsNullOrEmpty(lobby.Id))
+                {
+                    yield return new WaitForSecondsRealtime(2f);
+                    continue;
+                }
+
+                if (!_lobbyDirty && Time.realtimeSinceStartup < _nextLobbyPushAt)
+                {
+                    yield return null;
+                    continue;
+                }
+
+                _lobbyDirty = false;
+                _nextLobbyPushAt = Time.realtimeSinceStartup + minInterval;
+
+                var data = BuildLobbyData();
+                var opts = new UpdateLobbyOptions { Data = data };
+                try
+                {
+                    var task = LobbyService.Instance.UpdateLobbyAsync(lobby.Id, opts);
+                    while (!task.IsCompleted) yield return null;
+                    if (task.Exception != null)
+                    {
+                        Debug.LogWarning($"[Match1v1] Lobby update failed: {task.Exception.Message}");
+                        _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Match1v1] Lobby sync exception: {ex.Message}");
+                    _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
+                }
+
+                yield return null;
+            }
+        }
+
+        Dictionary<string, DataObject> BuildLobbyData()
+        {
+            GetTeamCounts(out int aliveA, out int aliveB, out int totalA, out int totalB);
+            int total = totalA + totalB;
+            float elapsed = _state.Value == MatchState.Playing
+                ? Mathf.Max(0f, GetServerNowSafe() - _roundStartTimeServer)
+                : 0f;
+
+            return new Dictionary<string, DataObject>
+            {
+                ["MatchState"] = new DataObject(DataObject.VisibilityOptions.Public, _state.Value.ToString()),
+                ["Round"]      = new DataObject(DataObject.VisibilityOptions.Public, _roundNumber.Value.ToString()),
+                ["WinsA"]      = new DataObject(DataObject.VisibilityOptions.Public, _winsTeamA.Value.ToString()),
+                ["WinsB"]      = new DataObject(DataObject.VisibilityOptions.Public, _winsTeamB.Value.ToString()),
+                ["Alive"]      = new DataObject(DataObject.VisibilityOptions.Public, $"{aliveA + aliveB}/{Mathf.Max(1, total)}"),
+                ["AliveAB"]    = new DataObject(DataObject.VisibilityOptions.Public, $"{aliveA}/{aliveB}"),
+                ["Elapsed"]    = new DataObject(DataObject.VisibilityOptions.Public, Mathf.RoundToInt(elapsed).ToString())
+            };
+        }
+
+        void GetTeamCounts(out int aliveA, out int aliveB, out int totalA, out int totalB)
+        {
+            aliveA = aliveB = totalA = totalB = 0;
+
+            foreach (var kvp in _teams)
+            {
+                var cid = kvp.Key;
+                if (ConnectionMetadata.IsSpectator(cid)) continue;
+
+                var cc = NetworkManager.ConnectedClients.TryGetValue(cid, out var client) ? client : null;
+                var pn = cc?.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+                bool alive = pn && pn.IsSpawned && pn.GetHealth() > 0.01f;
+
+                if (kvp.Value == TeamId.A)
+                {
+                    totalA++;
+                    if (alive) aliveA++;
+                }
+                else
+                {
+                    totalB++;
+                    if (alive) aliveB++;
+                }
+            }
         }
 
         // Safe server clock (works before NGO is listening)

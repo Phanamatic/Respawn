@@ -140,6 +140,7 @@ namespace Game.Net
 
             // NGO settings
             config.EnableSceneManagement = true;
+            config.ConnectionApproval = true; // Needed for spectator payloads and server-side role detection.
             // Enforce identical prefab tables across client/server to prevent desync.
             config.ForceSamePrefabs = true;
             config.RecycleNetworkIds = true;

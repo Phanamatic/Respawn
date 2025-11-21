@@ -57,6 +57,14 @@ namespace Game.Net
         {
             if (!NM.IsServer) return;
 
+            if (Game.Net.ConnectionMetadata.IsSpectator(clientId))
+            {
+#if UNITY_EDITOR
+                Debug.Log($"[GamePlayerSpawner] Skip spectator {clientId} ({reason})");
+#endif
+                return;
+            }
+
             // If a Match controller is present, it owns spawning logic. Do not auto-spawn here.
 #if UNITY_2022_3_OR_NEWER || UNITY_6000_0_OR_NEWER
             var match = FindFirstObjectByType<Game.Net.Match1v1Controller>(FindObjectsInactive.Exclude);
