@@ -301,6 +301,14 @@ namespace Game.Net
             var root = spectateListRoot ? spectateListRoot : spectatePanel;
             if (!root) return;
 
+            string GetValue(Lobby lobby, string key, string fallback)
+            {
+                if (lobby == null || lobby.Data == null) return fallback;
+                return lobby.Data.TryGetValue(key, out var data) && data != null && !string.IsNullOrEmpty(data.Value)
+                    ? data.Value
+                    : fallback;
+            }
+
             foreach (var lobby in matches)
             {
                 var entry = spectateEntryPrefab ? Instantiate(spectateEntryPrefab, root) : CreateRuntimeEntry(root);
@@ -308,20 +316,20 @@ namespace Game.Net
                 TMP_Text label = texts != null && texts.Length > 0 ? texts[0] : null;
                 var button = entry.GetComponentInChildren<Button>(true);
 
-                string name = lobby.Name;
-                lobby.Data?.TryGetValue("Scene", out var sceneData);
-                lobby.Data?.TryGetValue("ServerType", out var typeData);
-                lobby.Data?.TryGetValue("MatchState", out var stateData);
-                lobby.Data?.TryGetValue("Round", out var roundData);
-                lobby.Data?.TryGetValue("WinsA", out var winsA);
-                lobby.Data?.TryGetValue("WinsB", out var winsB);
-                lobby.Data?.TryGetValue("Alive", out var aliveData);
-                lobby.Data?.TryGetValue("AliveAB", out var aliveAbData);
-                lobby.Data?.TryGetValue("Elapsed", out var elapsedData);
+                string name     = lobby.Name;
+                string scene    = GetValue(lobby, "Scene", "?");
+                string type     = GetValue(lobby, "ServerType", "Match");
+                string state    = GetValue(lobby, "MatchState", "Unknown");
+                string round    = GetValue(lobby, "Round", "?");
+                string winsA    = GetValue(lobby, "WinsA", "0");
+                string winsB    = GetValue(lobby, "WinsB", "0");
+                string alive    = GetValue(lobby, "Alive", "?");
+                string aliveAB  = GetValue(lobby, "AliveAB", null);
+                string elapsed  = GetValue(lobby, "Elapsed", "0");
 
-                string summary = $"{name} • {typeData?.Value ?? "Match"} @ {sceneData?.Value ?? "?"}\n" +
-                    $"State: {stateData?.Value ?? "Unknown"}  Round: {roundData?.Value ?? "?"}\n" +
-                    $"Score {winsA?.Value ?? "0"}-{winsB?.Value ?? "0"}  Alive {aliveAbData?.Value ?? aliveData?.Value ?? "?"}  Time {elapsedData?.Value ?? "0"}s";
+                string summary = $"{name} • {type} @ {scene}\n" +
+                                 $"State: {state}  Round: {round}\n" +
+                                 $"Score {winsA}-{winsB}  Alive {aliveAB ?? alive}  Time {elapsed}s";
 
                 if (label) label.text = summary;
                 if (button)
@@ -364,7 +372,11 @@ namespace Game.Net
             var label = textGo.AddComponent<TMP_Text>();
             label.fontSize = 18f;
             label.alignment = TextAlignmentOptions.TopLeft;
+#if UNITY_6000_0_OR_NEWER
+            label.textWrappingMode = TextWrappingModes.Normal;
+#else
             label.enableWordWrapping = true;
+#endif
 
             var btnGo = new GameObject("JoinButton", typeof(RectTransform));
             btnGo.transform.SetParent(go.transform, false);

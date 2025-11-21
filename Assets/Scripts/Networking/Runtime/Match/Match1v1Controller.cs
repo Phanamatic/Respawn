@@ -1086,19 +1086,12 @@ namespace Game.Net
 
                 var data = BuildLobbyData();
                 var opts = new UpdateLobbyOptions { Data = data };
-                try
+
+                var task = LobbyService.Instance.UpdateLobbyAsync(lobby.Id, opts);
+                while (!task.IsCompleted) yield return null;
+                if (task.Exception != null)
                 {
-                    var task = LobbyService.Instance.UpdateLobbyAsync(lobby.Id, opts);
-                    while (!task.IsCompleted) yield return null;
-                    if (task.Exception != null)
-                    {
-                        Debug.LogWarning($"[Match1v1] Lobby update failed: {task.Exception.Message}");
-                        _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[Match1v1] Lobby sync exception: {ex.Message}");
+                    Debug.LogWarning($"[Match1v1] Lobby update failed: {task.Exception.Message}");
                     _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
                 }
 
