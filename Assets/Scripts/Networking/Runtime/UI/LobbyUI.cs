@@ -481,7 +481,7 @@ namespace Game.Net
 
             var textGo = new GameObject("Label", typeof(RectTransform));
             textGo.transform.SetParent(go.transform, false);
-            var label = textGo.AddComponent<TMP_Text>();
+            var label = textGo.AddComponent<TextMeshProUGUI>();
             label.fontSize = 18f;
             label.alignment = TextAlignmentOptions.TopLeft;
 #if UNITY_6000_0_OR_NEWER
@@ -498,7 +498,7 @@ namespace Game.Net
             btn.targetGraphic = btnImage;
             var btnLabelGo = new GameObject("Text", typeof(RectTransform));
             btnLabelGo.transform.SetParent(btnGo.transform, false);
-            var btnLabel = btnLabelGo.AddComponent<TMP_Text>();
+            var btnLabel = btnLabelGo.AddComponent<TextMeshProUGUI>();
             btnLabel.text = "Join as Spectator";
             btnLabel.alignment = TextAlignmentOptions.Center;
             btnLabel.fontSize = 16f;

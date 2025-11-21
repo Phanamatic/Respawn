@@ -43,6 +43,7 @@ namespace Game.Net
 
         private IsometricCamera _isoCam;
         private LineOfSightTransparency _los;
+        private FovMesh _activeFov;
 
         void Awake()
         {
@@ -220,6 +221,8 @@ namespace Game.Net
             EnsureCamera();
             _currentTarget = target;
 
+            UpdateTargetFov(target);
+
             var follow = target;
             if (!follow)
             {
@@ -267,6 +270,43 @@ namespace Game.Net
             }
             if (!cam) return;
             _isoCam = cam.GetComponent<IsometricCamera>() ?? cam.gameObject.AddComponent<IsometricCamera>();
+        }
+
+        void UpdateTargetFov(Transform target)
+        {
+            var pn = target ? target.GetComponentInParent<PlayerNetwork>() : null;
+
+            if (_activeFov && pn && _activeFov.transform == pn.transform)
+                return;
+
+            if (_activeFov)
+            {
+                _activeFov.enabled = false;
+                _activeFov.showVisual = false;
+                _activeFov = null;
+            }
+
+            if (!pn || !pn.IsSpawned || pn.GetHealth() <= 0.01f) return;
+
+            var fov = pn.GetComponent<FovMesh>();
+            if (!fov) fov = pn.gameObject.AddComponent<FovMesh>();
+
+            fov.radiusMeters = 12f;
+            fov.rayCount = 220;
+            fov.occluderMask = LayerMask.GetMask("Occluder", "OccluderExtra");
+            fov.showFill = true;
+            fov.fillColor = new Color(0.95f, 0.97f, 1.0f, 0.45f);
+            fov.fillIntensity = 1.15f;
+            fov.edgeFeather = 0.15f;
+            fov.showVisual = true;
+            fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
+            fov.follow = pn.transform;
+            fov.enabled = true;
+
+            var constraint = pn.GetComponent<FovVisualConstraintBinder>() ?? pn.gameObject.AddComponent<FovVisualConstraintBinder>();
+            constraint.Source = pn.transform;
+
+            _activeFov = fov;
         }
     }
 }
