@@ -37,9 +37,19 @@ namespace Game.Net.Weapons
         // ====== API ======
         public void Equip()
         {
-            if (!IsServer) { RequestEquipServerRpc(); }
-            else ServerEquip();
+            // Owner path: mark equipped immediately so local rebuild isn't gated on server RTT.
+            if (!IsServer)
+            {
+                _hasEquippedMelee = true;
+                RequestEquipServerRpc();
+            }
+            else
+            {
+                ServerEquip();
+            }
         }
+
+// Brief dev comment: client pre-sets _hasEquippedMelee so PlayerNetwork.OnActiveSlotChanged → RebuildLocalViewImmediate() doesn't bail out with hasEquipped=false.
 
         /// <summary>Show or hide the local weapon view. Called when active slot changes.</summary>
         public void SetVisible(bool visible)
@@ -67,7 +77,8 @@ namespace Game.Net.Weapons
             _hasEquippedMelee = true;
 
             Debug.Log("[Melee][ServerEquip] -> rebuild local views");
-            RebuildLocalViewClientRpc();
+            // Fan-out the authoritative equip flag before clients rebuild their local view.
+            RebuildLocalViewClientRpc(_hasEquippedMelee);
         }
 
         [ServerRpc] void RequestSwingServerRpc(ServerRpcParams p = default)
@@ -122,10 +133,14 @@ namespace Game.Net.Weapons
         }
 
         // ====== Client visuals ======
-        [ClientRpc] void RebuildLocalViewClientRpc()
+        [ClientRpc] void RebuildLocalViewClientRpc(bool hasEquipped)
         {
+            // Mirror server equip state locally, then rebuild against it.
+            _hasEquippedMelee = hasEquipped;
             RebuildLocalViewImmediate();
         }
+
+// Brief dev comment: RPC now carries the equip flag so non-host clients never hit the _hasEquippedMelee=false early-out during a rebuild.
 
         public void RebuildLocalViewImmediate()
         {
@@ -176,10 +191,11 @@ namespace Game.Net.Weapons
 
             var t = go.transform;
 
-            // Bind Grip → Hand Mount
+            // Bind Grip → Hand Mount and install live anchor so it stays glued while we animate.
             t.SetParent(sockets.handMount, false);
             if (_view)
             {
+                _view.SetHandMount(sockets.handMount);
                 Debug.Log($"[Melee] Snapping view '{go.name}' grip={(bool)_view.grip} to mount={sockets.handMount.name}");
                 _view.SnapGripTo(sockets.handMount);
             }
@@ -205,15 +221,16 @@ namespace Game.Net.Weapons
 
         [ClientRpc] void PlaySwingClientRpc()
         {
-            // Play swing animation or sound
-            if (_view)
+            if (!_view) return;
+
+            // Procedural swing on all clients; damage stays server-authoritative via RequestSwingServerRpc.
+            _view.PlaySwingAnimation();
+
+            // Optional Animator trigger for any extra VFX/sound you may wire up.
+            var animator = _view.GetComponent<Animator>();
+            if (animator)
             {
-                // Trigger animation if available
-                var animator = _view.GetComponent<Animator>();
-                if (animator)
-                {
-                    animator.SetTrigger("Swing");
-                }
+                animator.SetTrigger("Swing");
             }
         }
     }

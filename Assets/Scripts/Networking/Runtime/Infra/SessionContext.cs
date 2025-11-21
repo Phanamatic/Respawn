@@ -61,7 +61,15 @@ namespace Game.Net
             MaxPlayers = 0;
             Threshold = 0;
             CurrentLobby = null;
+
+            // Also drop any cached connection endpoints so the next join starts fresh.
+            PublicHost = "";
+            PublicPort = 0;
+            LanEndpoint = "";
         }
+
+
+// Loadout cache is left intact so cosmetics persist across sessions; lobby + endpoints are wiped.
 
         // Cached loadout for the signed-in player (client-side convenience)
         private static bool _hasLoadout;

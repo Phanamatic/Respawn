@@ -35,7 +35,11 @@ namespace Game.Net.Weapons
 
         Game.Net.PlayerNetwork _player;
         bool _hasEquippedUtility;
+        // Cached utility type used for local view rebuilds; driven by owner requests + server RPC.
+        Game.Net.UtilityType _lastEquippedUtilityType = Game.Net.UtilityType.None;
         WeaponView _view;
+
+// Brief dev comment: _lastEquippedUtilityType lets the owner build the correct view immediately without waiting on _netUtilityType replication.
 
         void Awake()
         {
@@ -46,9 +50,20 @@ namespace Game.Net.Weapons
         // ====== API ======
         public void Equip(Game.Net.UtilityType utilityType)
         {
-            if (!IsServer) { RequestEquipServerRpc((byte)utilityType); }
-            else ServerEquip(utilityType);
+            if (!IsServer)
+            {
+                // Owner path: set local equip state + type up-front so immediate rebuild can succeed.
+                _hasEquippedUtility = (utilityType != Game.Net.UtilityType.None);
+                _lastEquippedUtilityType = utilityType;
+                RequestEquipServerRpc((byte)utilityType);
+            }
+            else
+            {
+                ServerEquip(utilityType);
+            }
         }
+
+// Brief dev comment: owner caches equip flag + type before the server reply so OnActiveSlotChanged → RebuildLocalViewImmediate() has the right data.
 
         public void RequestThrow()
         {
@@ -71,6 +86,8 @@ namespace Game.Net.Weapons
                 ammoCount.Value = 0;
                 equippedWeaponName.Value = "";
                 _hasEquippedUtility = false;
+                // Push cleared state so owners can tear down any stale local views.
+                RebuildLocalViewClientRpc(_hasEquippedUtility, (byte)Game.Net.UtilityType.None);
                 return;
             }
 
@@ -79,12 +96,16 @@ namespace Game.Net.Weapons
             _hasEquippedUtility = true;
 
             Debug.Log($"[Utility][ServerEquip] set ammo={ammoCount.Value} name={equippedWeaponName.Value} -> rebuild local views");
-            RebuildLocalViewClientRpc();
+            // Fan-out equip flag + type so clients rebuild with the correct prefab even if _netUtilityType hasn't replicated yet.
+            RebuildLocalViewClientRpc(_hasEquippedUtility, (byte)t);
         }
 
         // ====== Client visuals ======
-        [ClientRpc] void RebuildLocalViewClientRpc()
+        [ClientRpc] void RebuildLocalViewClientRpc(bool hasEquipped, byte utilityType)
         {
+            // Mirror server equip state and last equipped type locally, then rebuild.
+            _hasEquippedUtility = hasEquipped;
+            _lastEquippedUtilityType = (Game.Net.UtilityType)utilityType;
             RebuildLocalViewImmediate();
         }
 
@@ -111,7 +132,11 @@ namespace Game.Net.Weapons
                 return;
             }
 
-            var utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
+            // Prefer the cached last-equipped type for local visuals; fall back to the networked value.
+            var utilityType = _lastEquippedUtilityType;
+            if (utilityType == Game.Net.UtilityType.None)
+                utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
+
             if (utilityType == Game.Net.UtilityType.None)
             {
                 Debug.LogWarning("[Utility] Abort: utilityType=None");
@@ -179,6 +204,7 @@ namespace Game.Net.Weapons
                 Debug.Log($"[Utility] PlayEquipAnimation from='{sockets.equipStart.name}' to='{sockets.front.name}'");
                 StartCoroutine(_view.PlayEquipAnimation(sockets.equipStart, sockets.front, 0.25f));
             }
+            // Equip state cached locally for immediate rebuilds; networked value used as fallback.
         }
 
         [ServerRpc] void RequestThrowServerRpc(ServerRpcParams p = default)

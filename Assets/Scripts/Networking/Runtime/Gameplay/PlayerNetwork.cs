@@ -507,18 +507,30 @@ namespace Game.Net
         // ==== HUD binding API (for PlayerHUDBinder) ====
         public void AssignHud(Image sprintFillUI, TMP_Text sprintLabelUI, Image dashFillUI, TMP_Text dashLabelUI, Image healthFillUI = null, TMP_Text healthLabelUI = null)
         {
+            // Only bind HUD for the local owner; remote ghosts should never drive this UI.
+            if (!IsOwner)
+                return;
+
             if (sprintFillUI) sprintFill = sprintFillUI;
             if (sprintLabelUI) sprintLabel = sprintLabelUI;
             if (dashFillUI) dashFill = dashFillUI;
             if (dashLabelUI) dashLabel = dashLabelUI;
             if (healthFillUI) healthFill = healthFillUI;
             if (healthLabelUI) healthLabel = healthLabelUI;
+
+            // Immediately sync the bar/label to the replicated health on bind.
             UpdateHealthUI(_health.Value);
         }
 
+
+// Brief dev comment: guard HUD binding to the local owner and force an initial sync from the NetworkVariable.
+
         public void AssignHud(Component root)
         {
-            if (!root) return;
+            // Defensive: only the local owner should ever have a HUD wired to this PlayerNetwork.
+            if (!IsOwner || !root)
+                return;
+
             sprintFill ??= root.GetComponentInChildren<Image>(true);
             sprintLabel ??= root.GetComponentInChildren<TMP_Text>(true);
 
@@ -538,8 +550,11 @@ namespace Game.Net
                 if (healthLabel == null && name.IndexOf("health", StringComparison.OrdinalIgnoreCase) >= 0) { healthLabel = txt; }
             }
 
+            // When a new HUD root is discovered, snap the visuals to the replicated health.
             UpdateHealthUI(_health.Value);
         }
+
+// Brief dev comment: mirror the image-based AssignHud guard and keep initial sync driven from the NetworkVariable.
 
         public void ClearHud()
         {
@@ -548,36 +563,60 @@ namespace Game.Net
 
         void OnHealthChanged(float previous, float current)
         {
+            // Health NetworkVariable changed (server → clients); drive the HUD from this hook.
+            // We still pass the event value in, but UpdateHealthUI pulls from _health to stay authoritative.
             UpdateHealthUI(current);
         }
 
+// Brief dev comment: make explicit that the NetworkVariable change is the single source of health UI updates.
+
         void UpdateHealthUI(float current)
         {
+            // Only the local owner ever drives this HUD; remotes/server have no bar to update.
+            if (!IsOwner)
+                return;
+
+            // Always trust the replicated NetworkVariable value so the bar/label stay in lockstep with the server.
+            current = Mathf.Clamp(_health.Value, 0f, 100f);
+
             if (healthFill)
-                healthFill.fillAmount = Mathf.Clamp01(current <= 0f ? 0f : current / 100f);
+            {
+                // 0–100 → 0–1 fill, with a hard snap to empty when dead.
+                healthFill.fillAmount = current <= 0f ? 0f : current / 100f;
+            }
 
             if (healthLabel)
             {
-                int value = Mathf.Clamp(Mathf.RoundToInt(current), 0, 999);
+                // Show a clamped integer HP value in 3-digit format (000–999).
+                int value = Mathf.RoundToInt(current);
+                value = Mathf.Clamp(value, 0, 999);
                 healthLabel.text = value.ToString("D3");
             }
         }
 
+// Brief dev comment: gate updates to the owning client and always render from the replicated _health value for consistent bar/label updates.
+
         public override void OnNetworkDespawn()
         {
             base.OnNetworkDespawn();
+
             _netLoadout.OnValueChanged -= OnNetLoadoutChanged;
-            _netYaw.OnValueChanged -= OnYawChanged;
+            _health.OnValueChanged      -= OnHealthChanged;
+            _combatStats.OnValueChanged -= OnCombatStatsChanged;
+            _netYaw.OnValueChanged      -= OnYawChanged;
+
             if (useLegacyStateReplication)
             {
-                _netPosition.OnValueChanged -= OnPositionChanged;
-                _netVelocity.OnValueChanged -= OnVelocityChanged;
+                _netPosition.OnValueChanged  -= OnPositionChanged;
+                _netVelocity.OnValueChanged  -= OnVelocityChanged;
                 _netIsDashing.OnValueChanged -= OnDashingChanged;
             }
 
             CleanupInputActions();
             enabled = false;
         }
+
+// Brief dev comment: unsubscribe health/combat listeners on despawn so we don’t accumulate extra UI callbacks across respawns.
 
         public override void OnDestroy()
         {
@@ -2389,11 +2428,14 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
 
             _health.Value = target;
 
-            bool tookDamage = delta < 0f;
-            int damageInt = tookDamage ? Mathf.RoundToInt(-delta) : 0;
+            // Damage actually applied this tick (positive when health decreased).
+            float damageApplied = Mathf.Max(0f, previous - target);
+            bool tookDamage = damageApplied > 0f;
+            int damageInt = tookDamage ? Mathf.RoundToInt(damageApplied) : 0;
             bool died = previous > 0f && target <= 0f;
 
-            Debug.Log($"[Weapons] Health delta cid={OwnerClientId} delta={delta} prev={previous:0} now={target:0} attackerCid={(attacker?attacker.OwnerClientId:ulong.MaxValue)} died={died}");
+            Debug.Log(
+                $"[Weapons] Health delta cid={OwnerClientId} delta={delta} applied={damageApplied:0} prev={previous:0} now={target:0} attackerCid={(attacker?attacker.OwnerClientId:ulong.MaxValue)} died={died}");
 
             if (died)
             {
@@ -2402,6 +2444,7 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
                 _combatStats.Value = victimStats;
             }
 
+            // Only award credit for real damage (no self-damage, no pure heals).
             if (attacker && attacker != this && tookDamage)
             {
                 attacker.RegisterDamageCredit(damageInt, died);
@@ -2409,7 +2452,8 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
 
             if (died)
             {
-                NotifyKilledServer(attacker, Mathf.Max(0f, -delta));
+                // Send the true applied damage into the kill recap instead of the requested delta.
+                NotifyKilledServer(attacker, damageApplied);
             }
         }
 
@@ -2550,6 +2594,11 @@ void SetFovAndLosEnabled(bool enabled)
         fov.visualColor = new Color(0.92f, 0.97f, 1.0f, 0.62f);
         fov.follow = modelRoot ? modelRoot : transform;
         fov.enabled = true; // Explicitly enable
+
+        // Ensure the FOV visual rides at the player's feet and does not inherit yaw.
+        var fovConstraint = GetComponent<FovVisualConstraintBinder>();
+        if (!fovConstraint) fovConstraint = gameObject.AddComponent<FovVisualConstraintBinder>();
+        fovConstraint.Source = modelRoot ? modelRoot : transform;
 
         if (!losLight) losLight = gameObject.AddComponent<PlayerLosLight>();
         losLight.fovSource = fov;

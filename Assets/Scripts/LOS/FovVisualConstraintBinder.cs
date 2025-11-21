@@ -63,6 +63,7 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
     private void Reset()
     {
         Source = transform;
+        SyncOffsetFromFovMesh();
         RefreshSourceCollider();
         TryBind();
     }
@@ -70,8 +71,20 @@ public sealed class FovVisualConstraintBinder : MonoBehaviour
     private void OnEnable()
     {
         if (Source == null) Source = transform;
+        SyncOffsetFromFovMesh();
         RefreshSourceCollider();
         TryBind();
+    }
+
+    void SyncOffsetFromFovMesh()
+    {
+        // If a FovMesh is present, mirror its configured visual height offset so
+        // designers only have to tune the value in one place.
+        var fov = GetComponent<FovMesh>();
+        if (fov)
+        {
+            visualHeightOffset = fov.visualHeightOffset;
+        }
     }
 
     private bool _deferBind;
