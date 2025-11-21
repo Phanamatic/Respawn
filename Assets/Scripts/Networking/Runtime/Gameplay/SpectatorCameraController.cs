@@ -135,8 +135,17 @@ namespace Game.Net
                     _candidates.Add(pn);
             }
 
-            if (force && _candidates.Count > 0)
+            bool hasLivePlayers = _candidates.Count > 0;
+
+            if (force && hasLivePlayers)
+            {
                 SetFollowTarget(_candidates[0].transform);
+            }
+            else if (hasLivePlayers && (_currentTarget == null || _currentTarget == _cinematicFollower))
+            {
+                // Auto-bind to the first live player when we were previously orbiting a cinematic target.
+                SetFollowTarget(_candidates[0].transform);
+            }
         }
 
         void AutoChooseTarget()

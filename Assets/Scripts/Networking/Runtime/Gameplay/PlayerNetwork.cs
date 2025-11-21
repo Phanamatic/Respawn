@@ -1141,60 +1141,67 @@ public void ForceActiveSlotServer(byte slot)
                     Destroy(sockets.handMount.GetChild(i).gameObject);
             }
 
-            // Now show and equip the active slot
-            // [DirectNet] Central purge prevents multiple views when swapping fast / race conditions.
+            // Owner requests equip. Remotes rebuild visuals only (no RPCs).
             if (slot == 0) // Primary
             {
                 var type = (PrimaryType)_netLoadout.Value.primary;
                 if (type == PrimaryType.None) { Debug.LogWarning("[Weapons] Equip primary skipped: None"); return; }
-                if (primary) 
-                { 
-                    Debug.Log($"[Weapons] Equip primary request -> {type}"); 
-                    primary.Equip(type, null);
+                if (primary)
+                {
+                    if (IsOwner)
+                    {
+                        Debug.Log($"[Weapons] Equip primary request -> {type}");
+                        primary.Equip(type, null);
+                    }
                     primary.SetVisible(true);
-                    // Owner gets instant local view; server RPC still follows for authority.
                     primary.RebuildLocalViewImmediate();
-                } 
+                }
                 else { Debug.LogWarning("[Weapons] No WeaponPrimaryController"); }
             }
             else if (slot == 1) // Secondary
             {
                 var type = (SecondaryType)_netLoadout.Value.secondary;
                 if (type == SecondaryType.None) { Debug.LogWarning("[Weapons] Equip secondary skipped: None"); return; }
-                if (secondary) 
-                { 
-                    Debug.Log($"[Weapons] Equip secondary request -> {type}"); 
-                    secondary.Equip(type, null);
+                if (secondary)
+                {
+                    if (IsOwner)
+                    {
+                        Debug.Log($"[Weapons] Equip secondary request -> {type}");
+                        secondary.Equip(type, null);
+                    }
                     secondary.SetVisible(true);
-                    // Show it now for the owner; server will still validate/state-sync.
                     secondary.RebuildLocalViewImmediate();
-                } 
+                }
                 else { Debug.LogWarning("[Weapons] No WeaponSecondaryController"); }
             }
             // Rebuild immediately on the owner so the hand mount never looks empty.
             else if (slot == 2) // Melee
             {
-                if (melee) 
-                { 
-                    Debug.Log("[Weapons] Equip melee (Knife)"); 
-                    melee.Equip();
+                if (melee)
+                {
+                    if (IsOwner)
+                    {
+                        Debug.Log("[Weapons] Equip melee (Knife)");
+                        melee.Equip();
+                    }
                     melee.SetVisible(true);
-                    // Prevents a visible gap when swapping quickly to melee.
                     melee.RebuildLocalViewImmediate();
-                } 
+                }
                 else { Debug.LogWarning("[Weapons] No WeaponMeleeController"); }
             }
             else if (slot == 3) // Utility
             {
                 if (_netLoadout.Value.util == (byte)UtilityType.None) { Debug.LogWarning("[Weapons] Equip utility skipped: None"); return; }
                 var wu = GetComponent<WeaponUtilityController>();
-                if (wu) 
-                { 
-                    Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}"); 
-                    wu.Equip((UtilityType)_netLoadout.Value.util);
-                    // Utility shows up on the owner immediately as well.
+                if (wu)
+                {
+                    if (IsOwner)
+                    {
+                        Debug.Log($"[Weapons] Equip utility request -> {(UtilityType)_netLoadout.Value.util}");
+                        wu.Equip((UtilityType)_netLoadout.Value.util);
+                    }
                     wu.RebuildLocalViewImmediate();
-                } 
+                }
                 else { Debug.LogWarning("[Weapons] No WeaponUtilityController"); }
             }
             // After we've executed the branch, dump again to see effect.
