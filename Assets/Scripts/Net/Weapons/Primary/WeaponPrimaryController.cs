@@ -352,18 +352,15 @@ namespace Game.Net.Weapons
             RebuildLocalViewImmediate();
         }
 
-        /// <summary>Rebuild the local hand-mount view immediately (owner-only safe).</summary>
+        /// <summary>Rebuild the local hand-mount view immediately on any client (owner or remote).</summary>
         public void RebuildLocalViewImmediate()
         {
-            if (!IsOwner) return;
-            // Guard: only rebuild if this slot is currently active
+            // Only rebuild if this slot is currently active for this player.
             if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Primary)
             {
                 Debug.Log("[Weapons] Skip Primary rebuild: slot not active.");
                 return;
             }
-
-            // Always allow immediate rebuilds; snapshot drivers can replace later if needed.
 
             // Ensure no stale meshes remain on the hand mount (e.g., scene-placed Pistol_View).
             if (sockets && sockets.handMount)
@@ -377,6 +374,7 @@ namespace Game.Net.Weapons
             _hasSnappedGrip = false; // Reset so LateUpdate will snap the new view
 
             var primaryType = (Game.Net.PrimaryType)_netPrimaryType.Value;
+            // (rest of method unchanged)
             Debug.Log($"[Weapons] RebuildLocalView (client) primary={primaryType}");
             if (primaryType == Game.Net.PrimaryType.None)
             {

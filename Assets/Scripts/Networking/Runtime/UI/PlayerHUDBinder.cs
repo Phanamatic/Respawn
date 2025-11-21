@@ -17,20 +17,39 @@ namespace Game.Net
 
         private void OnEnable() => StartCoroutine(BindWhenReady());
 
+        private PlayerNetwork FindLocalOwner()
+        {
+            var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < players.Length; i++)
+            {
+                if (players[i] && players[i].IsOwner && players[i].IsSpawned)
+                    return players[i];
+            }
+            return null;
+        }
+
         private IEnumerator BindWhenReady()
         {
-            PlayerNetwork p = null;
-            while (p == null)
+            PlayerNetwork bound = null;
+            while (true)
             {
-                var players = FindObjectsByType<PlayerNetwork>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-                for (int i = 0; i < players.Length; i++)
+                var owner = FindLocalOwner();
+                if (owner != bound)
                 {
-                    if (players[i] && players[i].IsOwner) { p = players[i]; break; }
+                    if (bound)
+                        bound.ClearHud();
+
+                    bound = owner;
+                    if (bound)
+                    {
+                        bound.AssignHud(sprintFill, sprintLabel, dashFill, dashLabel, healthFill, healthLabel);
+                        MatchScoreboardPanel.AttachToHud(transform, bound);
+                    }
                 }
-                if (p == null) yield return null;
+
+                // Light polling to follow despawn/respawn between rounds without allocations.
+                yield return new WaitForSecondsRealtime(0.25f);
             }
-            p.AssignHud(sprintFill, sprintLabel, dashFill, dashLabel, healthFill, healthLabel);
-            MatchScoreboardPanel.AttachToHud(transform, p);
         }
     }
 }

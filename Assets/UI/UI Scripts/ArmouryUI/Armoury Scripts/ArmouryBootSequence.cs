@@ -428,7 +428,15 @@ namespace UI.Scripts
         private IEnumerator MuteAllOtherAudio()
         {
             // Find all audio sources in the scene
-            AudioSource[] allAudioSources = FindObjectsOfType<AudioSource>();
+#if UNITY_6000_0_OR_NEWER
+            var allAudioSources = UnityEngine.Object.FindObjectsByType<AudioSource>(
+                UnityEngine.FindObjectsInactive.Exclude,
+                UnityEngine.FindObjectsSortMode.None);
+#elif UNITY_2022_3_OR_NEWER
+            var allAudioSources = UnityEngine.Object.FindObjectsOfType<AudioSource>(false);
+#else
+            var allAudioSources = UnityEngine.Object.FindObjectsOfType<AudioSource>();
+#endif
 
             // Store which ones were unmuted so we can restore them
             System.Collections.Generic.List<AudioSource> previouslyUnmuted = new System.Collections.Generic.List<AudioSource>();

@@ -305,7 +305,7 @@ namespace Game.Net.Weapons
 
         public void RebuildLocalViewImmediate()
         {
-            if (!IsOwner) return;
+            // Run on both owner and remote clients; guard only by active slot.
             if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Secondary)
             {
                 Debug.Log("[Weapons] Skip Secondary rebuild: slot not active.");
@@ -323,6 +323,7 @@ namespace Game.Net.Weapons
             _hasSnappedGrip = false; // Reset so LateUpdate will snap the new view
 
             var secondaryType = (Game.Net.SecondaryType)_netSecondaryType.Value;
+            // (rest of method unchanged)
             if (secondaryType == Game.Net.SecondaryType.None)
             {
                 return;

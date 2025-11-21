@@ -21,7 +21,14 @@ namespace Game.Bootstrap
                 await UgsInitializer.EnsureAsync("production", "Default");
 
             var active = SceneManager.GetActiveScene().name;
-            if (active != Target) SceneManager.LoadScene(Target, LoadSceneMode.Single);
+
+            // If we're on the dedicated Splash scene, let it drive the transition to Account
+            // (SplashScreen script will load the next scene after its animation finishes).
+            if (active == "Splash" || active == "SplashScreen")
+                return;
+
+            if (active != Target)
+                SceneManager.LoadScene(Target, LoadSceneMode.Single);
         }
     }
 }

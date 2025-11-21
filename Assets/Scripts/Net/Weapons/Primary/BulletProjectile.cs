@@ -77,13 +77,20 @@ namespace Game.Net.Weapons
 
             _spawnY = transform.position.y; // remember the plane we spawned on
 
-            // Ensure trigger collider & kinematic rigidbody for reliable trigger hits.
+            // Ensure trigger collider & kinematic rigidbody for reliable hits.
             var col = GetComponent<Collider>();
-            if (col) col.isTrigger = true;
+            if (col)
+            {
+                col.enabled = true;
+                col.isTrigger = true;
+            }
+
             var rb = GetComponent<Rigidbody>();
             if (!rb) rb = gameObject.AddComponent<Rigidbody>();
             rb.isKinematic = true;
             rb.useGravity = false;
+            // Speculative continuous helps avoid tunnelling even if something moves into us.
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
 
             // Push current transform into NVs for late-joining clients
             if (IsServer)
@@ -99,14 +106,50 @@ namespace Game.Net.Weapons
         {
             if (IsServer)
             {
-                var fwd = transform.forward; // horizontal only
+                // Horizontal forward vector (XZ-only)
+                Vector3 start = transform.position;
+                var fwd = transform.forward;
                 fwd.y = 0f;
                 if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
                 fwd.Normalize();
 
-                var p = transform.position + fwd * speed * Time.deltaTime;
-                p.y = _spawnY; // hard-lock to spawn plane
-                transform.position = p;
+                // Proposed end position this frame
+                Vector3 end = start + fwd * speed * Time.deltaTime;
+                end.y = _spawnY; // hard-lock to spawn plane
+
+                Vector3 stepDir = end - start;
+                float stepDistance = stepDir.magnitude;
+
+                if (!_hasImpacted && stepDistance > 0.0001f)
+                {
+                    stepDir /= stepDistance;
+
+                    // Sweep along the path this frame so we can't tunnel through thin colliders.
+                    if (Physics.Raycast(
+                            start,
+                            stepDir,
+                            out var hit,
+                            stepDistance,
+                            s_validCollisionLayers,
+                            QueryTriggerInteraction.Collide))
+                    {
+                        // Move to impact point first for cleaner visuals.
+                        transform.position = hit.point;
+
+                        // Resolve hit; if consumed (non-owner / non-ignored), we despawn here.
+                        if (ProcessHit(hit.collider))
+                        {
+                            _netPos.Value = transform.position;
+                            _netRot.Value = transform.rotation;
+                            return;
+                        }
+
+                        // If the hit was ignored (e.g. owner collider), fall through to full step.
+                    }
+                }
+
+                // No blocking hit this frame; advance to full end position.
+                transform.position = end;
 
                 // Replicate to clients
                 _netPos.Value = transform.position;
@@ -126,24 +169,33 @@ namespace Game.Net.Weapons
             }
         }
 
-        void OnTriggerEnter(Collider other)
+        /// <summary>
+        /// Shared collision handler for trigger + swept ray hits.
+        /// Returns true if the projectile was consumed (despawned) by the hit.
+        /// </summary>
+        bool ProcessHit(Collider other)
         {
-            if (!IsServer || _hasImpacted) return;
-            if (!other) return;
-            if (other.attachedRigidbody && other.attachedRigidbody.gameObject == this.gameObject) return;
+            if (!IsServer || _hasImpacted) return false;
+            if (!other) return false;
 
-            // CRITICAL: Only collide with Player, Occluder, and OccluderExtra layers
+            // Ignore our own rigidbody/collider if ever hit by ray/trigger.
+            if (other.attachedRigidbody && other.attachedRigidbody.gameObject == this.gameObject)
+                return false;
+
+            // Only react to configured layers (Player/Occluder/OccluderExtra).
             int otherLayer = other.gameObject.layer;
             if ((s_validCollisionLayers.value & (1 << otherLayer)) == 0)
             {
-                // Ignore collision with this layer (e.g., Ground, UI, etc.)
-                return;
+                // Ignore collision with this layer (e.g. Ground, UI, VFX, etc.)
+                return false;
             }
 
             var target = other.GetComponentInParent<Game.Net.PlayerNetwork>();
             if (target)
             {
-                if ((_owner && target == _owner) || target.OwnerClientId == _ownerClientId) return; // ignore shooter collider edge cases
+                // Hard ignore the shooter, including odd cases with extra colliders.
+                if ((_owner && target == _owner) || target.OwnerClientId == _ownerClientId)
+                    return false;
 
                 _hasImpacted = true;
 
@@ -155,12 +207,20 @@ namespace Game.Net.Weapons
                 }
 
                 Despawn();
-                return;
+                return true;
             }
 
+            // Non-player collider on a valid layer (e.g. Occluder / OccluderExtra).
             _hasImpacted = true;
             Debug.Log($"[Weapons] Projectile hit non-player collider={other.name} layer={LayerMask.LayerToName(otherLayer)}");
             Despawn();
+            return true;
+        }
+
+        void OnTriggerEnter(Collider other)
+        {
+            // Trigger path is now just a backup; primary hit resolution is the swept ray in Update().
+            ProcessHit(other);
         }
 
         void Despawn()
