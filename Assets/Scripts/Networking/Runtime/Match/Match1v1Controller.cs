@@ -1319,6 +1319,7 @@ foreach (var pn in players)
             foreach (var cid in ids)
             {
                 if (cid == NetworkManager.ServerClientId) continue;
+                if (ConnectionMetadata.IsSpectator(cid)) continue;
                 _loadingReady[cid] = LoadingReady.None; // Phase bit is set as each player is spawned
             }
 

@@ -404,8 +404,45 @@ namespace Game.Net
 
             if (task.Exception == null && task.Result != null && task.Result.Results != null)
             {
-                output.AddRange(task.Result.Results);
+                foreach (var lobby in task.Result.Results)
+                {
+                    if (!IsActiveSpectateCandidate(lobby))
+                        continue;
+
+                    output.Add(lobby);
+                }
             }
+        }
+
+        bool IsActiveSpectateCandidate(Lobby lobby)
+        {
+            if (lobby == null) return false;
+            if (lobby.Players == null || lobby.Players.Count == 0) return false;
+
+            string state = lobby.Data != null && lobby.Data.TryGetValue("MatchState", out var s) ? s?.Value : null;
+            if (!string.IsNullOrEmpty(state))
+            {
+                string st = state.Trim();
+                if (string.Equals(st, "Waiting", StringComparison.OrdinalIgnoreCase)) return false;
+                if (string.Equals(st, "MatchEnd", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+
+            int alive = 0, total = 0;
+            if (lobby.Data != null && lobby.Data.TryGetValue("Alive", out var aliveObj))
+            {
+                var val = aliveObj?.Value;
+                var parts = string.IsNullOrEmpty(val) ? null : val.Split('/');
+                if (parts != null && parts.Length == 2)
+                {
+                    int.TryParse(parts[0], out alive);
+                    int.TryParse(parts[1], out total);
+                }
+            }
+
+            if (total > 0 && alive <= 0)
+                return false;
+
+            return true;
         }
 
         void BuildSpectateEntries(List<Lobby> matches)

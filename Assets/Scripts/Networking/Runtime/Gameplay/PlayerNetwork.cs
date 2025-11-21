@@ -1092,14 +1092,9 @@ public void ForceActiveSlotServer(byte slot)
             if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (client gate)
             if (_netLoadout.Value.util == (byte)UtilityType.None) return;
 
-            // Lightweight client-side rate limit before we ask the weapon to throw.
-            if (Time.time - _lastThrowServerTime < k_MinThrowInterval)
-                return;
-
             var wu = GetComponent<Game.Net.Weapons.WeaponUtilityController>();
             if (!wu) return;
 
-            _lastThrowServerTime = Time.time;
             wu.RequestThrow();
         }
 
@@ -1107,7 +1102,7 @@ public void ForceActiveSlotServer(byte slot)
         {
             _myLoadout = current.ToModel();
 
-            if (IsOwner && _phase == PlayerPhase.Match)
+            if (_phase == PlayerPhase.Match)
             {
                 OnActiveSlotChanged();
             }
@@ -1115,11 +1110,10 @@ public void ForceActiveSlotServer(byte slot)
 
         void OnActiveSlotChanged()
         {
-            // Owner requests equip. Remotes wait for server fan-out.
-            if (!IsOwner) return;
+            if (_phase != PlayerPhase.Match) return;
 
             byte slot = _activeSlot.Value;
-            Debug.Log($"[Weapons] Owner OnActiveSlotChanged slot={slot}");
+            Debug.Log($"[Weapons] OnActiveSlotChanged slot={slot} owner={IsOwner}");
             // Dump environment at the start of the slot transition.
             DbgDumpWeaponsEnv("OnActiveSlotChanged(start)");
 
