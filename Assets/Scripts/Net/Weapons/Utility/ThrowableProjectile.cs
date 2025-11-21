@@ -18,6 +18,7 @@ namespace Game.Net.Weapons
         protected ulong _ownerClientId = ulong.MaxValue;
         protected Game.Net.TeamId _ownerTeam = Game.Net.TeamId.A;
         protected Game.Net.PlayerNetwork _owner;
+        protected bool _exploded;
 
         public override void OnNetworkSpawn()
         {
@@ -25,6 +26,7 @@ namespace Game.Net.Weapons
             if (IsServer)
             {
                 _fuseRemain = fuseTime;
+                _exploded = false;
             }
         }
 
@@ -35,9 +37,20 @@ namespace Game.Net.Weapons
             _fuseRemain -= Time.deltaTime;
             if (_fuseRemain <= 0f)
             {
-                Explode();
-                Despawn();
+                TriggerExplosion();
             }
+        }
+
+        void OnCollisionEnter(Collision collision)
+        {
+            if (!IsServer) return;
+            TriggerExplosion();
+        }
+
+        void OnTriggerEnter(Collider other)
+        {
+            if (!IsServer) return;
+            TriggerExplosion();
         }
 
         protected virtual void Explode()
@@ -70,11 +83,20 @@ namespace Game.Net.Weapons
             if (IsSpawned) NetworkObject.Despawn();
         }
 
+        protected void TriggerExplosion()
+        {
+            if (_exploded) return;
+            _exploded = true;
+            Explode();
+            Despawn();
+        }
+
         public void ConfigureServer(ulong ownerClientId, Game.Net.TeamId ownerTeam, Game.Net.PlayerNetwork owner)
         {
             _ownerClientId = ownerClientId;
             _ownerTeam = ownerTeam;
             _owner = owner;
+            _exploded = false;
         }
 
         [ClientRpc]

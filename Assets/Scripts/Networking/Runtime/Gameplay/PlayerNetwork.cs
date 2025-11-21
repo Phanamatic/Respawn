@@ -568,6 +568,13 @@ namespace Game.Net
             UpdateHealthUI(current);
         }
 
+        [ClientRpc]
+        void RefreshHealthHudClientRpc(float replicatedHealth, ClientRpcParams rpcParams = default)
+        {
+            // Targeted HUD refresh to immediately snap the owner UI to the latest replicated health.
+            UpdateHealthUI(replicatedHealth);
+        }
+
 // Brief dev comment: make explicit that the NetworkVariable change is the single source of health UI updates.
 
         void UpdateHealthUI(float current)
@@ -1083,22 +1090,17 @@ public void ForceActiveSlotServer(byte slot)
         {
             if (_inputPaused) return;
             if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (client gate)
-            RequestThrowUtilityServerRpc();
-        }
-
-        [ServerRpc]
-        void RequestThrowUtilityServerRpc(ServerRpcParams p = default)
-        {
-            if (_phase != PlayerPhase.Match) return;    // Lobby: block utility throw (server gate)
             if (_netLoadout.Value.util == (byte)UtilityType.None) return;
 
-            if (Time.time - _lastThrowServerTime < k_MinThrowInterval) return;
-            _lastThrowServerTime = Time.time;
+            // Lightweight client-side rate limit before we ask the weapon to throw.
+            if (Time.time - _lastThrowServerTime < k_MinThrowInterval)
+                return;
 
-            // For now, just log. We will implement grenade entity later.
-#if UNITY_EDITOR
-    Debug.Log($"[Weapons] Throw utility: {(UtilityType)_netLoadout.Value.util}");
-#endif
+            var wu = GetComponent<Game.Net.Weapons.WeaponUtilityController>();
+            if (!wu) return;
+
+            _lastThrowServerTime = Time.time;
+            wu.RequestThrow();
         }
 
         void OnNetLoadoutChanged(Game.Net.NetLoadout previous, Game.Net.NetLoadout current)
@@ -2413,6 +2415,20 @@ public void SeedPhasePreSpawnServer(PlayerPhase phase)
         public void SetHealth(float health)
         {
             if (IsServer) _health.Value = Mathf.Clamp(health, 0f, 100f);
+        }
+
+        /// <summary>Server-only helper to force health to 100 and optionally ping the owner HUD immediately.</summary>
+        public void ServerResetHealthToFull(bool notifyOwnerHud)
+        {
+            if (!IsServer) return;
+
+            _health.Value = 100f;
+
+            if (notifyOwnerHud)
+            {
+                var rpc = TargetClientParams(OwnerClientId);
+                RefreshHealthHudClientRpc(_health.Value, rpc);
+            }
         }
 
         public CombatStats GetCombatStats() => _combatStats.Value;
