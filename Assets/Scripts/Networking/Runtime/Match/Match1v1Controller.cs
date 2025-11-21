@@ -456,7 +456,7 @@ namespace Game.Net
             if (pn)
             {
                 pn.SetTeam(team);
-                pn.SetHealth(100f);
+                pn.ServerResetHealthToFull(notifyOwnerHud: true);
 
                 // Replicate phase -> Match so clients enable Match systems.
                 pn.SetPhaseServerRpc(PlayerPhase.Match);
@@ -1268,7 +1268,7 @@ void ReequipAllPlayersServer()
         if (!pn) continue;
 
         // Force healthy & ready.
-        pn.SetHealth(100f);
+        pn.ServerResetHealthToFull(notifyOwnerHud: true);
         pn.ServerEnsureLoadoutValidAndEquip();
         count++;
     }
@@ -1287,21 +1287,22 @@ foreach (var pn in players)
 }
 
 // Brief dev comment: server sets the NV so the client equips Primary, fixes "pistol stuck" and restores weapon name/ammo HUD.
-void TopUpAndSanitizeAllPlayersServer()
-{
-    if (!IsServer) return;
-    int count = 0;
-    foreach (var cc in NetworkManager.ConnectedClientsList)
-    {
-        if (cc.ClientId == NetworkManager.ServerClientId) continue;
-        var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
-        if (!pn) continue;
-        // Guarantee: full health + non-None loadout before round starts.
-        pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
-        count++;
-    }
-    Debug.Log($"[Match1v1] TopUpAndSanitizeAllPlayersServer applied to {count} players");
-}
+        void TopUpAndSanitizeAllPlayersServer()
+        {
+            if (!IsServer) return;
+            int count = 0;
+            foreach (var cc in NetworkManager.ConnectedClientsList)
+            {
+                if (cc.ClientId == NetworkManager.ServerClientId) continue;
+                var pn = cc.PlayerObject ? cc.PlayerObject.GetComponent<PlayerNetwork>() : null;
+                if (!pn) continue;
+                // Guarantee: full health + non-None loadout before round starts.
+                pn.ServerResetHealthToFull(notifyOwnerHud: true);
+                pn.ServerEnsureValidLoadoutAndHealth(sanitizeOnly: false);
+                count++;
+            }
+            Debug.Log($"[Match1v1] TopUpAndSanitizeAllPlayersServer applied to {count} players");
+        }
 
 // Now guarantees both players start healthy and equipped each round.
 

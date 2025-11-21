@@ -38,6 +38,13 @@ namespace Game.Net.Weapons
         // Cached utility type used for local view rebuilds; driven by owner requests + server RPC.
         Game.Net.UtilityType _lastEquippedUtilityType = Game.Net.UtilityType.None;
         WeaponView _view;
+        LineRenderer _arcRenderer;
+        Transform _landingMarker;
+        float _lastServerThrowTime;
+
+        static readonly Color k_ArcColor = new(0.85f, 0.95f, 1f, 0.8f);
+        const int k_ArcSegments = 18;
+        const float k_PreviewDuration = 2.5f;
 
 // Brief dev comment: _lastEquippedUtilityType lets the owner build the correct view immediately without waiting on _netUtilityType replication.
 
@@ -211,8 +218,11 @@ namespace Game.Net.Weapons
         {
             if (!_hasEquippedUtility) return;
             if (ammoCount.Value <= 0) return;
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Utility) return;
+            if (Time.time - _lastServerThrowTime < 0.1f) return;
 
             ammoCount.Value--;
+            _lastServerThrowTime = Time.time;
 
             var utilityType = (Game.Net.UtilityType)_netUtilityType.Value;
             GameObject prefab = utilityType switch
@@ -229,18 +239,31 @@ namespace Game.Net.Weapons
                 return;
             }
 
-            // Spawn throwable
-            var origin = transform.position + Vector3.up * 1.5f; // Shoulder height
-            var direction = GetThrowDirection();
+            if (!TryGetThrowSolution(out var origin, out var velocity))
+                return;
 
-            var go = Instantiate(prefab, origin, Quaternion.identity);
+            var go = Instantiate(prefab, origin, Quaternion.LookRotation(velocity.normalized, Vector3.up));
+
+            // Prevent immediate self-collisions on spawn.
+            var projCols = go.GetComponentsInChildren<Collider>();
+            if (projCols != null && _player)
+            {
+                var ownerCols = _player.GetComponentsInChildren<Collider>(true);
+                foreach (var pc in projCols)
+                {
+                    if (!pc) continue;
+                    foreach (var oc in ownerCols)
+                        if (oc) Physics.IgnoreCollision(pc, oc, true);
+                }
+            }
+
             var no = go.GetComponent<NetworkObject>();
             if (no) no.Spawn(true);
 
             var rb = go.GetComponent<Rigidbody>();
             if (rb)
             {
-                rb.AddForce(direction * throwForce, ForceMode.Impulse);
+                rb.velocity = velocity;
             }
 
             // Configure throwable if it has special script
@@ -255,6 +278,12 @@ namespace Game.Net.Weapons
 
         Vector3 GetAimDir()
         {
+            if (sockets && sockets.front)
+            {
+                var fwd = sockets.front.forward; fwd.y = 0f;
+                if (fwd.sqrMagnitude > 0.0001f) return fwd.normalized;
+            }
+
             // Horizontal forward of the player
             var fwd = transform.forward; fwd.y = 0f;
             if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
@@ -268,6 +297,136 @@ namespace Game.Net.Weapons
             var angleRad = throwAngle * Mathf.Deg2Rad;
             var direction = horizontal + Vector3.up * Mathf.Tan(angleRad);
             return direction.normalized;
+        }
+
+        Vector3 GetThrowOrigin()
+        {
+            if (sockets && sockets.utilityThrowOrigin)
+                return sockets.utilityThrowOrigin.position;
+
+            if (_view && _view.grip)
+                return _view.grip.position;
+
+            return transform.position + Vector3.up * 1.5f; // shoulder height fallback
+        }
+
+        bool TryGetThrowSolution(out Vector3 origin, out Vector3 velocity)
+        {
+            origin = GetThrowOrigin();
+            var dir = GetThrowDirection();
+
+            if (dir.sqrMagnitude < 1e-6f)
+            {
+                velocity = Vector3.zero;
+                return false;
+            }
+
+            velocity = dir * throwForce;
+            return true;
+        }
+
+        void LateUpdate()
+        {
+            if (!IsOwner)
+            {
+                HideArcIndicator();
+                return;
+            }
+
+            if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Utility)
+            {
+                HideArcIndicator();
+                return;
+            }
+
+            if (!_hasEquippedUtility || ammoCount.Value <= 0)
+            {
+                HideArcIndicator();
+                return;
+            }
+
+            if (!TryGetThrowSolution(out var origin, out var velocity))
+            {
+                HideArcIndicator();
+                return;
+            }
+
+            DrawArcIndicator(origin, velocity);
+        }
+
+        void DrawArcIndicator(Vector3 origin, Vector3 velocity)
+        {
+            if (!_arcRenderer)
+            {
+                var go = new GameObject("UtilityArc");
+                go.transform.SetParent(transform, false);
+                _arcRenderer = go.AddComponent<LineRenderer>();
+                _arcRenderer.positionCount = k_ArcSegments;
+                _arcRenderer.useWorldSpace = true;
+                _arcRenderer.widthMultiplier = 0.05f;
+                _arcRenderer.material = new Material(Shader.Find("Sprites/Default"));
+                _arcRenderer.startColor = k_ArcColor;
+                _arcRenderer.endColor = k_ArcColor;
+                _arcRenderer.enabled = true;
+            }
+
+            var points = new Vector3[k_ArcSegments];
+            float dt = k_PreviewDuration / Mathf.Max(1, k_ArcSegments - 1);
+            var pos = origin;
+            var vel = velocity;
+            Vector3 landing = origin;
+
+            for (int i = 0; i < k_ArcSegments; i++)
+            {
+                points[i] = pos;
+                vel += Physics.gravity * dt;
+                var next = pos + vel * dt;
+
+                // Stop preview when we fall back to (or below) the spawn plane.
+                if (next.y <= origin.y)
+                {
+                    landing = next;
+                    points[i] = next;
+                    for (int j = i + 1; j < k_ArcSegments; j++) points[j] = next;
+                    break;
+                }
+
+                landing = next;
+                pos = next;
+            }
+
+            _arcRenderer.SetPositions(points);
+            _arcRenderer.enabled = true;
+            ShowLandingMarker(landing);
+        }
+
+        void ShowLandingMarker(Vector3 position)
+        {
+            if (!_landingMarker)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                go.name = "UtilityLanding";
+                Destroy(go.GetComponent<Collider>());
+                _landingMarker = go.transform;
+                _landingMarker.SetParent(transform, false);
+                _landingMarker.localScale = Vector3.one * 0.25f;
+                var renderer = go.GetComponent<MeshRenderer>();
+                if (renderer)
+                {
+                    renderer.material = new Material(Shader.Find("Standard"));
+                    renderer.material.color = new Color(0.8f, 1f, 0.9f, 0.6f);
+                }
+            }
+
+            _landingMarker.position = position;
+            if (_landingMarker.gameObject.activeSelf == false)
+                _landingMarker.gameObject.SetActive(true);
+        }
+
+        void HideArcIndicator()
+        {
+            if (_arcRenderer) _arcRenderer.enabled = false;
+            if (_landingMarker) _landingMarker.gameObject.SetActive(false);
         }
     }
 }

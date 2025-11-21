@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
@@ -14,6 +15,7 @@ namespace Game.Net.Weapons
         [Header("Melee Settings")]
         [SerializeField] float damage = 50f;
         [SerializeField] float range = 2.5f;
+        [SerializeField] float arcDegrees = 110f;
         [SerializeField] float swingCooldown = 0.8f;
         [SerializeField] LayerMask hitMask = -1; // All layers by default
 
@@ -23,6 +25,7 @@ namespace Game.Net.Weapons
         float _swingCooldownRemain;
         Game.Net.PlayerNetwork _player;
         bool _hasEquippedMelee;
+        readonly HashSet<ulong> _alreadyHit = new();
 
         // Local-only visuals
         WeaponView _view;
@@ -88,28 +91,31 @@ namespace Game.Net.Weapons
 
             _swingCooldownRemain = swingCooldown;
 
-            // Melee raycast from player forward
-            var origin = transform.position + Vector3.up * 1.0f; // Chest height
+            // Fan a short arc in front of the player and damage any enemy inside it.
+            var origin = sockets && sockets.meleeSwingPivot ? sockets.meleeSwingPivot.position : transform.position + Vector3.up * 1.0f;
             var direction = GetAimDir();
 
-            if (Physics.Raycast(origin, direction, out RaycastHit hit, range, hitMask))
+            _alreadyHit.Clear();
+
+            var cols = Physics.OverlapSphere(origin, range, hitMask, QueryTriggerInteraction.Collide);
+            foreach (var col in cols)
             {
-                var target = hit.collider.GetComponentInParent<Game.Net.PlayerNetwork>();
-                if (target)
-                {
-                    // Don't hit yourself
-                    if (target == _player || target.OwnerClientId == OwnerClientId) return;
+                var target = col.GetComponentInParent<Game.Net.PlayerNetwork>();
+                if (!target || target == _player || target.OwnerClientId == OwnerClientId) continue;
+                if (_alreadyHit.Contains(target.OwnerClientId)) continue;
 
-                    // Apply damage
-                    var ownerTeam = _player ? _player.GetTeam() : Game.Net.TeamId.A;
-                    var targetTeam = target.GetTeam();
+                var ownerTeam = _player ? _player.GetTeam() : Game.Net.TeamId.A;
+                var targetTeam = target.GetTeam();
+                if (ownerTeam == targetTeam) continue;
 
-                    // Only damage enemies
-                    if (ownerTeam != targetTeam)
-                    {
-                        target.ApplyHealthDelta(-Mathf.Abs(damage), _player);
-                    }
-                }
+                var toTarget = target.transform.position - origin; toTarget.y = 0f;
+                if (toTarget.sqrMagnitude < 0.0001f) continue;
+
+                float angle = Vector3.Angle(direction, toTarget);
+                if (angle > arcDegrees * 0.5f) continue;
+
+                _alreadyHit.Add(target.OwnerClientId);
+                target.ApplyHealthDelta(-Mathf.Abs(damage), _player);
             }
 
             // Play swing animation on all clients
@@ -126,6 +132,12 @@ namespace Game.Net.Weapons
 
         Vector3 GetAimDir()
         {
+            if (sockets && sockets.meleeFront)
+            {
+                var dir = sockets.meleeFront.forward; dir.y = 0f;
+                if (dir.sqrMagnitude > 0.0001f) return dir.normalized;
+            }
+
             // Horizontal forward of the player
             var fwd = transform.forward; fwd.y = 0f;
             if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
@@ -144,7 +156,6 @@ namespace Game.Net.Weapons
 
         public void RebuildLocalViewImmediate()
         {
-            if (!IsOwner) return;
             if (_player && _player.GetActiveSlot() != Game.Net.WeaponSlot.Melee)
             {
                 Debug.Log("[Melee] Skip rebuild: slot not active.");
@@ -205,11 +216,12 @@ namespace Game.Net.Weapons
                 t.position = sockets.handMount.position; t.rotation = sockets.handMount.rotation;
             }
 
-            // Default facing toward Front point (uses tip if present)
-            if (_view && sockets.front)
+            // Default facing toward a melee-specific front (uses tip if present)
+            var meleeFront = sockets.meleeFront ? sockets.meleeFront : sockets.front;
+            if (_view && meleeFront)
             {
-                Debug.Log($"[Melee] SnapAimTo front='{sockets.front.name}' using tip={(bool)_view.tip}");
-                _view.SnapAimTo(sockets.front);
+                Debug.Log($"[Melee] SnapAimTo meleeFront='{meleeFront.name}' using tip={(bool)_view.tip}");
+                _view.SnapAimTo(meleeFront);
             }
 
             if (_view && sockets.equipStart && sockets.front)
