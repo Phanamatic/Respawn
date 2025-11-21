@@ -31,6 +31,15 @@ namespace Game.Net
         [SerializeField] private Button queue2v2Button;
         [SerializeField] private Button playCloseButton;
 
+        [Header("Spectate")]
+        [SerializeField] private Button spectateButton;
+        [SerializeField] private RectTransform spectatePanel;
+        [SerializeField] private CanvasGroup spectatePanelCg;
+        [SerializeField] private Button spectateCloseButton;
+        [SerializeField] private RectTransform spectateListRoot;
+        [SerializeField] private GameObject spectateEntryPrefab;
+        [SerializeField] private TMP_Text spectateStatusText;
+
         [Header("HUD")]
         [SerializeField] private GameObject playerHudRoot;
 
@@ -64,7 +73,10 @@ namespace Game.Net
         // runtime
         bool _busy;
         Coroutine _playStatusCo, _statsStatusCo, _armouryStatusCo;
+        Coroutine _spectateListCo;
         Canvas _rootCanvas;
+
+        bool _isSpectatorAccount;
 
         Vector3 _playDefaultScale, _statsDefaultScale, _armouryDefaultScale;
         Vector2 _playDefaultPos, _statsDefaultPos, _armouryDefaultPos;
@@ -77,6 +89,8 @@ namespace Game.Net
 
         void Awake()
         {
+            EnsureSpectateRuntimeUi();
+
             if (playPanel)
             {
                 _playDefaultScale = playPanel.localScale;
@@ -100,6 +114,120 @@ namespace Game.Net
                 armouryPanel.gameObject.SetActive(false);
             }
             if (armouryStatusPanel) armouryStatusPanel.SetActive(false);
+
+            if (spectatePanel) spectatePanel.gameObject.SetActive(false);
+            if (spectateButton) spectateButton.gameObject.SetActive(false);
+            if (spectateStatusText) spectateStatusText.text = string.Empty;
+        }
+
+        void EnsureSpectateRuntimeUi()
+        {
+            // Allows shipping scenes without manually wiring spectate fields; we create a minimal panel + button at runtime.
+            var root = playPanel ? playPanel.parent as RectTransform : GetComponentInParent<Canvas>(true)?.transform as RectTransform;
+            if (!root) return;
+
+            if (!spectateButton)
+            {
+                var go = new GameObject("SpectateButton", typeof(RectTransform), typeof(Image), typeof(Button));
+                go.transform.SetParent(root, false);
+                var rt = (RectTransform)go.transform;
+                rt.anchorMin = new Vector2(0f, 0f);
+                rt.anchorMax = new Vector2(0f, 0f);
+                rt.pivot     = new Vector2(0f, 0f);
+                rt.sizeDelta = new Vector2(180f, 48f);
+                rt.anchoredPosition = new Vector2(24f, 24f);
+
+                var labelGo = new GameObject("Label", typeof(RectTransform));
+                labelGo.transform.SetParent(go.transform, false);
+                var labelRt = (RectTransform)labelGo.transform;
+                labelRt.anchorMin = Vector2.zero; labelRt.anchorMax = Vector2.one; labelRt.offsetMin = Vector2.zero; labelRt.offsetMax = Vector2.zero;
+                var tmp = labelGo.AddComponent<TextMeshProUGUI>();
+                tmp.text = "Spectate Matches";
+                tmp.alignment = TextAlignmentOptions.Center;
+                tmp.fontSize = 22f;
+
+                spectateButton = go.GetComponent<Button>();
+            }
+
+            if (!spectatePanel)
+            {
+                var panel = new GameObject("SpectatePanel", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
+                panel.transform.SetParent(root, false);
+                var rt = (RectTransform)panel.transform;
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.pivot     = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(520f, 620f);
+                rt.anchoredPosition = Vector2.zero;
+
+                var bg = panel.GetComponent<Image>();
+                bg.color = new Color(0f, 0f, 0f, 0.75f);
+
+                spectatePanel   = rt;
+                spectatePanelCg = panel.GetComponent<CanvasGroup>();
+
+                // Header/status text
+                var statusGo = new GameObject("Status", typeof(RectTransform));
+                statusGo.transform.SetParent(panel.transform, false);
+                var statusRt = (RectTransform)statusGo.transform;
+                statusRt.anchorMin = new Vector2(0f, 1f); statusRt.anchorMax = new Vector2(1f, 1f); statusRt.pivot = new Vector2(0.5f, 1f);
+                statusRt.sizeDelta = new Vector2(0f, 48f);
+                statusRt.anchoredPosition = new Vector2(0f, -8f);
+                spectateStatusText = statusGo.AddComponent<TextMeshProUGUI>();
+                spectateStatusText.text = "Scanning matches...";
+                spectateStatusText.alignment = TextAlignmentOptions.MidlineLeft;
+                spectateStatusText.margin = new Vector4(16f, 0f, 16f, 0f);
+                spectateStatusText.fontSize = 22f;
+
+                // Close button
+                var closeGo = new GameObject("Close", typeof(RectTransform), typeof(Image), typeof(Button));
+                closeGo.transform.SetParent(panel.transform, false);
+                var closeRt = (RectTransform)closeGo.transform;
+                closeRt.anchorMin = new Vector2(1f, 1f); closeRt.anchorMax = new Vector2(1f, 1f); closeRt.pivot = new Vector2(1f, 1f);
+                closeRt.sizeDelta = new Vector2(36f, 36f);
+                closeRt.anchoredPosition = new Vector2(-12f, -12f);
+                var closeLabelGo = new GameObject("X", typeof(RectTransform));
+                closeLabelGo.transform.SetParent(closeGo.transform, false);
+                var closeLabel = closeLabelGo.AddComponent<TextMeshProUGUI>();
+                closeLabel.text = "X";
+                closeLabel.fontSize = 24f;
+                closeLabel.alignment = TextAlignmentOptions.Center;
+                spectateCloseButton = closeGo.GetComponent<Button>();
+
+                // Scroll area for entries
+                var scrollGo = new GameObject("List", typeof(RectTransform), typeof(ScrollRect));
+                scrollGo.transform.SetParent(panel.transform, false);
+                var scrollRt = (RectTransform)scrollGo.transform;
+                scrollRt.anchorMin = new Vector2(0f, 0f); scrollRt.anchorMax = new Vector2(1f, 1f); scrollRt.pivot = new Vector2(0.5f, 0.5f);
+                scrollRt.offsetMin = new Vector2(12f, 12f); scrollRt.offsetMax = new Vector2(-12f, -64f);
+                var viewport = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(Mask));
+                viewport.transform.SetParent(scrollGo.transform, false);
+                var viewportRt = (RectTransform)viewport.transform;
+                viewportRt.anchorMin = Vector2.zero; viewportRt.anchorMax = Vector2.one; viewportRt.offsetMin = Vector2.zero; viewportRt.offsetMax = Vector2.zero;
+                var maskImg = viewport.GetComponent<Image>();
+                maskImg.color = new Color(1f, 1f, 1f, 0.05f);
+                viewport.GetComponent<Mask>().showMaskGraphic = false;
+
+                var content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+                content.transform.SetParent(viewport.transform, false);
+                var contentRt = (RectTransform)content.transform;
+                contentRt.anchorMin = new Vector2(0f, 1f); contentRt.anchorMax = new Vector2(1f, 1f); contentRt.pivot = new Vector2(0.5f, 1f);
+                contentRt.offsetMin = Vector2.zero; contentRt.offsetMax = Vector2.zero;
+                var layout = content.GetComponent<VerticalLayoutGroup>();
+                layout.childForceExpandWidth = true;
+                layout.childForceExpandHeight = false;
+                layout.spacing = 6f;
+                layout.padding = new RectOffset(8, 8, 8, 8);
+                var fitter = content.GetComponent<ContentSizeFitter>();
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+                var scroll = scrollGo.GetComponent<ScrollRect>();
+                scroll.viewport = viewportRt;
+                scroll.content = contentRt;
+
+                spectateListRoot = contentRt;
+            }
         }
 
         void OnEnable()
@@ -108,8 +236,13 @@ namespace Game.Net
             if (queue2v2Button)   queue2v2Button.onClick.AddListener(QueueFor2v2);
             if (playCloseButton)  playCloseButton.onClick.AddListener(ClosePlayPanel);
 
+            if (spectateButton) spectateButton.onClick.AddListener(OpenSpectatePanel);
+            if (spectateCloseButton) spectateCloseButton.onClick.AddListener(CloseSpectatePanel);
+
             if (statsCloseButton)   statsCloseButton.onClick.AddListener(CloseStatsPanel);
             if (armouryCloseButton) armouryCloseButton.onClick.AddListener(CloseArmouryPanel);
+
+            StartCoroutine(DetectSpectatorAccount());
         }
 
         void OnDisable()
@@ -118,8 +251,13 @@ namespace Game.Net
             if (queue2v2Button)   queue2v2Button.onClick.RemoveListener(QueueFor2v2);
             if (playCloseButton)  playCloseButton.onClick.RemoveListener(ClosePlayPanel);
 
+            if (spectateButton) spectateButton.onClick.RemoveListener(OpenSpectatePanel);
+            if (spectateCloseButton) spectateCloseButton.onClick.RemoveListener(CloseSpectatePanel);
+
             if (statsCloseButton)   statsCloseButton.onClick.RemoveListener(CloseStatsPanel);
             if (armouryCloseButton) armouryCloseButton.onClick.RemoveListener(CloseArmouryPanel);
+
+            if (_spectateListCo != null) StopCoroutine(_spectateListCo);
         }
 
         // ---------- World-driven panel open ----------
@@ -208,6 +346,158 @@ namespace Game.Net
             _armouryLastCloseAt = Time.unscaledTime; _armouryLeftSinceClose = false;
         }
 
+        public void OpenSpectatePanel()
+        {
+            if (!_isSpectatorAccount || _busy) return;
+            if (!spectatePanel) return;
+
+            spectatePanel.gameObject.SetActive(true);
+            if (spectatePanelCg) spectatePanelCg.alpha = 1f;
+            PauseLocalPlayer(true);
+            if (_spectateListCo != null) StopCoroutine(_spectateListCo);
+            _spectateListCo = StartCoroutine(RefreshSpectateList());
+        }
+
+        public void CloseSpectatePanel()
+        {
+            if (!spectatePanel || !spectatePanel.gameObject.activeSelf) return;
+            if (_spectateListCo != null) StopCoroutine(_spectateListCo);
+            spectatePanel.gameObject.SetActive(false);
+            if (spectateStatusText) spectateStatusText.text = string.Empty;
+            PauseLocalPlayer(false);
+            _busy = false;
+            SetAllButtonsInteractable(true);
+        }
+
+        IEnumerator RefreshSpectateList()
+        {
+            if (spectateStatusText) spectateStatusText.text = "Scanning matches...";
+            ClearSpectateList();
+
+            var matches = new List<Lobby>();
+            yield return StartCoroutine(QueryMatchesForType("1v1", matches));
+            yield return StartCoroutine(QueryMatchesForType("2v2", matches));
+
+            if (matches.Count == 0)
+            {
+                if (spectateStatusText) spectateStatusText.text = "No active matches.";
+                yield break;
+            }
+
+            if (spectateStatusText) spectateStatusText.text = $"Open matches ({matches.Count})";
+            BuildSpectateEntries(matches);
+        }
+
+        IEnumerator QueryMatchesForType(string serverType, List<Lobby> output)
+        {
+            var opts = new QueryLobbiesOptions
+            {
+                Count = 25,
+                Filters = new List<QueryFilter>
+                {
+                    new QueryFilter(QueryFilter.FieldOptions.S1, serverType, QueryFilter.OpOptions.EQ)
+                }
+            };
+
+            var task = LobbyService.Instance.QueryLobbiesAsync(opts);
+            yield return new WaitUntil(() => task.IsCompleted);
+
+            if (task.Exception == null && task.Result != null && task.Result.Results != null)
+            {
+                output.AddRange(task.Result.Results);
+            }
+        }
+
+        void BuildSpectateEntries(List<Lobby> matches)
+        {
+            var root = spectateListRoot ? spectateListRoot : spectatePanel;
+            if (!root) return;
+
+            foreach (var lobby in matches)
+            {
+                var entry = spectateEntryPrefab ? Instantiate(spectateEntryPrefab, root) : CreateRuntimeEntry(root);
+                var texts = entry.GetComponentsInChildren<TMP_Text>(true);
+                TMP_Text label = texts != null && texts.Length > 0 ? texts[0] : null;
+                var button = entry.GetComponentInChildren<Button>(true);
+
+                string name = lobby.Name;
+                lobby.Data?.TryGetValue("Scene", out var sceneData);
+                lobby.Data?.TryGetValue("ServerType", out var typeData);
+                lobby.Data?.TryGetValue("MatchState", out var stateData);
+                lobby.Data?.TryGetValue("Round", out var roundData);
+                lobby.Data?.TryGetValue("WinsA", out var winsA);
+                lobby.Data?.TryGetValue("WinsB", out var winsB);
+                lobby.Data?.TryGetValue("Alive", out var aliveData);
+                lobby.Data?.TryGetValue("AliveAB", out var aliveAbData);
+                lobby.Data?.TryGetValue("Elapsed", out var elapsedData);
+
+                string summary = $"{name} • {typeData?.Value ?? "Match"} @ {sceneData?.Value ?? "?"}\n" +
+                    $"State: {stateData?.Value ?? "Unknown"}  Round: {roundData?.Value ?? "?"}\n" +
+                    $"Score {winsA?.Value ?? "0"}-{winsB?.Value ?? "0"}  Alive {aliveAbData?.Value ?? aliveData?.Value ?? "?"}  Time {elapsedData?.Value ?? "0"}s";
+
+                if (label) label.text = summary;
+                if (button)
+                {
+                    button.onClick.RemoveAllListeners();
+                    button.onClick.AddListener(() =>
+                    {
+                        if (_busy) return;
+                        _busy = true;
+                        SetAllButtonsInteractable(false);
+                        _spectateListCo = StartCoroutine(ConnectToLobbyEndpoint(lobby, true, SetSpectateStatus));
+                    });
+                }
+            }
+        }
+
+        void ClearSpectateList()
+        {
+            var root = spectateListRoot ? spectateListRoot : spectatePanel;
+            if (!root) return;
+            for (int i = root.childCount - 1; i >= 0; i--)
+                Destroy(root.GetChild(i).gameObject);
+        }
+
+        GameObject CreateRuntimeEntry(RectTransform parent)
+        {
+            var go = new GameObject("SpectateEntry", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var bg = go.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.35f);
+
+            var layout = go.AddComponent<VerticalLayoutGroup>();
+            layout.childForceExpandHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 4f;
+            layout.padding = new RectOffset(8, 8, 8, 8);
+
+            var textGo = new GameObject("Label", typeof(RectTransform));
+            textGo.transform.SetParent(go.transform, false);
+            var label = textGo.AddComponent<TMP_Text>();
+            label.fontSize = 18f;
+            label.alignment = TextAlignmentOptions.TopLeft;
+            label.enableWordWrapping = true;
+
+            var btnGo = new GameObject("JoinButton", typeof(RectTransform));
+            btnGo.transform.SetParent(go.transform, false);
+            var btnImage = btnGo.AddComponent<Image>();
+            btnImage.color = new Color(0.2f, 0.55f, 0.2f, 0.9f);
+            var btn = btnGo.AddComponent<Button>();
+            btn.targetGraphic = btnImage;
+            var btnLabelGo = new GameObject("Text", typeof(RectTransform));
+            btnLabelGo.transform.SetParent(btnGo.transform, false);
+            var btnLabel = btnLabelGo.AddComponent<TMP_Text>();
+            btnLabel.text = "Join as Spectator";
+            btnLabel.alignment = TextAlignmentOptions.Center;
+            btnLabel.fontSize = 16f;
+
+            var fitter = btnGo.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            return go;
+        }
+
         // ---------- Play actions (Unity Lobby matchmaking with direct endpoints) ----------
     private void QueueFor1v1() => StartCoroutine(JoinMatch("1v1"));
     private void QueueFor2v2() => StartCoroutine(JoinMatch("2v2"));
@@ -274,29 +564,33 @@ namespace Game.Net
             var bestMatch = availableMatches[0];
             SetPlayStatus($"Joining {bestMatch.Name}...");
 
+            yield return StartCoroutine(ConnectToLobbyEndpoint(bestMatch, false, SetPlayStatus));
+        }
+
+        IEnumerator ConnectToLobbyEndpoint(Lobby lobby, bool asSpectator, System.Action<string> statusSetter)
+        {
+            statusSetter ??= SetPlayStatus;
+
             var nm = NetworkManager.Singleton;
             var utp = nm.GetComponent<UnityTransport>();
 
-            // Full handoff handled inside ReconnectAndConnect(); no pre-shutdown here.
-
-            // Do NOT join lobby. Use public endpoint advertised by server.
-            if (bestMatch.Data == null)
+            if (lobby.Data == null)
             {
                 Debug.LogError("[LobbyUI] Missing lobby public data");
-                SetPlayStatus("Invalid match data.");
+                statusSetter("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
             }
 
-            bool hasHost = bestMatch.Data.TryGetValue("PublicHost", out var publicHostData);
-            bool hasPort = bestMatch.Data.TryGetValue("PublicPort", out var publicPortData);
-            string lanEp = bestMatch.Data.TryGetValue("LanEndpoint", out var lanEpData) ? lanEpData.Value : null;
+            bool hasHost = lobby.Data.TryGetValue("PublicHost", out var publicHostData);
+            bool hasPort = lobby.Data.TryGetValue("PublicPort", out var publicPortData);
+            string lanEp = lobby.Data.TryGetValue("LanEndpoint", out var lanEpData) ? lanEpData.Value : null;
 
             if (!hasHost || !hasPort || string.IsNullOrWhiteSpace(publicHostData.Value))
             {
                 Debug.LogError("[LobbyUI] No public endpoint on lobby");
-                SetPlayStatus("Invalid match data.");
+                statusSetter("Invalid match data.");
                 _busy = false;
                 SetAllButtonsInteractable(true);
                 yield break;
@@ -306,10 +600,14 @@ namespace Game.Net
             int publicPort = int.TryParse(publicPortData.Value, out var pp) ? pp : 7777;
 
             SessionContext.SetDirectEndpoint(publicHost, publicPort, lanEp);
+            ConnectionMetadata.SetLocalPayload(new ConnectionPayloadData
+            {
+                displayName = GetLocalDisplayName(),
+                spectator = asSpectator
+            }, nm);
 
             IEnumerator ReconnectAndConnect(string host, int prt, float seconds)
             {
-                // 1) Ensure old connection is *fully* stopped (not just IsConnectedClient=false).
                 if (nm.IsListening || nm.IsClient || nm.IsServer)
                 {
                     nm.Shutdown();
@@ -319,10 +617,9 @@ namespace Game.Net
                         t0 -= Time.unscaledDeltaTime;
                         yield return null;
                     }
-                    yield return null; // one extra frame for UTP cleanup
+                    yield return null;
                 }
 
-                // 2) Prefer IPv4 to avoid edge cases on some ISPs/routers.
                 string target = host;
                 try
                 {
@@ -333,18 +630,16 @@ namespace Game.Net
                         foreach (var a in addrs)
                             if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) { target = a.ToString(); break; }
                     }
-                } catch {}
+                }
+                catch { }
 
-                // 3) Connect cleanly to the new endpoint.
                 utp.SetConnectionData(target, (ushort)prt);
                 if (!nm.StartClient()) yield break;
 
                 float t = seconds;
                 while (!nm.IsConnectedClient && t > 0f) { t -= Time.deltaTime; yield return null; }
             }
-            // Prevents "Cannot start Client while an instance is already running" by waiting for IsListening=false before StartClient().
 
-            // Prefer LAN endpoint if provided. Fallback to PublicHost.
             bool connected = false;
             if (!string.IsNullOrWhiteSpace(lanEp) && lanEp.Contains(":"))
             {
@@ -352,26 +647,25 @@ namespace Game.Net
                 var lh = parts[0].Trim();
                 var lp = (parts.Length > 1 && int.TryParse(parts[1], out var v)) ? v : publicPort;
 
-                SetPlayStatus($"Connecting (LAN) {lh}:{lp}...");
+                statusSetter($"Connecting (LAN) {lh}:{lp}...");
                 yield return StartCoroutine(ReconnectAndConnect(lh, lp, 5f));
                 connected = nm.IsConnectedClient;
             }
 
             if (!connected)
             {
-                SetPlayStatus($"Connecting {publicHost}:{publicPort}...");
+                statusSetter($"Connecting {publicHost}:{publicPort}...");
                 yield return StartCoroutine(ReconnectAndConnect(publicHost, publicPort, 10f));
             }
-            // Use the new handoff path for both LAN and public attempts.
 
             if (nm.IsConnectedClient)
             {
-                SetPlayStatus($"Joined {bestMatch.Name}.");
-                SessionContext.SetSession(bestMatch.Id, "");
+                statusSetter(asSpectator ? $"Spectating {lobby.Name}." : $"Joined {lobby.Name}.");
+                SessionContext.SetSession(lobby.Id, "");
             }
             else
             {
-                SetPlayStatus($"Connection failed to {bestMatch.Name}.");
+                statusSetter($"Connection failed to {lobby.Name}.");
                 nm.Shutdown();
             }
 
@@ -389,6 +683,11 @@ namespace Game.Net
                 if (_playStatusCo != null) StopCoroutine(_playStatusCo);
                 _playStatusCo = StartCoroutine(HidePlayStatusAfterDelay());
             }
+        }
+
+        private void SetSpectateStatus(string msg)
+        {
+            if (spectateStatusText) spectateStatusText.text = msg;
         }
 
         private IEnumerator HidePlayStatusAfterDelay()
@@ -509,7 +808,8 @@ namespace Game.Net
         {
             return (playPanel && playPanel.gameObject.activeSelf)
                 || (statsPanel && statsPanel.gameObject.activeSelf)
-                || (armouryPanel && armouryPanel.gameObject.activeSelf);
+                || (armouryPanel && armouryPanel.gameObject.activeSelf)
+                || (spectatePanel && spectatePanel.gameObject.activeSelf);
         }
 
         bool IsPanelOpen(LobbyPanel which)
@@ -530,6 +830,8 @@ namespace Game.Net
             if (playCloseButton)  playCloseButton.interactable = on;
             if (statsCloseButton) statsCloseButton.interactable = on;
             if (armouryCloseButton) armouryCloseButton.interactable = on;
+            if (spectateButton) spectateButton.interactable = on && !_busy && _isSpectatorAccount;
+            if (spectateCloseButton) spectateCloseButton.interactable = on;
         }
 
         void PauseLocalPlayer(bool pause)
@@ -541,6 +843,29 @@ namespace Game.Net
                 if (po) _localPlayer = po.GetComponent<PlayerNetwork>();
             }
             if (_localPlayer != null) _localPlayer.SetInputPaused(pause);
+        }
+
+        string GetLocalDisplayName()
+        {
+            var name = Game.Services.PlayerIdentityState.LocalDisplayName;
+            if (string.IsNullOrWhiteSpace(name) && AuthenticationService.Instance != null)
+                name = AuthenticationService.Instance.PlayerName;
+            return string.IsNullOrWhiteSpace(name) ? "Spectator" : name;
+        }
+
+        IEnumerator DetectSpectatorAccount()
+        {
+            var ensureTask = Game.Services.PlayerIdentityState.EnsureIdentityAsync();
+            while (!ensureTask.IsCompleted) yield return null;
+
+            var name = Game.Services.PlayerIdentityState.LocalDisplayName;
+            if (string.IsNullOrWhiteSpace(name))
+                name = AuthenticationService.Instance != null ? AuthenticationService.Instance.PlayerName : null;
+
+            _isSpectatorAccount = string.Equals(name, "Spectator1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Spectator2", StringComparison.OrdinalIgnoreCase);
+
+            if (spectateButton) spectateButton.gameObject.SetActive(_isSpectatorAccount);
         }
 
 #if UNITY_EDITOR
