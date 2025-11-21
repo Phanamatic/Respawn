@@ -88,6 +88,28 @@ The project integrates with Unity Gaming Services (UGS):
 
 ## Development Notes
 
+### Spectator mode scene setup
+1. **Project defaults**: Connection approval is enabled automatically by `ConnectionMetadataInstaller` at runtime so no prefab changes are needed. Ensure `NetworkManager` exists in each scene (Bootstrap/Lobby/Match) so the installer can find and configure it.
+2. **Lobby UI wiring (Lobby scene)**:
+   - Select the `LobbyUI` component on the lobby canvas and assign:
+     - **Spectate Button** → the button visible only for accounts named `Spectator1` or `Spectator2`.
+     - **Spectate Panel** → panel container that opens when clicking Spectate.
+     - **Spectate Close Button** → close/back control on the panel.
+     - **Spectate List Root** → layout group under the panel where entries are spawned.
+     - **Spectate Entry Prefab** → UI prefab with `TMP_Text` fields for name/mode/phase/stats and a "Join as Spectator" `Button` (the prefab must have a `RectTransform`).
+     - **Spectate Status Text** → text element for connection feedback/errors.
+   - Confirm existing play/armoury/stats fields remain assigned so spectator wiring does not break existing flow.
+3. **Match scene camera (Match_1v1 / Match_2v2)**:
+   - In `Hierarchy > Main Camera`, add `SpectatorCameraController` (auto-added at runtime, but add in prefab for clarity) and set:
+     - **Cinematic Waypoints** → ordered list of `Transform` waypoints (create an empty `SpectatorWaypoints` with child transforms along interesting angles around the map).
+     - **Cinematic Move Seconds** / **Pause Seconds** → tune travel speed and dwell (default 6s/0.5s ok).
+     - **Retarget Interval Seconds** → how often to refresh alive-player list (0.5s default).
+     - **Occluder Mask** → layers that should fade when blocking the view (match what `LineOfSightTransparency` expects for players).
+   - Ensure the camera already has `IsometricCamera` (or allow the controller to add it automatically) and that `LineOfSightTransparency` is present or allowed to be added.
+4. **Cinematic path transforms**: Place 4–8 waypoints around key lanes. For smooth ping-pong motion, space them evenly and orient each transform toward the play area. The controller will loop automatically when no players are alive/spawned.
+5. **Spawner/teams**: No prefab changes required—the `GamePlayerSpawner` and `Match1v1Controller` respect `ConnectionMetadata.IsSpectator` so spectators are not spawned or counted toward team size/score. Just ensure match scenes use the updated prefabs/scripts.
+6. **Return-to-lobby flow**: Match controllers already disconnect all spectators on end/reset; keep existing scene unload flow. If you add new end-of-match hooks, also unsubscribe spectators there to avoid dangling references.
+
 ### Network Configuration
 - Default transport: Unity Netcode UnityTransport (UTP)
 - Connection mode: Direct IP (no relay)

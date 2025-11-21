@@ -89,6 +89,8 @@ namespace Game.Net
 
         void Awake()
         {
+            EnsureSpectateRuntimeUi();
+
             if (playPanel)
             {
                 _playDefaultScale = playPanel.localScale;
@@ -116,6 +118,116 @@ namespace Game.Net
             if (spectatePanel) spectatePanel.gameObject.SetActive(false);
             if (spectateButton) spectateButton.gameObject.SetActive(false);
             if (spectateStatusText) spectateStatusText.text = string.Empty;
+        }
+
+        void EnsureSpectateRuntimeUi()
+        {
+            // Allows shipping scenes without manually wiring spectate fields; we create a minimal panel + button at runtime.
+            var root = playPanel ? playPanel.parent as RectTransform : GetComponentInParent<Canvas>(true)?.transform as RectTransform;
+            if (!root) return;
+
+            if (!spectateButton)
+            {
+                var go = new GameObject("SpectateButton", typeof(RectTransform), typeof(Image), typeof(Button));
+                go.transform.SetParent(root, false);
+                var rt = (RectTransform)go.transform;
+                rt.anchorMin = new Vector2(0f, 0f);
+                rt.anchorMax = new Vector2(0f, 0f);
+                rt.pivot     = new Vector2(0f, 0f);
+                rt.sizeDelta = new Vector2(180f, 48f);
+                rt.anchoredPosition = new Vector2(24f, 24f);
+
+                var labelGo = new GameObject("Label", typeof(RectTransform));
+                labelGo.transform.SetParent(go.transform, false);
+                var labelRt = (RectTransform)labelGo.transform;
+                labelRt.anchorMin = Vector2.zero; labelRt.anchorMax = Vector2.one; labelRt.offsetMin = Vector2.zero; labelRt.offsetMax = Vector2.zero;
+                var tmp = labelGo.AddComponent<TextMeshProUGUI>();
+                tmp.text = "Spectate Matches";
+                tmp.alignment = TextAlignmentOptions.Center;
+                tmp.fontSize = 22f;
+
+                spectateButton = go.GetComponent<Button>();
+            }
+
+            if (!spectatePanel)
+            {
+                var panel = new GameObject("SpectatePanel", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
+                panel.transform.SetParent(root, false);
+                var rt = (RectTransform)panel.transform;
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.pivot     = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(520f, 620f);
+                rt.anchoredPosition = Vector2.zero;
+
+                var bg = panel.GetComponent<Image>();
+                bg.color = new Color(0f, 0f, 0f, 0.75f);
+
+                spectatePanel   = rt;
+                spectatePanelCg = panel.GetComponent<CanvasGroup>();
+
+                // Header/status text
+                var statusGo = new GameObject("Status", typeof(RectTransform));
+                statusGo.transform.SetParent(panel.transform, false);
+                var statusRt = (RectTransform)statusGo.transform;
+                statusRt.anchorMin = new Vector2(0f, 1f); statusRt.anchorMax = new Vector2(1f, 1f); statusRt.pivot = new Vector2(0.5f, 1f);
+                statusRt.sizeDelta = new Vector2(0f, 48f);
+                statusRt.anchoredPosition = new Vector2(0f, -8f);
+                spectateStatusText = statusGo.AddComponent<TextMeshProUGUI>();
+                spectateStatusText.text = "Scanning matches...";
+                spectateStatusText.alignment = TextAlignmentOptions.MidlineLeft;
+                spectateStatusText.margin = new Vector4(16f, 0f, 16f, 0f);
+                spectateStatusText.fontSize = 22f;
+
+                // Close button
+                var closeGo = new GameObject("Close", typeof(RectTransform), typeof(Image), typeof(Button));
+                closeGo.transform.SetParent(panel.transform, false);
+                var closeRt = (RectTransform)closeGo.transform;
+                closeRt.anchorMin = new Vector2(1f, 1f); closeRt.anchorMax = new Vector2(1f, 1f); closeRt.pivot = new Vector2(1f, 1f);
+                closeRt.sizeDelta = new Vector2(36f, 36f);
+                closeRt.anchoredPosition = new Vector2(-12f, -12f);
+                var closeLabelGo = new GameObject("X", typeof(RectTransform));
+                closeLabelGo.transform.SetParent(closeGo.transform, false);
+                var closeLabel = closeLabelGo.AddComponent<TextMeshProUGUI>();
+                closeLabel.text = "X";
+                closeLabel.fontSize = 24f;
+                closeLabel.alignment = TextAlignmentOptions.Center;
+                spectateCloseButton = closeGo.GetComponent<Button>();
+
+                // Scroll area for entries
+                var scrollGo = new GameObject("List", typeof(RectTransform), typeof(ScrollRect));
+                scrollGo.transform.SetParent(panel.transform, false);
+                var scrollRt = (RectTransform)scrollGo.transform;
+                scrollRt.anchorMin = new Vector2(0f, 0f); scrollRt.anchorMax = new Vector2(1f, 1f); scrollRt.pivot = new Vector2(0.5f, 0.5f);
+                scrollRt.offsetMin = new Vector2(12f, 12f); scrollRt.offsetMax = new Vector2(-12f, -64f);
+                var viewport = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(Mask));
+                viewport.transform.SetParent(scrollGo.transform, false);
+                var viewportRt = (RectTransform)viewport.transform;
+                viewportRt.anchorMin = Vector2.zero; viewportRt.anchorMax = Vector2.one; viewportRt.offsetMin = Vector2.zero; viewportRt.offsetMax = Vector2.zero;
+                var maskImg = viewport.GetComponent<Image>();
+                maskImg.color = new Color(1f, 1f, 1f, 0.05f);
+                viewport.GetComponent<Mask>().showMaskGraphic = false;
+
+                var content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+                content.transform.SetParent(viewport.transform, false);
+                var contentRt = (RectTransform)content.transform;
+                contentRt.anchorMin = new Vector2(0f, 1f); contentRt.anchorMax = new Vector2(1f, 1f); contentRt.pivot = new Vector2(0.5f, 1f);
+                contentRt.offsetMin = Vector2.zero; contentRt.offsetMax = Vector2.zero;
+                var layout = content.GetComponent<VerticalLayoutGroup>();
+                layout.childForceExpandWidth = true;
+                layout.childForceExpandHeight = false;
+                layout.spacing = 6f;
+                layout.padding = new RectOffset(8, 8, 8, 8);
+                var fitter = content.GetComponent<ContentSizeFitter>();
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+                var scroll = scrollGo.GetComponent<ScrollRect>();
+                scroll.viewport = viewportRt;
+                scroll.content = contentRt;
+
+                spectateListRoot = contentRt;
+            }
         }
 
         void OnEnable()
