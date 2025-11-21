@@ -263,7 +263,7 @@ namespace Game.Net.Weapons
             var rb = go.GetComponent<Rigidbody>();
             if (rb)
             {
-                rb.velocity = velocity;
+                rb.linearVelocity = velocity;
             }
 
             // Configure throwable if it has special script
@@ -278,14 +278,17 @@ namespace Game.Net.Weapons
 
         Vector3 GetAimDir()
         {
+            Vector3 fwd;
             if (sockets && sockets.front)
             {
-                var fwd = sockets.front.forward; fwd.y = 0f;
+                fwd = sockets.front.forward;
+                fwd.y = 0f;
                 if (fwd.sqrMagnitude > 0.0001f) return fwd.normalized;
             }
 
             // Horizontal forward of the player
-            var fwd = transform.forward; fwd.y = 0f;
+            fwd = transform.forward;
+            fwd.y = 0f;
             if (fwd.sqrMagnitude < 0.0001f) fwd = Vector3.right;
             return fwd.normalized;
         }
