@@ -979,8 +979,8 @@ public void ForceActiveSlotServer(byte slot)
             RequestSwitchSlotServerRpc(slot);
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        void RequestSwitchSlotServerRpc(int slot, ServerRpcParams p = default)
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        void RequestSwitchSlotServerRpc(int slot, RpcParams p = default)
         {
             if (!IsServer) return;
             var from = p.Receive.SenderClientId;
@@ -1026,8 +1026,8 @@ public void ForceActiveSlotServer(byte slot)
         }
 
         // Ask the server to write the authoritative phase for this player (scene-driven fallback).
-        [ServerRpc(RequireOwnership = false)]
-        void RequestPhaseReconcileServerRpc(ServerRpcParams p = default)
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        void RequestPhaseReconcileServerRpc(RpcParams p = default)
         {
             if (!IsServer) return;
 
@@ -1560,8 +1560,8 @@ void OnReloadInput()
             return Game.Services.PlayerIdentityState.LocalIconId;
         }
 
-        [ServerRpc(RequireOwnership = false)]
-        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString128Bytes iconId, ServerRpcParams rpcParams = default)
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        void SubmitPlayerIdentityServerRpc(FixedString64Bytes alias, FixedString128Bytes iconId, RpcParams rpcParams = default)
         {
             var sanitizedName = SanitizeAlias(alias);
             if (sanitizedName.IsEmpty) return;
@@ -1918,7 +1918,7 @@ void OnReloadInput()
             }
         }
 
-        [ServerRpc(RequireOwnership = false)]
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
         void SendStateUpdateServerRpc(Vector3 position, float yaw, Vector3 velocity, bool isDashing)
         {
             _netPosition.Value = position;
@@ -1928,8 +1928,8 @@ void OnReloadInput()
         }
 
         // Authoritative equip. Validates indices and applies to replicated var.
-        [ServerRpc(RequireOwnership = true)]
-        void EquipLoadoutServerRpc(byte primary, byte secondary, byte melee, byte util, ServerRpcParams p = default)
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+        void EquipLoadoutServerRpc(byte primary, byte secondary, byte melee, byte util, RpcParams p = default)
         {
 // Validate ranges
 if (primary > (byte)PrimaryType.Sniper) primary = 0;
@@ -2190,7 +2190,7 @@ Debug.Log($"[DirectNet] ApplyPreJoinLoadoutServer (sanitized) -> P{_netLoadout.V
             else radius = cap.radius * Mathf.Max(ls.x, ls.z);
         }
 
-[ServerRpc(RequireOwnership = false)]
+[Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
 public void SetPhaseServerRpc(PlayerPhase phase) { if (IsServer) SetPhase(phase); }
 
 // Pre-spawn seed so clients spawn with phase=Match and skip "Lobby" log spam.

@@ -421,15 +421,17 @@ namespace Game.Net
                 var button = entry.GetComponentInChildren<Button>(true);
 
                 string name = lobby.Name;
-                lobby.Data?.TryGetValue("Scene", out var sceneData);
-                lobby.Data?.TryGetValue("ServerType", out var typeData);
-                lobby.Data?.TryGetValue("MatchState", out var stateData);
-                lobby.Data?.TryGetValue("Round", out var roundData);
-                lobby.Data?.TryGetValue("WinsA", out var winsA);
-                lobby.Data?.TryGetValue("WinsB", out var winsB);
-                lobby.Data?.TryGetValue("Alive", out var aliveData);
-                lobby.Data?.TryGetValue("AliveAB", out var aliveAbData);
-                lobby.Data?.TryGetValue("Elapsed", out var elapsedData);
+                DataObject sceneData = null, typeData = null, stateData = null, roundData = null,
+                           winsA = null, winsB = null, aliveData = null, aliveAbData = null, elapsedData = null;
+                lobby.Data?.TryGetValue("Scene", out sceneData);
+                lobby.Data?.TryGetValue("ServerType", out typeData);
+                lobby.Data?.TryGetValue("MatchState", out stateData);
+                lobby.Data?.TryGetValue("Round", out roundData);
+                lobby.Data?.TryGetValue("WinsA", out winsA);
+                lobby.Data?.TryGetValue("WinsB", out winsB);
+                lobby.Data?.TryGetValue("Alive", out aliveData);
+                lobby.Data?.TryGetValue("AliveAB", out aliveAbData);
+                lobby.Data?.TryGetValue("Elapsed", out elapsedData);
 
                 string summary = $"{name} • {typeData?.Value ?? "Match"} @ {sceneData?.Value ?? "?"}\n" +
                     $"State: {stateData?.Value ?? "Unknown"}  Round: {roundData?.Value ?? "?"}\n" +
@@ -476,7 +478,7 @@ namespace Game.Net
             var label = textGo.AddComponent<TMP_Text>();
             label.fontSize = 18f;
             label.alignment = TextAlignmentOptions.TopLeft;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
 
             var btnGo = new GameObject("JoinButton", typeof(RectTransform));
             btnGo.transform.SetParent(go.transform, false);

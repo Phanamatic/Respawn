@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -1086,20 +1087,25 @@ namespace Game.Net
 
                 var data = BuildLobbyData();
                 var opts = new UpdateLobbyOptions { Data = data };
+                Task task = null;
                 try
                 {
-                    var task = LobbyService.Instance.UpdateLobbyAsync(lobby.Id, opts);
-                    while (!task.IsCompleted) yield return null;
-                    if (task.Exception != null)
-                    {
-                        Debug.LogWarning($"[Match1v1] Lobby update failed: {task.Exception.Message}");
-                        _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
-                    }
+                    task = LobbyService.Instance.UpdateLobbyAsync(lobby.Id, opts);
                 }
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"[Match1v1] Lobby sync exception: {ex.Message}");
                     _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
+                }
+
+                if (task != null)
+                {
+                    while (!task.IsCompleted) yield return null;
+                    if (task.IsFaulted)
+                    {
+                        Debug.LogWarning($"[Match1v1] Lobby update failed: {task.Exception?.Message}");
+                        _nextLobbyPushAt = Time.realtimeSinceStartup + 10f;
+                    }
                 }
 
                 yield return null;
@@ -1162,7 +1168,7 @@ namespace Game.Net
         }
 
         // Unity fake-null safe checks
-        static bool IsUnityNull(Object o) => o == null;
+        static bool IsUnityNull(UnityEngine.Object o) => o == null;
 
         // removed
         // Brief dev comment: No more cinematic camera choreography.

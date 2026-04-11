@@ -106,7 +106,7 @@ namespace Game.Net.Weapons
         /// <summary>
         /// Owner requests a slot change; server validates and publishes atomically.
         /// </summary>
-        [ServerRpc(RequireOwnership = false)]
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
         public void RequestSlotChangeServerRpc(byte desiredSlot)
         {
             if (!IsServer) return;
