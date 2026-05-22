@@ -29,6 +29,8 @@ namespace Game.Net
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Init()
         {
+            if (Game.Showcase.ShowcaseBootstrap.Active) return; // showcase scenes handle their own bootstrap
+
             if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null)
             {
                 // Redundant with NetworkConfigOptimizer but safe if that object is removed.

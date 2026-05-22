@@ -12,6 +12,7 @@ namespace Game.Bootstrap
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static async void ForceAccountScene()
         {
+            if (Game.Showcase.ShowcaseBootstrap.Active) return; // showcase scenes bypass auth
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null) return; // headless server
             const string Target = "Account";
             if (!Application.CanStreamedLevelBeLoaded(Target)) return;

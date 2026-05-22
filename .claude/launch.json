@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "svg-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "Portfolio", "-l", "3456", "--no-clipboard"],
+      "port": 3456
+    }
+  ]
+}

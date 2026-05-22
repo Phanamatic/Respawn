@@ -72,6 +72,15 @@ namespace Game.UI.Account
         [SerializeField] string dev2Password;
         // Two scene-wired buttons that use preset creds for fast test login + 1v1 quick-join.
 
+        [Header("Showcase Demos")]
+        [SerializeField] Button showcaseButton1;
+        [SerializeField] string showcaseScene1 = "Showcase_Combat";
+        [SerializeField] Button showcaseButton2;
+        [SerializeField] string showcaseScene2 = "";
+        [SerializeField] Button showcaseButton3;
+        [SerializeField] string showcaseScene3 = "";
+        // Buttons that load showcase scenes without authentication for portfolio recording.
+
         PlayFabAuthService _auth;
         const int AuthTimeoutMs = 15000;     // 15s guard for auth calls
         string _selectedIconId;              // holds chosen icon before sign-in
@@ -107,12 +116,27 @@ namespace Game.UI.Account
             if (devSignIn1Button) devSignIn1Button.onClick.AddListener(() => _ = DevLoginAndJoin(dev1Email, dev1Password));
             if (devSignIn2Button) devSignIn2Button.onClick.AddListener(() => _ = DevLoginAndJoin(dev2Email, dev2Password));
 
+            // showcase demo buttons (bypass auth, load directly into demo scenes)
+            WireShowcaseButton(showcaseButton1, showcaseScene1);
+            WireShowcaseButton(showcaseButton2, showcaseScene2);
+            WireShowcaseButton(showcaseButton3, showcaseScene3);
+
             // per-panel switchers
             if (siToCreateButton) siToCreateButton.onClick.AddListener(() => Show(false));
             if (crToSignInButton) crToSignInButton.onClick.AddListener(() => Show(true));
 
             BuildIconList(); // populate profile icons
             Show(true); // default to Sign In
+        }
+
+        void WireShowcaseButton(Button btn, string sceneName)
+        {
+            if (!btn || string.IsNullOrWhiteSpace(sceneName)) return;
+            btn.onClick.AddListener(() =>
+            {
+                Game.Showcase.ShowcaseBootstrap.Active = true;
+                SceneManager.LoadScene(sceneName);
+            });
         }
 
         void Show(bool signIn)

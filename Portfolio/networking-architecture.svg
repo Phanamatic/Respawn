@@ -1,0 +1,251 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1340" font-family="'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#818cf8"/></marker>
+    <marker id="al" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#34d399"/></marker>
+    <marker id="ala" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#fbbf24"/></marker>
+    <marker id="ag" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#475569"/></marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0c0c10"/><stop offset="100%" stop-color="#101018"/></linearGradient>
+    <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.35"/></filter>
+  </defs>
+
+  <rect width="1400" height="1340" fill="url(#bg)" rx="12"/>
+
+  <!-- ==================== TITLE + LEGEND (above everything) ==================== -->
+  <text x="700" y="38" text-anchor="middle" fill="#e2e8f0" font-size="22" font-weight="700">Networking Architecture</text>
+  <text x="700" y="60" text-anchor="middle" fill="#64748b" font-size="13">Server-Authoritative Multiplayer with Unity Netcode for GameObjects</text>
+
+  <!-- Legend -->
+  <rect x="430" y="78" width="540" height="96" rx="8" fill="#0e0e14" stroke="#1e1e2e" stroke-width="1"/>
+  <text x="700" y="98" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="700" letter-spacing="1">DATA FLOW</text>
+  <line x1="470" y1="116" x2="520" y2="116" stroke="#818cf8" stroke-width="2.5" stroke-dasharray="6,3"/>
+  <text x="530" y="120" fill="#a5b4fc" font-size="11">ServerRpc (Client to Server)</text>
+  <line x1="470" y1="136" x2="520" y2="136" stroke="#34d399" stroke-width="2.5"/>
+  <text x="530" y="140" fill="#86efac" font-size="11">NetworkVariable (Server replicates to all clients)</text>
+  <line x1="470" y1="156" x2="520" y2="156" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="3,4"/>
+  <text x="530" y="160" fill="#fbbf24" font-size="11">ClientRpc (Server to specific or all clients)</text>
+
+  <!-- ==================== CLIENT COLUMN (x=40..380) ==================== -->
+  <!-- Everything shifted down by 100px (columns start at y=200 instead of y=100) -->
+  <g filter="url(#sh)">
+    <rect x="40" y="200" width="340" height="550" rx="10" fill="#14141e" stroke="#252536" stroke-width="1"/>
+  </g>
+  <rect x="40" y="200" width="340" height="32" rx="10" fill="#1e1b4b"/>
+  <rect x="40" y="222" width="340" height="10" fill="#1e1b4b"/>
+  <text x="210" y="221" text-anchor="middle" fill="#c4b5fd" font-size="12" font-weight="700" letter-spacing="1.5">CLIENT</text>
+
+  <!-- C1: Player Input y=245..345 -->
+  <rect x="56" y="245" width="308" height="100" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="72" y="266" fill="#a5b4fc" font-size="11.5" font-weight="700">Player Input and Controls</text>
+  <text x="72" y="283" fill="#94a3b8" font-size="10.5">WASD movement, mouse aim, sprint, dash</text>
+  <text x="72" y="299" fill="#94a3b8" font-size="10.5">Fire, reload, slot switch, utility throw</text>
+  <text x="72" y="315" fill="#94a3b8" font-size="10.5">Aim report sent unreliable, every frame</text>
+  <text x="72" y="335" fill="#64748b" font-size="9.5" font-style="italic">Unity Input System | Owner client only</text>
+
+  <!-- C2: Game Rendering y=380..540 -->
+  <rect x="56" y="380" width="308" height="160" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="72" y="401" fill="#a5b4fc" font-size="11.5" font-weight="700">Game Rendering</text>
+  <text x="72" y="418" fill="#94a3b8" font-size="10.5">FOV Mesh: 220-ray stencil disc, 12Hz rebuild</text>
+  <text x="72" y="434" fill="#94a3b8" font-size="10.5">Fog of War: stencil-based overlay darkening</text>
+  <text x="72" y="450" fill="#94a3b8" font-size="10.5">Occluder transparency: camera-to-player fade</text>
+  <text x="72" y="466" fill="#94a3b8" font-size="10.5">WeaponView: grip alignment, aim-at-mouse</text>
+  <text x="72" y="482" fill="#94a3b8" font-size="10.5">Remote interpolation: 0.1s buffer, 15m/s cap</text>
+  <text x="72" y="498" fill="#94a3b8" font-size="10.5">Weapon equip animation on slot switch</text>
+  <text x="72" y="530" fill="#64748b" font-size="9.5" font-style="italic">All visual-only. Zero networking overhead.</text>
+
+  <!-- C3: HUD y=575..740 -->
+  <rect x="56" y="575" width="308" height="165" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="72" y="596" fill="#a5b4fc" font-size="11.5" font-weight="700">HUD and UI</text>
+  <text x="72" y="613" fill="#94a3b8" font-size="10.5">Health bar, ammo count, reload progress</text>
+  <text x="72" y="629" fill="#94a3b8" font-size="10.5">Weapon name with active slot highlight</text>
+  <text x="72" y="645" fill="#94a3b8" font-size="10.5">Scoreboard: K/D/DMG/Ping per player</text>
+  <text x="72" y="661" fill="#94a3b8" font-size="10.5">Death recap: killer name, icon, weapons</text>
+  <text x="72" y="677" fill="#94a3b8" font-size="10.5">Match countdown, round results</text>
+  <text x="72" y="697" fill="#f472b6" font-size="10.5" font-weight="600">Rate Limits</text>
+  <text x="72" y="713" fill="#94a3b8" font-size="10.5">Slot: 0.08s (10/s) | Throw: 0.5s | Yaw: 60Hz</text>
+
+  <!-- ==================== SERVER COLUMN (x=1020..1360) ==================== -->
+  <g filter="url(#sh)">
+    <rect x="1020" y="200" width="340" height="550" rx="10" fill="#14141e" stroke="#252536" stroke-width="1"/>
+  </g>
+  <rect x="1020" y="200" width="340" height="32" rx="10" fill="#14532d"/>
+  <rect x="1020" y="222" width="340" height="10" fill="#14532d"/>
+  <text x="1190" y="221" text-anchor="middle" fill="#86efac" font-size="12" font-weight="700" letter-spacing="1.5">DEDICATED SERVER</text>
+
+  <!-- S1: Server Authority y=245..325 -->
+  <rect x="1036" y="245" width="308" height="80" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="1052" y="266" fill="#86efac" font-size="11.5" font-weight="700">Server Authority</text>
+  <text x="1052" y="283" fill="#94a3b8" font-size="10.5">Validates all movement, updates state</text>
+  <text x="1052" y="299" fill="#94a3b8" font-size="10.5">Single source of truth for game world</text>
+  <text x="1052" y="317" fill="#64748b" font-size="9.5" font-style="italic">Headless: no GPU, no cameras, no HDRP</text>
+
+  <!-- S2: Combat System y=360..480 -->
+  <rect x="1036" y="360" width="308" height="120" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="1052" y="381" fill="#86efac" font-size="11.5" font-weight="700">Combat System</text>
+  <text x="1052" y="398" fill="#94a3b8" font-size="10.5">Weapon fire with client-reported aim</text>
+  <text x="1052" y="414" fill="#94a3b8" font-size="10.5">Server-side hit detection (OnTriggerEnter)</text>
+  <text x="1052" y="430" fill="#94a3b8" font-size="10.5">Reload timers, ammo tracking</text>
+  <text x="1052" y="446" fill="#94a3b8" font-size="10.5">Loadout equip, slot management</text>
+  <text x="1052" y="462" fill="#94a3b8" font-size="10.5">Friendly fire prevention, damage apply</text>
+
+  <!-- S3: Match Controller y=515..620 -->
+  <rect x="1036" y="515" width="308" height="105" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="1052" y="536" fill="#86efac" font-size="11.5" font-weight="700">Match Controller</text>
+  <text x="1052" y="553" fill="#94a3b8" font-size="10.5">State: Waiting / Countdown / Loading</text>
+  <text x="1052" y="569" fill="#94a3b8" font-size="10.5">Playing / RoundEnd / MatchEnd</text>
+  <text x="1052" y="585" fill="#94a3b8" font-size="10.5">Team assignment, spawn positioning</text>
+  <text x="1052" y="601" fill="#94a3b8" font-size="10.5">Round resets, sudden death logic</text>
+
+  <!-- S4: LOS Visibility y=660..725 -->
+  <rect x="1036" y="660" width="308" height="65" rx="7" fill="#1a1a26" stroke="#252536" stroke-width="1"/>
+  <text x="1052" y="681" fill="#86efac" font-size="11.5" font-weight="700">LOS Visibility System</text>
+  <text x="1052" y="698" fill="#94a3b8" font-size="10.5">Server raycasts at 15Hz per viewer/target</text>
+  <text x="1052" y="714" fill="#94a3b8" font-size="10.5">NetworkShow / NetworkHide per client</text>
+
+  <!-- ==================== ARROWS ==================== -->
+  <!--
+    Client right edge: x=380
+    Server left edge: x=1020
+    Gap: 640px (x=380 to x=1020)
+
+    Lane X assignments for vertical segments:
+    Going RIGHT (ServerRpc):  x=455, x=435
+    Going LEFT (NetworkVar):  x=955, x=915, x=875
+    Going LEFT (ClientRpc):   x=555, x=500
+  -->
+
+  <!-- ===== ARROW 1: ServerRpc Input→Authority (Movement + Aim) ===== -->
+  <!-- Straight horizontal at y=275 -->
+  <line x1="380" y1="275" x2="1020" y2="275" stroke="#818cf8" stroke-width="2.5" stroke-dasharray="6,3" marker-end="url(#ar)"/>
+  <rect x="555" y="263" width="290" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+  <text x="700" y="280" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="600">ServerRpc   Movement + Aim Report</text>
+
+  <!-- ===== ARROW 2: ServerRpc Input→Combat (Fire/Reload/Throw) ===== -->
+  <!-- Exit Input at y=305, right to x=455, down to y=390, right to Combat -->
+  <path d="M380,305 L447,305 Q455,305 455,313 L455,382 Q455,390 463,390 L1020,390" fill="none" stroke="#818cf8" stroke-width="2.5" stroke-dasharray="6,3" marker-end="url(#ar)"/>
+  <rect x="555" y="378" width="290" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+  <text x="700" y="395" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="600">ServerRpc   Fire / Reload / Throw</text>
+
+  <!-- ===== ARROW 3: ServerRpc Input→Match (Loading Ready / Identity) ===== -->
+  <!-- Exit Input at y=330, right to x=435, down to y=555, right to Match -->
+  <path d="M380,330 L427,330 Q435,330 435,338 L435,547 Q435,555 443,555 L1020,555" fill="none" stroke="#818cf8" stroke-width="2.5" stroke-dasharray="6,3" marker-end="url(#ar)"/>
+  <rect x="555" y="543" width="290" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+  <text x="700" y="560" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="600">ServerRpc   Loading Ready / Identity</text>
+
+  <!-- ===== ARROW 4: NetworkVar Authority→Rendering (Pos/Yaw/Health) ===== -->
+  <!-- Exit Authority at y=310, left to x=955, down to y=430, left to Rendering -->
+  <path d="M1020,310 L963,310 Q955,310 955,318 L955,422 Q955,430 947,430 L380,430" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#al)"/>
+  <rect x="530" y="418" width="320" height="24" rx="5" fill="#052e16" stroke="#10b981" stroke-width="0.8"/>
+  <text x="690" y="435" text-anchor="middle" fill="#86efac" font-size="11" font-weight="600">NetworkVar   Position / Yaw / Velocity / Health</text>
+
+  <!-- ===== ARROW 5: NetworkVar+ClientRpc Combat→Rendering (Loadout/View) ===== -->
+  <!-- Exit Combat at y=430, left to x=915, down to y=480, left to Rendering -->
+  <path d="M1020,430 L923,430 Q915,430 915,438 L915,472 Q915,480 907,480 L380,480" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#al)"/>
+  <rect x="530" y="468" width="320" height="24" rx="5" fill="#052e16" stroke="#10b981" stroke-width="0.8"/>
+  <text x="690" y="485" text-anchor="middle" fill="#86efac" font-size="11" font-weight="600">NetworkVar + ClientRpc   Loadout / View Rebuild</text>
+
+  <!-- ===== ARROW 6: NetworkVar+ClientRpc Combat→HUD (Stats/DeathRecap) ===== -->
+  <!-- Exit Combat at y=455, left to x=875, down to y=625, left to HUD -->
+  <path d="M1020,455 L883,455 Q875,455 875,463 L875,617 Q875,625 867,625 L380,625" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#al)"/>
+  <rect x="530" y="613" width="320" height="24" rx="5" fill="#052e16" stroke="#10b981" stroke-width="0.8"/>
+  <text x="690" y="630" text-anchor="middle" fill="#86efac" font-size="11" font-weight="600">NetworkVar + ClientRpc   Stats / Death Recap</text>
+
+  <!-- ===== ARROW 7: ClientRpc Match→HUD (Freeze/Countdown/MatchEnd) ===== -->
+  <!-- Exit Match at y=590, left to x=555, down to y=675, left to HUD -->
+  <path d="M1020,590 L563,590 Q555,590 555,598 L555,667 Q555,675 547,675 L380,675" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="3,4" marker-end="url(#ala)"/>
+  <rect x="600" y="578" width="320" height="24" rx="5" fill="#422006" stroke="#f59e0b" stroke-width="0.8"/>
+  <text x="760" y="595" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="600">ClientRpc   Freeze / Countdown / Match End</text>
+
+  <!-- ===== ARROW 8: ClientRpc LOS→Rendering (Fade) ===== -->
+  <!-- Exit LOS at y=685, left to x=500, UP to y=520, left to Rendering -->
+  <path d="M1020,685 L508,685 Q500,685 500,677 L500,528 Q500,520 492,520 L380,520" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="3,4" marker-end="url(#ala)"/>
+  <rect x="600" y="673" width="320" height="24" rx="5" fill="#422006" stroke="#f59e0b" stroke-width="0.8"/>
+  <text x="760" y="690" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="600">ClientRpc   LOS Visibility Fade (per viewer)</text>
+
+  <!-- ==================== TRANSPORT LAYER ==================== -->
+  <g filter="url(#sh)">
+    <rect x="40" y="780" width="1320" height="56" rx="10" fill="#14141e" stroke="#252536" stroke-width="1"/>
+  </g>
+  <rect x="40" y="780" width="1320" height="28" rx="10" fill="#1c1917"/>
+  <rect x="40" y="800" width="1320" height="8" fill="#1c1917"/>
+  <text x="700" y="800" text-anchor="middle" fill="#d6d3d1" font-size="12" font-weight="700" letter-spacing="1.2">UNITY TRANSPORT (UDP)</text>
+  <g fill="#a8a29e" font-size="11">
+    <text x="150" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">128 Hz</tspan>  Tick Rate</text>
+    <text x="380" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">60 Hz</tspan>  Physics</text>
+    <text x="590" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">1,200 B</tspan>  MTU</text>
+    <text x="810" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">256/s</tspan>  Send Rate</text>
+    <text x="1040" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">1,500 ms</tspan>  Heartbeat</text>
+    <text x="1260" y="824" text-anchor="middle"><tspan font-weight="700" fill="#e7e5e4">4,096</tspan>  Pkt Queue</text>
+  </g>
+
+  <!-- ==================== CONNECTION FLOW ==================== -->
+  <g filter="url(#sh)">
+    <rect x="40" y="860" width="1320" height="155" rx="10" fill="#14141e" stroke="#252536" stroke-width="1"/>
+  </g>
+  <text x="700" y="888" text-anchor="middle" fill="#e2e8f0" font-size="14" font-weight="700">Connection Flow</text>
+
+  <g font-size="10.5">
+    <rect x="60" y="908" width="155" height="44" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+    <text x="137" y="928" text-anchor="middle" fill="#c4b5fd" font-size="10.5" font-weight="600">Client Connect</text>
+    <text x="137" y="944" text-anchor="middle" fill="#818cf8" font-size="9.5">UTP handshake</text>
+    <line x1="219" y1="930" x2="253" y2="930" stroke="#475569" stroke-width="1.5" marker-end="url(#ag)"/>
+
+    <rect x="257" y="908" width="170" height="44" rx="6" fill="#14532d" stroke="#10b981" stroke-width="0.8"/>
+    <text x="342" y="928" text-anchor="middle" fill="#86efac" font-size="10.5" font-weight="600">Approval Callback</text>
+    <text x="342" y="944" text-anchor="middle" fill="#34d399" font-size="9.5">Decode JSON payload</text>
+    <line x1="431" y1="930" x2="465" y2="930" stroke="#475569" stroke-width="1.5" marker-end="url(#ag)"/>
+
+    <rect x="469" y="908" width="170" height="44" rx="6" fill="#14532d" stroke="#10b981" stroke-width="0.8"/>
+    <text x="554" y="928" text-anchor="middle" fill="#86efac" font-size="10.5" font-weight="600">Cache Metadata</text>
+    <text x="554" y="944" text-anchor="middle" fill="#34d399" font-size="9.5">Name + spectator flag</text>
+    <line x1="643" y1="930" x2="677" y2="930" stroke="#475569" stroke-width="1.5" marker-end="url(#ag)"/>
+
+    <rect x="681" y="908" width="170" height="44" rx="6" fill="#14532d" stroke="#10b981" stroke-width="0.8"/>
+    <text x="766" y="928" text-anchor="middle" fill="#86efac" font-size="10.5" font-weight="600">Loadout Handshake</text>
+    <text x="766" y="944" text-anchor="middle" fill="#34d399" font-size="9.5">5-byte named message</text>
+    <line x1="855" y1="930" x2="889" y2="930" stroke="#475569" stroke-width="1.5" marker-end="url(#ag)"/>
+
+    <rect x="893" y="908" width="170" height="44" rx="6" fill="#14532d" stroke="#10b981" stroke-width="0.8"/>
+    <text x="978" y="928" text-anchor="middle" fill="#86efac" font-size="10.5" font-weight="600">Seed Phase + Spawn</text>
+    <text x="978" y="944" text-anchor="middle" fill="#34d399" font-size="9.5">SpawnAsPlayerObject</text>
+    <line x1="1067" y1="930" x2="1101" y2="930" stroke="#475569" stroke-width="1.5" marker-end="url(#ag)"/>
+
+    <rect x="1105" y="908" width="170" height="44" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+    <text x="1190" y="928" text-anchor="middle" fill="#c4b5fd" font-size="10.5" font-weight="600">OnNetworkSpawn</text>
+    <text x="1190" y="944" text-anchor="middle" fill="#818cf8" font-size="9.5">Camera + FOV + Input</text>
+
+    <text x="700" y="982" text-anchor="middle" fill="#64748b" font-size="10.5">CreatePlayerObject disabled. Custom spawners handle instantiation with phase seeding and ground clamping.</text>
+    <text x="700" y="1000" text-anchor="middle" fill="#64748b" font-size="10.5">Spectators detected via approval payload. No spawn, no team, no match participation.</text>
+  </g>
+
+  <!-- ==================== KEY DESIGN DECISIONS ==================== -->
+  <g filter="url(#sh)">
+    <rect x="40" y="1040" width="1320" height="220" rx="10" fill="#14141e" stroke="#252536" stroke-width="1"/>
+  </g>
+  <text x="700" y="1068" text-anchor="middle" fill="#e2e8f0" font-size="14" font-weight="700">Key Design Decisions</text>
+
+  <g font-size="10.5" fill="#94a3b8">
+    <text x="80" y="1096" fill="#f472b6" font-weight="700" font-size="11">Pre-Spawn Phase Seeding</text>
+    <text x="80" y="1116">Phase set via SeedPhasePreSpawnServer</text>
+    <text x="80" y="1134">before SpawnAsPlayerObject, ensuring</text>
+    <text x="80" y="1152">OnNetworkSpawn sees correct phase</text>
+    <text x="80" y="1170">for FOV, LOS, and weapon equip.</text>
+    <text x="80" y="1196" fill="#64748b" font-size="10">NetworkVariables update AFTER spawn.</text>
+    <text x="80" y="1211" fill="#64748b" font-size="10">initialPhase field bypasses this delay.</text>
+
+    <text x="530" y="1096" fill="#f472b6" font-weight="700" font-size="11">Loadout Handshake</text>
+    <text x="530" y="1116">5-byte named message (not an RPC)</text>
+    <text x="530" y="1134">sent before player spawn. Server</text>
+    <text x="530" y="1152">caches and applies loadout during</text>
+    <text x="530" y="1170">instantiation. Fully decoupled from</text>
+    <text x="530" y="1188">the player spawn lifecycle.</text>
+    <text x="530" y="1211" fill="#64748b" font-size="10">Format: [ver][primary][secondary][melee][util]</text>
+
+    <text x="980" y="1096" fill="#f472b6" font-weight="700" font-size="11">Layout Version Guard</text>
+    <text x="980" y="1116">NETWORK_LAYOUT_VERSION = 3</text>
+    <text x="980" y="1134">broadcast on every player spawn.</text>
+    <text x="980" y="1152">Mismatch logs error to catch mixed</text>
+    <text x="980" y="1170">builds before buffer overflow on</text>
+    <text x="980" y="1188">NetworkVariable delta deserialization.</text>
+    <text x="980" y="1211" fill="#64748b" font-size="10">Prevents silent corruption from build drift.</text>
+  </g>
+</svg>
